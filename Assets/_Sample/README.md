@@ -10,7 +10,7 @@
    - `[GameEntry] 框架初始化完成`
    - `[FrameworkSmoke] ✅ Framework OK ...`
    - 0.5s 后 `[FrameworkSmoke] ✅ Timer 0.5s 回调触发 ...`
-5. 预期噪声：一条 `[GameEntry] _loadingViewPrefab 未赋值` 的 Error——纯框架冒烟不接启动 UI，正常。
+5. 预期噪声（两条 Error，均正常）：`[UIManager] GetLayerRoot: bootstrap 未注入` + `[GameEntry] _loadingViewPrefab 未赋值`——纯框架裸场景没接 UI 基础设施（UIBootstrap/Loading 预制体），Manager 已在 Awake 全部初始化，不影响地基。真实项目接上即消失。
 
 ## 说明
 - `Resources/AppConfig.asset` 已配成离线纯框架：`EnableHotUpdate=0`（跳过 HybridCLR 热更）、`UseNetworkLogin=0`（Mock 登录）。

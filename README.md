@@ -19,7 +19,7 @@ Packages/ ProjectSettings/  与 ClientBase 一致的 Unity 版本与包版本
 
 - [x] **A1** Framework 运行时 + 配置照搬入壳（已移除 URP/timeline/visualscripting/2d.sprite）
 - [x] **A2** 通用 Editor 工具移入 `Framework/Editor/` + `Framework.Editor.asmdef`（AddressablesSetup/ProtobufInstaller/HotUpdatePublisher/HybridCLRStreamingAssetsSync/FullPackage*/AppConfigAssetMenu/ExcelTool；ProtoGenerator 等协议绑定工具不迁）
-- [~] **B** 纯框架启动能力（热更总开关 `EnableHotUpdate`）+ 最小冒烟 sample（`Assets/_Sample/`）+ 离线 `Resources/AppConfig.asset`；**待你在 Unity 建冒烟场景按 Play 验证**（步骤见 `Assets/_Sample/README.md`）。登录/心跳联网冒烟需服务端，另行安排。
+- [x] **B** 纯框架启动能力（热更总开关 `EnableHotUpdate`）+ 最小冒烟 sample（`Assets/_Sample/`）+ 离线 `Resources/AppConfig.asset`。**已在 Unity 冒烟通过**：9 个 Manager 全启动 + Timer 回调运转（裸场景两条 UI 相关 Error 属预期）。登录/心跳联网冒烟需服务端，另行安排。
 - [ ] **C** 序列化库替换：`protobuf-net` → `Google.Protobuf`（AOT 主因，`.proto` + protoc 双端生成 + 路由伴生 partial）
 
 ### 约定
