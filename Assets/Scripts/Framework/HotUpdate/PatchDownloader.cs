@@ -66,7 +66,7 @@ namespace Framework.HotUpdate
             if (forceRefresh && File.Exists(savePath))
             {
                 File.Delete(savePath);
-                Logger.Log($"[PatchDownloader] forceRefresh=true，已清除旧文件: {savePath}");
+                GameLog.Log($"[PatchDownloader] forceRefresh=true，已清除旧文件: {savePath}");
             }
 
             int retryCount = 0;
@@ -79,12 +79,12 @@ namespace Framework.HotUpdate
                 retryCount++;
                 if (retryCount <= _maxRetryCount)
                 {
-                    Logger.Warning($"[PatchDownloader] 下载失败，{_retryDelay}秒后重试 ({retryCount}/{_maxRetryCount})");
+                    GameLog.Warning($"[PatchDownloader] 下载失败，{_retryDelay}秒后重试 ({retryCount}/{_maxRetryCount})");
                     await UniTask.Delay(TimeSpan.FromSeconds(_retryDelay));
                 }
             }
 
-            Logger.Error($"[PatchDownloader] 已达到最大重试次数，放弃下载: {url}");
+            GameLog.Error($"[PatchDownloader] 已达到最大重试次数，放弃下载: {url}");
             return false;
         }
 
@@ -99,7 +99,7 @@ namespace Framework.HotUpdate
 
             try
             {
-                Logger.Log($"[PatchDownloader] 开始下载: {url} -> {savePath}");
+                GameLog.Log($"[PatchDownloader] 开始下载: {url} -> {savePath}");
 
                 string directory = Path.GetDirectoryName(savePath);
                 if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
@@ -111,7 +111,7 @@ namespace Framework.HotUpdate
                 {
                     startPosition = new FileInfo(savePath).Length;
                     _downloadedSize = startPosition;
-                    Logger.Log($"[PatchDownloader] 检测到已下载 {startPosition} 字节，尝试断点续传");
+                    GameLog.Log($"[PatchDownloader] 检测到已下载 {startPosition} 字节，尝试断点续传");
                 }
 
                 _currentRequest = UnityWebRequest.Get(url);
@@ -124,7 +124,7 @@ namespace Framework.HotUpdate
                     if (_isCancelled)
                     {
                         _currentRequest.Abort();
-                        Logger.Warning("[PatchDownloader] 下载已取消");
+                        GameLog.Warning("[PatchDownloader] 下载已取消");
                         return false;
                     }
                     onProgress?.Invoke(operation.progress);
@@ -134,7 +134,7 @@ namespace Framework.HotUpdate
                 // 416：服务器文件已更新，本地缓存失效 → 清除后由外层重试全量下载
                 if (_currentRequest.responseCode == 416)
                 {
-                    Logger.Warning($"[PatchDownloader] 收到 416，服务器文件已变更，清除本地缓存后重试全量下载");
+                    GameLog.Warning($"[PatchDownloader] 收到 416，服务器文件已变更，清除本地缓存后重试全量下载");
                     _currentRequest.Dispose();
                     _currentRequest = null;
                     if (File.Exists(savePath))
@@ -145,7 +145,7 @@ namespace Framework.HotUpdate
 
                 if (_currentRequest.result != UnityWebRequest.Result.Success)
                 {
-                    Logger.Error($"[PatchDownloader] 下载失败: {_currentRequest.error}");
+                    GameLog.Error($"[PatchDownloader] 下载失败: {_currentRequest.error}");
                     return false;
                 }
 
@@ -163,13 +163,13 @@ namespace Framework.HotUpdate
 
                 _downloadedSize = new FileInfo(savePath).Length;
                 _totalSize = _downloadedSize;
-                Logger.Log($"[PatchDownloader] 下载完成: {savePath} ({_downloadedSize} 字节)");
+                GameLog.Log($"[PatchDownloader] 下载完成: {savePath} ({_downloadedSize} 字节)");
                 onProgress?.Invoke(1.0f);
                 return true;
             }
             catch (Exception ex)
             {
-                Logger.Error($"[PatchDownloader] 下载异常: {ex.Message}");
+                GameLog.Error($"[PatchDownloader] 下载异常: {ex.Message}");
                 return false;
             }
             finally
@@ -185,7 +185,7 @@ namespace Framework.HotUpdate
         public void CancelDownload()
         {
             _isCancelled = true;
-            Logger.Log("[PatchDownloader] 请求取消下载");
+            GameLog.Log("[PatchDownloader] 请求取消下载");
         }
         
         /// <summary>

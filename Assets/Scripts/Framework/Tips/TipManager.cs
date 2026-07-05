@@ -52,7 +52,7 @@ namespace Framework
         public override void OnInit()
         {
             RegisterNetworkEvents();
-            Logger.Log("[TipManager] 初始化完成");
+            GameLog.Log("[TipManager] 初始化完成");
         }
 
         /// <summary>
@@ -66,7 +66,7 @@ namespace Framework
             visibleCount = 0;
             OnTipReadyToDisplay = null;
             OnTipsCleared = null;
-            Logger.Log("[TipManager] 已关闭");
+            GameLog.Log("[TipManager] 已关闭");
         }
 
         /// <summary>
@@ -318,7 +318,7 @@ namespace Framework
 
             if (!EnsureQueueCapacity(request.Priority))
             {
-                Logger.Warning($"[TipManager] 队列已满，丢弃提示：{request.TextOrKey}");
+                GameLog.Warning($"[TipManager] 队列已满，丢弃提示：{request.TextOrKey}");
                 return null;
             }
 
@@ -402,7 +402,7 @@ namespace Framework
                 catch (Exception ex)
                 {
                     visibleCount = Mathf.Max(0, visibleCount - 1);
-                    Logger.Error($"[TipManager] 展示层派发异常：{ex.Message}");
+                    GameLog.Error($"[TipManager] 展示层派发异常：{ex.Message}");
                     break;
                 }
             }

@@ -36,7 +36,7 @@ namespace Framework.UI
             _view = view;
             if (_view == null)
             {
-                Logger.Error("[LoadingWindow] LoadingView 为 null，请在 GameEntry Inspector 中赋值");
+                GameLog.Error("[LoadingWindow] LoadingView 为 null，请在 GameEntry Inspector 中赋值");
                 return;
             }
 

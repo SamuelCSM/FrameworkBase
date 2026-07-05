@@ -29,7 +29,7 @@ namespace Framework.Core.Auth
             _backend = CreateDefaultBackend();
             _popupPresenter = new LogOnlyAuthPopupPresenter();
             SetState(LoginFlowState.Idle, "init", string.Empty);
-            Logger.Log($"[AuthManager] 初始化完成 backend={_backend.GetType().Name}");
+            GameLog.Log($"[AuthManager] 初始化完成 backend={_backend.GetType().Name}");
         }
 
         /// <summary>
@@ -54,7 +54,7 @@ namespace Framework.Core.Auth
         {
             if (backend == null)
             {
-                Logger.Warning("[AuthManager] SetBackend ignored: backend is null");
+                GameLog.Warning("[AuthManager] SetBackend ignored: backend is null");
                 return;
             }
             _backend = backend;
@@ -65,7 +65,7 @@ namespace Framework.Core.Auth
         {
             if (popupPresenter == null)
             {
-                Logger.Warning("[AuthManager] SetPopupPresenter ignored: presenter is null");
+                GameLog.Warning("[AuthManager] SetPopupPresenter ignored: presenter is null");
                 return;
             }
             _popupPresenter = popupPresenter;
@@ -112,7 +112,7 @@ namespace Framework.Core.Auth
         {
             if (!_lastContext.HasValue)
             {
-                Logger.Warning("[AuthManager] RetryLastLoginAsync ignored: no last context");
+                GameLog.Warning("[AuthManager] RetryLastLoginAsync ignored: no last context");
                 return UniTask.FromResult(LoginResult.Fail(TelemetryErrorCodes.Auth.Unknown, "no last context"));
             }
 
@@ -160,7 +160,7 @@ namespace Framework.Core.Auth
                     {
                         // 刷新会话令牌，保持与服务端最新签发一致。
                         AuthSession.Apply(result);
-                        Logger.Log("[AuthManager] 断线重连重新鉴权成功");
+                        GameLog.Log("[AuthManager] 断线重连重新鉴权成功");
                         return true;
                     }
 
@@ -177,22 +177,22 @@ namespace Framework.Core.Auth
                         if (guestResult.Success)
                         {
                             AuthSession.Apply(guestResult);
-                            Logger.Log("[AuthManager] 令牌失效，已回退访客身份重新鉴权成功");
+                            GameLog.Log("[AuthManager] 令牌失效，已回退访客身份重新鉴权成功");
                             return true;
                         }
                     }
 
-                    Logger.Warning($"[AuthManager] 断线重连重新鉴权被拒: code={result.ErrorCode}, msg={result.ErrorMessage}");
+                    GameLog.Warning($"[AuthManager] 断线重连重新鉴权被拒: code={result.ErrorCode}, msg={result.ErrorMessage}");
                     return false;
                 }
                 catch (OperationCanceledException)
                 {
-                    Logger.Warning("[AuthManager] 断线重连重新鉴权超时/取消");
+                    GameLog.Warning("[AuthManager] 断线重连重新鉴权超时/取消");
                     return false;
                 }
                 catch (Exception ex)
                 {
-                    Logger.Warning($"[AuthManager] 断线重连重新鉴权异常: {ex.Message}");
+                    GameLog.Warning($"[AuthManager] 断线重连重新鉴权异常: {ex.Message}");
                     return false;
                 }
             }
@@ -298,7 +298,7 @@ namespace Framework.Core.Auth
                 AtUtc = DateTime.UtcNow
             };
             OnStateChanged?.Invoke(snapshot);
-            Logger.Log($"[AuthFlow] state={state}, reason={snapshot.Reason}, code={snapshot.ErrorCode}");
+            GameLog.Log($"[AuthFlow] state={state}, reason={snapshot.Reason}, code={snapshot.ErrorCode}");
         }
 
         private void RecreateLoginCts()

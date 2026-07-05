@@ -148,7 +148,7 @@ namespace Framework
             catch (Exception ex) when (ex is System.IO.IOException or UnauthorizedAccessException)
             {
                 // 磁盘满/权限异常等已知 IO 失败：保留缓冲待下次重试，不让埋点故障影响主流程。
-                Logger.Warning($"[UITracker] 埋点落盘失败（保留缓冲下次重试）：{ex.Message}");
+                GameLog.Warning($"[UITracker] 埋点落盘失败（保留缓冲下次重试）：{ex.Message}");
             }
         }
 
@@ -162,7 +162,7 @@ namespace Framework
         public static void UploadToServer()
         {
             FlushToLocal();
-            Logger.Warning("[UITracker] 分析上报端点未配置，埋点仅本地缓存（persistentDataPath/ui_events.jsonl）");
+            GameLog.Warning("[UITracker] 分析上报端点未配置，埋点仅本地缓存（persistentDataPath/ui_events.jsonl）");
         }
 
         /// <summary>

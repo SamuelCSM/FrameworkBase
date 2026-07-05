@@ -44,7 +44,7 @@ namespace Framework.Network
 
             string body = FormatObject(message, 0);
             string name = message.GetType().Name;
-            Logger.Warning(BuildLine("SEND", "C -> S", SendColor, name, packetSize, seqId, body));
+            GameLog.Warning(BuildLine("SEND", "C -> S", SendColor, name, packetSize, seqId, body));
         }
 
         /// <summary>
@@ -57,7 +57,7 @@ namespace Framework.Network
         public static void LogSend(byte mainId, byte subId, int packetSize, ushort seqId, string messageName = null)
         {
             string name = string.IsNullOrEmpty(messageName) ? $"Unknown_{mainId}_{subId}" : messageName;
-            Logger.Warning(BuildLine("SEND", "C -> S", SendColor, name, packetSize, seqId, "{}"));
+            GameLog.Warning(BuildLine("SEND", "C -> S", SendColor, name, packetSize, seqId, "{}"));
         }
 
         /// <summary>
@@ -88,7 +88,7 @@ namespace Framework.Network
                 body = $"{{payloadSize:{payloadSize}, parseError:{SanitizeString(ex.Message)}}}";
             }
 
-            Logger.Warning(BuildLine("RECV", "S -> C", ReceiveColor, name, packetSize, seqId, body));
+            GameLog.Warning(BuildLine("RECV", "S -> C", ReceiveColor, name, packetSize, seqId, body));
         }
 
         /// <summary>

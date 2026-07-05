@@ -57,13 +57,13 @@ namespace Framework
         {
             if (string.IsNullOrEmpty(panelKey))
             {
-                Logger.Error($"[UISubPanelHost] LoadAsync 失败，key 为空: {typeof(TPanel).Name}");
+                GameLog.Error($"[UISubPanelHost] LoadAsync 失败，key 为空: {typeof(TPanel).Name}");
                 return null;
             }
 
             if (parent == null)
             {
-                Logger.Error($"[UISubPanelHost] LoadAsync 失败，父节点为空: {typeof(TPanel).Name}");
+                GameLog.Error($"[UISubPanelHost] LoadAsync 失败，父节点为空: {typeof(TPanel).Name}");
                 return null;
             }
 
@@ -79,7 +79,7 @@ namespace Framework
             if (panelObject == null)
             {
                 ResetRuntimeState();
-                Logger.Error($"[UISubPanelHost] 加载子面板失败: {typeof(TPanel).Name}, Key={panelKey}");
+                GameLog.Error($"[UISubPanelHost] 加载子面板失败: {typeof(TPanel).Name}, Key={panelKey}");
                 return null;
             }
 
@@ -88,7 +88,7 @@ namespace Framework
             UISubView view = panelObject.GetComponent(panel.ViewType) as UISubView;
             if (view == null)
             {
-                Logger.Error($"[UISubPanelHost] 子面板缺少视图组件: {panel.ViewType.Name}, Key={panelKey}");
+                GameLog.Error($"[UISubPanelHost] 子面板缺少视图组件: {panel.ViewType.Name}, Key={panelKey}");
                 panel.Dispose();
                 panel = null;
                 ReleasePanelObject();
@@ -203,7 +203,7 @@ namespace Framework
         {
             if (GameEntry.Resource == null)
             {
-                Logger.Error($"[AddressableUISubPanelHost] 加载子面板失败，ResourceManager 未就绪: {typeof(TPanel).Name}, Key={key}");
+                GameLog.Error($"[AddressableUISubPanelHost] 加载子面板失败，ResourceManager 未就绪: {typeof(TPanel).Name}, Key={key}");
                 return null;
             }
 

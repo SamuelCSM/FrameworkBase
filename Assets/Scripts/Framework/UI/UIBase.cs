@@ -124,7 +124,7 @@ namespace Framework
         {
             if (!_isInitialized)
             {
-                Logger.Error($"[UIBase] OpenWithAnimAsync: 未初始化 — {GetType().Name}");
+                GameLog.Error($"[UIBase] OpenWithAnimAsync: 未初始化 — {GetType().Name}");
                 return;
             }
 

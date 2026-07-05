@@ -311,7 +311,7 @@ namespace Framework.Network
             HideLoading(pending);
             pending.OnTimeout?.Invoke();
 
-            Logger.Warning($"[NetworkRequestTracker] 请求超时: seqId={seqId}");
+            GameLog.Warning($"[NetworkRequestTracker] 请求超时: seqId={seqId}");
         }
 
         /// <summary>

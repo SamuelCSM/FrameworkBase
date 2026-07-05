@@ -51,7 +51,7 @@ namespace Framework
         {
             if (string.IsNullOrEmpty(key))
             {
-                Logger.Error("[PooledGameObjectProvider] GetAsync 失败，key 为空");
+                GameLog.Error("[PooledGameObjectProvider] GetAsync 失败，key 为空");
                 return null;
             }
 
@@ -78,7 +78,7 @@ namespace Framework
 
             if (!activePools.TryGetValue(instance, out GameObjectPool pool))
             {
-                Logger.Warning($"[PooledGameObjectProvider] Release 收到未知实例，直接销毁: {instance.name}");
+                GameLog.Warning($"[PooledGameObjectProvider] Release 收到未知实例，直接销毁: {instance.name}");
                 UnityEngine.Object.Destroy(instance);
                 return;
             }

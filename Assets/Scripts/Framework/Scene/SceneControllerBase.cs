@@ -138,13 +138,13 @@ namespace Framework
         {
             if (IsDisposed)
             {
-                Logger.Warning($"[SceneController] 已释放的场景控制类不能执行 {operation}: {GetType().Name}");
+                GameLog.Warning($"[SceneController] 已释放的场景控制类不能执行 {operation}: {GetType().Name}");
                 return false;
             }
 
             if (!IsInitialized)
             {
-                Logger.Error($"[SceneController] 未初始化的场景控制类不能执行 {operation}: {GetType().Name}");
+                GameLog.Error($"[SceneController] 未初始化的场景控制类不能执行 {operation}: {GetType().Name}");
                 return false;
             }
 

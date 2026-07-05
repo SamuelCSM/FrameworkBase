@@ -56,7 +56,7 @@ namespace Framework
         {
             if (string.IsNullOrEmpty(filePath) || !File.Exists(filePath))
             {
-                Logger.Warning($"文件不存在，无法计算 MD5: {filePath}");
+                GameLog.Warning($"文件不存在，无法计算 MD5: {filePath}");
                 return string.Empty;
             }
 
@@ -73,7 +73,7 @@ namespace Framework
             }
             catch (Exception ex)
             {
-                Logger.Error($"计算文件 MD5 失败: {filePath}, 错误: {ex.Message}");
+                GameLog.Error($"计算文件 MD5 失败: {filePath}, 错误: {ex.Message}");
                 return string.Empty;
             }
         }
@@ -89,7 +89,7 @@ namespace Framework
         {
             if (string.IsNullOrEmpty(filePath) || !File.Exists(filePath))
             {
-                Logger.Warning($"文件不存在，无法计算 MD5: {filePath}");
+                GameLog.Warning($"文件不存在，无法计算 MD5: {filePath}");
                 return string.Empty;
             }
 
@@ -130,7 +130,7 @@ namespace Framework
             }
             catch (Exception ex)
             {
-                Logger.Error($"计算大文件 MD5 失败: {filePath}, 错误: {ex.Message}");
+                GameLog.Error($"计算大文件 MD5 失败: {filePath}, 错误: {ex.Message}");
                 return string.Empty;
             }
         }
@@ -215,7 +215,7 @@ namespace Framework
             }
             catch (Exception ex)
             {
-                Logger.Error($"计算流 MD5 失败: {ex.Message}");
+                GameLog.Error($"计算流 MD5 失败: {ex.Message}");
                 return string.Empty;
             }
         }
@@ -246,7 +246,7 @@ namespace Framework
             }
             catch (Exception ex)
             {
-                Logger.Error($"获取文件哈希信息失败: {filePath}, 错误: {ex.Message}");
+                GameLog.Error($"获取文件哈希信息失败: {filePath}, 错误: {ex.Message}");
                 return null;
             }
         }

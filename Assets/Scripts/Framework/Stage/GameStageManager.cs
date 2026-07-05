@@ -45,13 +45,13 @@ namespace Framework
 
         public override void OnInit()
         {
-            Logger.Log("[GameStageManager] 初始化完成");
+            GameLog.Log("[GameStageManager] 初始化完成");
         }
 
         public override void OnShutdown()
         {
             _currentStage = null;
-            Logger.Log("[GameStageManager] 已关闭");
+            GameLog.Log("[GameStageManager] 已关闭");
         }
 
         // ── 阶段切换 ──────────────────────────────────────────────────────────
@@ -62,18 +62,18 @@ namespace Framework
         {
             if (nextStage == null)
             {
-                Logger.Error("[GameStageManager] ChangeStageAsync: nextStage 为 null");
+                GameLog.Error("[GameStageManager] ChangeStageAsync: nextStage 为 null");
                 return;
             }
 
             if (_isChanging)
             {
-                Logger.Warning("[GameStageManager] 阶段切换进行中，忽略");
+                GameLog.Warning("[GameStageManager] 阶段切换进行中，忽略");
                 return;
             }
 
             _isChanging = true;
-            Logger.Log($"[GameStageManager] 阶段切换: {_currentStage?.GetType().Name ?? "null"} → {nextStage.GetType().Name}");
+            GameLog.Log($"[GameStageManager] 阶段切换: {_currentStage?.GetType().Name ?? "null"} → {nextStage.GetType().Name}");
 
             var config = nextStage.GetTransition() ?? SceneTransitionConfig.Standard;
             string sceneAddress = nextStage.GetSceneAddress();
@@ -136,11 +136,11 @@ namespace Framework
                 // ⑦ 过场淡入
                 await provider.EndAsync(config.FadeDuration);
 
-                Logger.Log($"[GameStageManager] 阶段切换完成: {nextStage.GetType().Name}");
+                GameLog.Log($"[GameStageManager] 阶段切换完成: {nextStage.GetType().Name}");
             }
             catch (Exception ex)
             {
-                Logger.Error($"[GameStageManager] 阶段切换异常 [{nextStage.GetType().Name}]: {ex.Message}");
+                GameLog.Error($"[GameStageManager] 阶段切换异常 [{nextStage.GetType().Name}]: {ex.Message}");
                 var provider = sceneMgr?.GetOrCreateTransitionProvider();
                 provider?.ForceHide();
                 throw;

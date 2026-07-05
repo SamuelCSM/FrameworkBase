@@ -120,7 +120,7 @@ namespace Framework
         {
             if (_isInitialized)
             {
-                Logger.Warning("[ConfigManager] Already initialized; skipping duplicate init.");
+                GameLog.Warning("[ConfigManager] Already initialized; skipping duplicate init.");
                 return;
             }
 
@@ -129,15 +129,15 @@ namespace Framework
 
             if (!File.Exists(_dbPath))
             {
-                Logger.Warning($"[ConfigManager] Database is not ready yet: {_dbPath}");
+                GameLog.Warning($"[ConfigManager] Database is not ready yet: {_dbPath}");
             }
             else
             {
-                Logger.Log($"[ConfigManager] Database path: {_dbPath}");
+                GameLog.Log($"[ConfigManager] Database path: {_dbPath}");
             }
 
             _isInitialized = true;
-            Logger.Log("[ConfigManager] Initialization complete.");
+            GameLog.Log("[ConfigManager] Initialization complete.");
         }
 
         /// <summary>
@@ -158,7 +158,7 @@ namespace Framework
                 DatabaseRefreshResult refreshResult = await TryRefreshExistingDatabaseFromPackagedAsync(sourcePaths);
                 if (refreshResult.Refreshed)
                 {
-                    Logger.Log($"[ConfigManager] Database was refreshed from packaged baseline: {_dbPath}");
+                    GameLog.Log($"[ConfigManager] Database was refreshed from packaged baseline: {_dbPath}");
                     // 首包配置自动替换旧持久化库后，刷新已显示的 TextMeshProEx。
                     Language.Refresh();
                     return true;
@@ -166,18 +166,18 @@ namespace Framework
 
                 if (refreshResult.IncompatibleDetected)
                 {
-                    Logger.Warning($"[ConfigManager] Existing database is incompatible and could not be refreshed automatically: {_dbPath}");
+                    GameLog.Warning($"[ConfigManager] Existing database is incompatible and could not be refreshed automatically: {_dbPath}");
                     return false;
                 }
 
                 if (!ValidateDatabaseFile(_dbPath))
                 {
-                    Logger.Warning($"[ConfigManager] Existing database is invalid and will be reinstalled: {_dbPath}");
+                    GameLog.Warning($"[ConfigManager] Existing database is invalid and will be reinstalled: {_dbPath}");
                     DeleteFileQuietly(_dbPath);
                 }
                 else
                 {
-                    Logger.Log($"[ConfigManager] Database is ready: {_dbPath}");
+                    GameLog.Log($"[ConfigManager] Database is ready: {_dbPath}");
                     // 配置库可能晚于 UI Awake 完成，数据库 ready 后主动刷新一次多语言文本。
                     Language.Refresh();
                     return true;
@@ -197,14 +197,14 @@ namespace Framework
                 bool copied = await TryCopyStreamingDatabaseAsync(sourcePath, _dbPath);
                 if (copied)
                 {
-                    Logger.Log($"[ConfigManager] Installed packaged database: {sourcePaths[i]} -> {_dbPath}");
+                    GameLog.Log($"[ConfigManager] Installed packaged database: {sourcePaths[i]} -> {_dbPath}");
                     // 首包配置首次安装后，刷新已显示的 TextMeshProEx。
                     Language.Refresh();
                     return true;
                 }
             }
 
-            Logger.Warning($"[ConfigManager] No usable database found at persistentDataPath or StreamingAssets/RefData/config.db: {_dbPath}");
+            GameLog.Warning($"[ConfigManager] No usable database found at persistentDataPath or StreamingAssets/RefData/config.db: {_dbPath}");
             return false;
         }
 
@@ -219,7 +219,7 @@ namespace Framework
 
             if (string.IsNullOrEmpty(address))
             {
-                Logger.Error("[ConfigManager] Address must not be empty.");
+                GameLog.Error("[ConfigManager] Address must not be empty.");
                 return false;
             }
 
@@ -231,7 +231,7 @@ namespace Framework
 
                 if (handle.Status != AsyncOperationStatus.Succeeded || handle.Result == null)
                 {
-                    Logger.Warning($"[ConfigManager] Hot-update database not found: {address}");
+                    GameLog.Warning($"[ConfigManager] Hot-update database not found: {address}");
                     return false;
                 }
 
@@ -246,12 +246,12 @@ namespace Framework
             }
             catch (Exception ex) when (ex.GetType().Name == "InvalidKeyException")
             {
-                Logger.Warning($"[ConfigManager] Hot-update database key does not exist: {address}");
+                GameLog.Warning($"[ConfigManager] Hot-update database key does not exist: {address}");
                 return false;
             }
             catch (Exception ex)
             {
-                Logger.Error($"[ConfigManager] Failed to update database from Addressables [{address}]: {ex.Message}");
+                GameLog.Error($"[ConfigManager] Failed to update database from Addressables [{address}]: {ex.Message}");
                 return false;
             }
             finally
@@ -316,11 +316,11 @@ namespace Framework
                         continue;
                     }
 
-                    Logger.Warning($"[ConfigManager] Unsupported config type: {configType.Name}");
+                    GameLog.Warning($"[ConfigManager] Unsupported config type: {configType.Name}");
                 }
                 catch (Exception ex)
                 {
-                    Logger.Error($"[ConfigManager] Failed to preload {configType.Name}: {ex.Message}");
+                    GameLog.Error($"[ConfigManager] Failed to preload {configType.Name}: {ex.Message}");
                 }
             }
         }
@@ -336,12 +336,12 @@ namespace Framework
             {
                 tableConfig.Unload();
                 _tableConfigCache.Remove(configType);
-                Logger.Log($"[ConfigManager] Unloaded table config: {configType.Name}");
+                GameLog.Log($"[ConfigManager] Unloaded table config: {configType.Name}");
             }
 
             if (_generalConfigCache.Remove(configType))
             {
-                Logger.Log($"[ConfigManager] Unloaded general config: {configType.Name}");
+                GameLog.Log($"[ConfigManager] Unloaded general config: {configType.Name}");
             }
         }
 
@@ -358,13 +358,13 @@ namespace Framework
                 }
                 catch (Exception ex)
                 {
-                    Logger.Error($"[ConfigManager] Failed to unload {kvp.Key.Name}: {ex.Message}");
+                    GameLog.Error($"[ConfigManager] Failed to unload {kvp.Key.Name}: {ex.Message}");
                 }
             }
 
             _tableConfigCache.Clear();
             _generalConfigCache.Clear();
-            Logger.Log("[ConfigManager] Cleared all loaded configs.");
+            GameLog.Log("[ConfigManager] Cleared all loaded configs.");
         }
 
         /// <summary>
@@ -387,7 +387,7 @@ namespace Framework
             UnloadAllConfigs();
             PreloadConfigs(configTypes.ToArray());
 
-            Logger.Log("[ConfigManager] Reloaded all cached configs.");
+            GameLog.Log("[ConfigManager] Reloaded all cached configs.");
         }
 
         /// <summary>
@@ -422,7 +422,7 @@ namespace Framework
         {
             UnloadAllConfigs();
             _isInitialized = false;
-            Logger.Log("[ConfigManager] Disposed.");
+            GameLog.Log("[ConfigManager] Disposed.");
         }
 
         /// <summary>
@@ -445,12 +445,12 @@ namespace Framework
                 config.Load(_dbPath, tableName);
                 _tableConfigCache[configType] = config;
 
-                Logger.Log($"[ConfigManager] Loaded table config {configType.Name} with {config.Count} rows.");
+                GameLog.Log($"[ConfigManager] Loaded table config {configType.Name} with {config.Count} rows.");
                 return (TConfig)config;
             }
             catch (Exception ex)
             {
-                Logger.Error($"[ConfigManager] Failed to load table config {configType.Name}: {ex.Message}");
+                GameLog.Error($"[ConfigManager] Failed to load table config {configType.Name}: {ex.Message}");
                 throw;
             }
         }
@@ -478,7 +478,7 @@ namespace Framework
             config.Load(_dbPath, tableName);
             _tableConfigCache[configType] = config;
 
-            Logger.Log($"[ConfigManager] Preloaded table config {configType.Name} with {config.Count} rows.");
+            GameLog.Log($"[ConfigManager] Preloaded table config {configType.Name} with {config.Count} rows.");
         }
 
         /// <summary>
@@ -509,12 +509,12 @@ namespace Framework
                 }
 
                 _generalConfigCache[configType] = config;
-                Logger.Log($"[ConfigManager] Loaded general config {configType.Name}.");
+                GameLog.Log($"[ConfigManager] Loaded general config {configType.Name}.");
                 return config;
             }
             catch (Exception ex)
             {
-                Logger.Error($"[ConfigManager] Failed to load general config {configType.Name}: {ex.Message}");
+                GameLog.Error($"[ConfigManager] Failed to load general config {configType.Name}: {ex.Message}");
                 throw;
             }
         }
@@ -541,7 +541,7 @@ namespace Framework
 
                 if (!propertyMap.TryGetValue(row.Key, out PropertyInfo property))
                 {
-                    Logger.Warning($"[ConfigManager] general config {configType.Name} has no property for key: {row.Key}");
+                    GameLog.Warning($"[ConfigManager] general config {configType.Name} has no property for key: {row.Key}");
                     continue;
                 }
 
@@ -806,7 +806,7 @@ namespace Framework
                 await request.SendWebRequest();
                 if (request.result != UnityWebRequest.Result.Success)
                 {
-                    Logger.Warning($"[ConfigManager] Failed to read packaged database: {sourceUrl}, {request.error}");
+                    GameLog.Warning($"[ConfigManager] Failed to read packaged database: {sourceUrl}, {request.error}");
                     return null;
                 }
 
@@ -836,12 +836,12 @@ namespace Framework
             if (!currentDatabaseValid || !IsDatabaseCompatibleWithPackaged(_dbPath, packagedDbPath))
             {
                 result.IncompatibleDetected = true;
-                Logger.Warning($"[ConfigManager] Existing database schema is older than packaged baseline. Reinstalling from {sourceName}.");
+                GameLog.Warning($"[ConfigManager] Existing database schema is older than packaged baseline. Reinstalling from {sourceName}.");
             }
             else
             {
                 result.PackagedBaselineUpdated = true;
-                Logger.Warning($"[ConfigManager] Packaged database baseline is newer than persistent database. Reinstalling from {sourceName}.");
+                GameLog.Warning($"[ConfigManager] Packaged database baseline is newer than persistent database. Reinstalling from {sourceName}.");
             }
 
             try
@@ -853,7 +853,7 @@ namespace Framework
             }
             catch (Exception ex)
             {
-                Logger.Error($"[ConfigManager] Failed to refresh database from packaged baseline: {ex.Message}");
+                GameLog.Error($"[ConfigManager] Failed to refresh database from packaged baseline: {ex.Message}");
                 return false;
             }
         }
@@ -883,7 +883,7 @@ namespace Framework
 
             if (HasInstalledResourceVersionNewerThanPackaged())
             {
-                Logger.Log("[ConfigManager] Persistent database belongs to a newer resource hot-update; keep current database.");
+                GameLog.Log("[ConfigManager] Persistent database belongs to a newer resource hot-update; keep current database.");
                 return false;
             }
 
@@ -934,7 +934,7 @@ namespace Framework
             }
             catch (Exception ex)
             {
-                Logger.Warning($"[ConfigManager] Failed to read version info: {versionPath}, {ex.Message}");
+                GameLog.Warning($"[ConfigManager] Failed to read version info: {versionPath}, {ex.Message}");
                 return null;
             }
         }
@@ -961,7 +961,7 @@ namespace Framework
 
                         if (!DatabaseTableExists(currentDb, table.Name))
                         {
-                            Logger.Warning($"[ConfigManager] Existing database missing table: {table.Name}");
+                            GameLog.Warning($"[ConfigManager] Existing database missing table: {table.Name}");
                             return false;
                         }
 
@@ -971,7 +971,7 @@ namespace Framework
                         {
                             if (!currentColumns.Contains(columnName))
                             {
-                                Logger.Warning($"[ConfigManager] Existing database missing column: {table.Name}.{columnName}");
+                                GameLog.Warning($"[ConfigManager] Existing database missing column: {table.Name}.{columnName}");
                                 return false;
                             }
                         }
@@ -982,7 +982,7 @@ namespace Framework
             }
             catch (Exception ex)
             {
-                Logger.Warning($"[ConfigManager] Failed to compare database schema: {ex.Message}");
+                GameLog.Warning($"[ConfigManager] Failed to compare database schema: {ex.Message}");
                 return false;
             }
         }
@@ -1033,7 +1033,7 @@ namespace Framework
                 await request.SendWebRequest();
                 if (request.result != UnityWebRequest.Result.Success)
                 {
-                    Logger.Warning($"[ConfigManager] Failed to read packaged database: {sourceUrl}, {request.error}");
+                    GameLog.Warning($"[ConfigManager] Failed to read packaged database: {sourceUrl}, {request.error}");
                     return false;
                 }
 
@@ -1059,7 +1059,7 @@ namespace Framework
         {
             if (bytes == null || bytes.Length == 0)
             {
-                Logger.Warning($"[ConfigManager] Database payload is empty: {sourceName}");
+                GameLog.Warning($"[ConfigManager] Database payload is empty: {sourceName}");
                 return false;
             }
 
@@ -1081,7 +1081,7 @@ namespace Framework
                 if (!ValidateDatabaseFile(tempPath))
                 {
                     DeleteFileQuietly(tempPath);
-                    Logger.Error($"[ConfigManager] Database validation failed: {sourceName}");
+                    GameLog.Error($"[ConfigManager] Database validation failed: {sourceName}");
                     return false;
                 }
 
@@ -1099,12 +1099,12 @@ namespace Framework
                 }
 
                 DeleteFileQuietly(backupPath);
-                Logger.Log($"[ConfigManager] Updated database from {sourceName}.");
+                GameLog.Log($"[ConfigManager] Updated database from {sourceName}.");
                 return true;
             }
             catch (Exception ex)
             {
-                Logger.Error($"[ConfigManager] Failed to install database bytes: {ex.Message}");
+                GameLog.Error($"[ConfigManager] Failed to install database bytes: {ex.Message}");
                 RestoreDatabaseBackup(backupPath, loadedConfigTypes);
                 DeleteFileQuietly(tempPath);
                 return false;
@@ -1127,7 +1127,7 @@ namespace Framework
             }
             catch (Exception ex)
             {
-                Logger.Error($"[ConfigManager] Invalid database file {dbPath}: {ex.Message}");
+                GameLog.Error($"[ConfigManager] Invalid database file {dbPath}: {ex.Message}");
                 return false;
             }
         }
@@ -1152,7 +1152,7 @@ namespace Framework
                 {
                     File.Copy(backupPath, _dbPath, overwrite: true);
                     DeleteFileQuietly(backupPath);
-                    Logger.Warning("[ConfigManager] Restored previous database backup.");
+                    GameLog.Warning("[ConfigManager] Restored previous database backup.");
 
                     if (loadedConfigTypes != null && loadedConfigTypes.Count > 0)
                     {
@@ -1162,7 +1162,7 @@ namespace Framework
             }
             catch (Exception restoreEx)
             {
-                Logger.Error($"[ConfigManager] Failed to restore backup database: {restoreEx.Message}");
+                GameLog.Error($"[ConfigManager] Failed to restore backup database: {restoreEx.Message}");
             }
         }
 
@@ -1182,7 +1182,7 @@ namespace Framework
             }
             catch (Exception ex)
             {
-                Logger.Warning($"[ConfigManager] Failed to delete temp file {path}: {ex.Message}");
+                GameLog.Warning($"[ConfigManager] Failed to delete temp file {path}: {ex.Message}");
             }
         }
 

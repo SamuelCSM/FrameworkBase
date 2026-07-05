@@ -68,11 +68,11 @@ namespace Framework.Save
             var sanitized = SanitizeUserId(userId);
             if (string.IsNullOrEmpty(sanitized))
             {
-                Logger.Warning("[SaveManager] SetCurrentUser: userId 无效，保持 guest");
+                GameLog.Warning("[SaveManager] SetCurrentUser: userId 无效，保持 guest");
                 return;
             }
             _currentUserId = sanitized;
-            Logger.Log($"[SaveManager] 当前账号已切换 → {_currentUserId}");
+            GameLog.Log($"[SaveManager] 当前账号已切换 → {_currentUserId}");
         }
 
         /// <summary>
@@ -81,7 +81,7 @@ namespace Framework.Save
         public void ClearCurrentUser()
         {
             _currentUserId = "guest";
-            Logger.Log("[SaveManager] 已退出账号，切回 guest 目录");
+            GameLog.Log("[SaveManager] 已退出账号，切回 guest 目录");
         }
 
         // ── 磁盘封包格式 ─────────────────────────────────────────────────────
@@ -165,7 +165,7 @@ namespace Framework.Save
                 fileLock.Release();
             }
 
-            Logger.Log($"[SaveManager] 写档成功 user={_currentUserId} type={typeof(T).Name} slot={slot}");
+            GameLog.Log($"[SaveManager] 写档成功 user={_currentUserId} type={typeof(T).Name} slot={slot}");
         }
 
         /// <summary>
@@ -224,20 +224,20 @@ namespace Framework.Save
 
                     result.TryMigrate(envelope.v);
 
-                    Logger.Log($"[SaveManager] 读档成功 user={userId} type={typeof(T).Name} slot={slot} v{envelope.v}→{result.dataVersion}");
+                    GameLog.Log($"[SaveManager] 读档成功 user={userId} type={typeof(T).Name} slot={slot} v{envelope.v}→{result.dataVersion}");
                     return result;
                 }
                 catch (CryptographicException e)
                 {
-                    Logger.Warning($"[SaveManager] 解密失败 ({path}): {e.Message}");
+                    GameLog.Warning($"[SaveManager] 解密失败 ({path}): {e.Message}");
                 }
                 catch (Exception e)
                 {
-                    Logger.Warning($"[SaveManager] 读档失败 ({path}): {e.Message}，尝试备份...");
+                    GameLog.Warning($"[SaveManager] 读档失败 ({path}): {e.Message}，尝试备份...");
                 }
             }
 
-            Logger.Log($"[SaveManager] 无有效存档 user={userId} type={typeof(T).Name} slot={slot}，使用默认值");
+            GameLog.Log($"[SaveManager] 无有效存档 user={userId} type={typeof(T).Name} slot={slot}，使用默认值");
             return new T();
         }
 
@@ -253,7 +253,7 @@ namespace Framework.Save
             if (string.IsNullOrEmpty(envelope.m))
                 return AesHelper.Sha256Hex(encrypted) == envelope.h;
 
-            Logger.Warning($"[SaveManager] 未知完整性方案 m={envelope.m}，拒绝加载");
+            GameLog.Warning($"[SaveManager] 未知完整性方案 m={envelope.m}，拒绝加载");
             return false;
         }
 
@@ -268,7 +268,7 @@ namespace Framework.Save
         {
             TryDeleteFile(SlotPath<T>(slot));
             TryDeleteFile(BackupPath<T>(slot));
-            Logger.Log($"[SaveManager] 已删除存档 user={_currentUserId} type={typeof(T).Name} slot={slot}");
+            GameLog.Log($"[SaveManager] 已删除存档 user={_currentUserId} type={typeof(T).Name} slot={slot}");
         }
 
         /// <summary>删除当前账号的全部存档（保留其他账号数据）</summary>
@@ -276,7 +276,7 @@ namespace Framework.Save
         {
             if (Directory.Exists(UserDir))
                 Directory.Delete(UserDir, recursive: true);
-            Logger.Log($"[SaveManager] 已删除账号 {_currentUserId} 的全部存档");
+            GameLog.Log($"[SaveManager] 已删除账号 {_currentUserId} 的全部存档");
         }
 
         /// <summary>删除本设备所有账号的全部存档（慎用）</summary>
@@ -285,7 +285,7 @@ namespace Framework.Save
             var root = Path.Combine(Application.persistentDataPath, "saves");
             if (Directory.Exists(root))
                 Directory.Delete(root, recursive: true);
-            Logger.Log("[SaveManager] 已删除全设备所有存档");
+            GameLog.Log("[SaveManager] 已删除全设备所有存档");
         }
 
         private static void TryDeleteFile(string path)

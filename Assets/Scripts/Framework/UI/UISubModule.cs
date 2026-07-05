@@ -146,13 +146,13 @@ namespace Framework
         {
             if (IsDisposed)
             {
-                Logger.Warning($"[UISubModule] 已释放的子模块不能执行 {operation}: {GetType().Name}");
+                GameLog.Warning($"[UISubModule] 已释放的子模块不能执行 {operation}: {GetType().Name}");
                 return false;
             }
 
             if (!IsInitialized)
             {
-                Logger.Error($"[UISubModule] 未初始化的子模块不能执行 {operation}: {GetType().Name}");
+                GameLog.Error($"[UISubModule] 未初始化的子模块不能执行 {operation}: {GetType().Name}");
                 return false;
             }
 
@@ -220,7 +220,7 @@ namespace Framework
         {
             if (IsDisposed)
             {
-                Logger.Warning($"[UISubPanel] 已释放的子面板不能重新初始化: {GetType().Name}");
+                GameLog.Warning($"[UISubPanel] 已释放的子面板不能重新初始化: {GetType().Name}");
                 return;
             }
 
@@ -231,13 +231,13 @@ namespace Framework
 
             if (view == null)
             {
-                Logger.Error($"[UISubPanel] Initialize 失败，视图为空: {GetType().Name}");
+                GameLog.Error($"[UISubPanel] Initialize 失败，视图为空: {GetType().Name}");
                 return;
             }
 
             if (!ViewType.IsInstanceOfType(view))
             {
-                Logger.Error($"[UISubPanel] Initialize 失败，视图类型不匹配: Panel={GetType().Name}, Need={ViewType.Name}, Actual={view.GetType().Name}");
+                GameLog.Error($"[UISubPanel] Initialize 失败，视图类型不匹配: Panel={GetType().Name}, Need={ViewType.Name}, Actual={view.GetType().Name}");
                 return;
             }
 
@@ -333,13 +333,13 @@ namespace Framework
         {
             if (IsDisposed)
             {
-                Logger.Warning($"[UISubPanel] 已释放的子面板不能执行 {operation}: {GetType().Name}");
+                GameLog.Warning($"[UISubPanel] 已释放的子面板不能执行 {operation}: {GetType().Name}");
                 return false;
             }
 
             if (!IsInitialized)
             {
-                Logger.Error($"[UISubPanel] 未初始化的子面板不能执行 {operation}: {GetType().Name}");
+                GameLog.Error($"[UISubPanel] 未初始化的子面板不能执行 {operation}: {GetType().Name}");
                 return false;
             }
 

@@ -1,6 +1,5 @@
 using Framework.Core;
 using UnityEngine;
-using Logger = Framework.Logger;
 
 namespace Framework.Input
 {
@@ -48,7 +47,7 @@ namespace Framework.Input
             gate = new InputGate(blockStack);
             pointerSource = new LegacyPointerInputSource();
             pinchPanSource = new LegacyPinchPanGestureSource();
-            Logger.Log("[InputManager] 初始化完成（Legacy 指针与手势采样）");
+            GameLog.Log("[InputManager] 初始化完成（Legacy 指针与手势采样）");
         }
 
         /// <summary>

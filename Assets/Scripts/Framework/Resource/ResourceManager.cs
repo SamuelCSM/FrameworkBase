@@ -41,7 +41,7 @@ namespace Framework
 
         public override void OnInit()
         {
-            Logger.Log("ResourceManager 初始化");
+            GameLog.Log("ResourceManager 初始化");
         }
 
         public override void OnUpdate(float deltaTime)
@@ -63,7 +63,7 @@ namespace Framework
                         Addressables.ReleaseInstance(instance);
                     }
                 }
-                Logger.Log($"ResourceManager 关闭：释放残留实例 {instances.Count} 个");
+                GameLog.Log($"ResourceManager 关闭：释放残留实例 {instances.Count} 个");
             }
 
             // 清理所有资源
@@ -90,7 +90,7 @@ namespace Framework
             _instanceCountByAddress.Clear();
             _instanceToAddress.Clear();
 
-            Logger.Log("ResourceManager 关闭");
+            GameLog.Log("ResourceManager 关闭");
         }
 
         #endregion
@@ -103,10 +103,10 @@ namespace Framework
         /// </summary>
         public async UniTask InitializeAsync()
         {
-            Logger.Log("[ResourceManager] 初始化 Addressables...");
+            GameLog.Log("[ResourceManager] 初始化 Addressables...");
             var handle = Addressables.InitializeAsync();
             await handle.Task;
-            Logger.Log("[ResourceManager] Addressables 初始化完成");
+            GameLog.Log("[ResourceManager] Addressables 初始化完成");
         }
 
         /// <summary>
@@ -115,7 +115,7 @@ namespace Framework
         /// </summary>
         public async UniTask<int> CheckAndUpdateCatalogsAsync()
         {
-            Logger.Log("[ResourceManager] 检查 Catalog 更新...");
+            GameLog.Log("[ResourceManager] 检查 Catalog 更新...");
 
             try
             {
@@ -124,7 +124,7 @@ namespace Framework
 
                 if (checkHandle.Status != AsyncOperationStatus.Succeeded)
                 {
-                    Logger.Warning("[ResourceManager] CheckForCatalogUpdates 失败，跳过更新");
+                    GameLog.Warning("[ResourceManager] CheckForCatalogUpdates 失败，跳过更新");
                     Addressables.Release(checkHandle);
                     return 0;
                 }
@@ -134,23 +134,23 @@ namespace Framework
 
                 if (updatedCatalogs == null || updatedCatalogs.Count == 0)
                 {
-                    Logger.Log("[ResourceManager] Catalog 已是最新（Editor Play Mode 下属正常，" +
+                    GameLog.Log("[ResourceManager] Catalog 已是最新（Editor Play Mode 下属正常，" +
                                "如需强制测试下载流程请先调用 ClearCacheAsync）");
                     return 0;
                 }
 
-                Logger.Log($"[ResourceManager] 发现 {updatedCatalogs.Count} 个 Catalog 需要更新，开始下载...");
+                GameLog.Log($"[ResourceManager] 发现 {updatedCatalogs.Count} 个 Catalog 需要更新，开始下载...");
 
                 var updateHandle = Addressables.UpdateCatalogs(updatedCatalogs, false);
                 await updateHandle.Task;
                 Addressables.Release(updateHandle);
 
-                Logger.Log($"[ResourceManager] Catalog 更新完成，共更新 {updatedCatalogs.Count} 个");
+                GameLog.Log($"[ResourceManager] Catalog 更新完成，共更新 {updatedCatalogs.Count} 个");
                 return updatedCatalogs.Count;
             }
             catch (Exception e)
             {
-                Logger.Error($"[ResourceManager] Catalog 更新异常: {e.Message}");
+                GameLog.Error($"[ResourceManager] Catalog 更新异常: {e.Message}");
                 return 0;
             }
         }
@@ -162,7 +162,7 @@ namespace Framework
         public void ClearCache()
         {
             bool cleared = Caching.ClearCache();
-            Logger.Log(cleared
+            GameLog.Log(cleared
                 ? "[ResourceManager] 本地 bundle 缓存已全部清除，下次启动将重新下载"
                 : "[ResourceManager] 缓存清除失败（可能有 bundle 正在使用中）");
         }
@@ -180,18 +180,18 @@ namespace Framework
                 await handle.Task;
                 long size = handle.Result;
                 Addressables.Release(handle);
-                Logger.Log($"[ResourceManager] 待下载大小 [{key}]: {FileUtils.FormatBytes(size)}");
+                GameLog.Log($"[ResourceManager] 待下载大小 [{key}]: {FileUtils.FormatBytes(size)}");
                 return size;
             }
             catch (InvalidKeyException)
             {
                 // key 不存在于当前 catalog（例如分组名作为 key、label 未设置），跳过
-                Logger.Warning($"[ResourceManager] GetDownloadSizeAsync: key [{key}] 在 catalog 中不存在，跳过");
+                GameLog.Warning($"[ResourceManager] GetDownloadSizeAsync: key [{key}] 在 catalog 中不存在，跳过");
                 return 0;
             }
             catch (Exception e)
             {
-                Logger.Error($"[ResourceManager] GetDownloadSizeAsync 异常 [{key}]: {e.Message}");
+                GameLog.Error($"[ResourceManager] GetDownloadSizeAsync 异常 [{key}]: {e.Message}");
                 return 0;
             }
         }
@@ -212,7 +212,7 @@ namespace Framework
 
                 if (keys.Count == 0)
                 {
-                    Logger.Warning("[ResourceManager] 当前 catalog 无任何 key，无法计算下载大小");
+                    GameLog.Warning("[ResourceManager] 当前 catalog 无任何 key，无法计算下载大小");
                     return 0;
                 }
 
@@ -220,12 +220,12 @@ namespace Framework
                 await handle.Task;
                 long size = handle.Result;
                 Addressables.Release(handle);
-                Logger.Log($"[ResourceManager] 全量待下载大小: {FileUtils.FormatBytes(size)}");
+                GameLog.Log($"[ResourceManager] 全量待下载大小: {FileUtils.FormatBytes(size)}");
                 return size;
             }
             catch (Exception e)
             {
-                Logger.Error($"[ResourceManager] GetTotalRemoteDownloadSizeAsync 异常: {e.Message}");
+                GameLog.Error($"[ResourceManager] GetTotalRemoteDownloadSizeAsync 异常: {e.Message}");
                 return 0;
             }
         }
@@ -236,7 +236,7 @@ namespace Framework
         /// </summary>
         public async UniTask<bool> DownloadAllRemoteDependenciesAsync(Action<float> onProgress = null)
         {
-            Logger.Log("[ResourceManager] 开始全量下载远端资源依赖...");
+            GameLog.Log("[ResourceManager] 开始全量下载远端资源依赖...");
 
             try
             {
@@ -247,7 +247,7 @@ namespace Framework
 
                 if (keys.Count == 0)
                 {
-                    Logger.Warning("[ResourceManager] 当前 catalog 无 key，跳过下载");
+                    GameLog.Warning("[ResourceManager] 当前 catalog 无 key，跳过下载");
                     onProgress?.Invoke(1f);
                     return true;
                 }
@@ -262,19 +262,19 @@ namespace Framework
 
                 if (handle.Status != AsyncOperationStatus.Succeeded)
                 {
-                    Logger.Error($"[ResourceManager] 全量下载失败: {handle.OperationException?.Message}");
+                    GameLog.Error($"[ResourceManager] 全量下载失败: {handle.OperationException?.Message}");
                     Addressables.Release(handle);
                     return false;
                 }
 
                 onProgress?.Invoke(1f);
                 Addressables.Release(handle);
-                Logger.Log("[ResourceManager] 全量远端资源下载完成");
+                GameLog.Log("[ResourceManager] 全量远端资源下载完成");
                 return true;
             }
             catch (Exception e)
             {
-                Logger.Error($"[ResourceManager] DownloadAllRemoteDependenciesAsync 异常: {e.Message}");
+                GameLog.Error($"[ResourceManager] DownloadAllRemoteDependenciesAsync 异常: {e.Message}");
                 return false;
             }
         }
@@ -289,7 +289,7 @@ namespace Framework
             Action<float> onProgress = null,
             long totalBytes = 0)
         {
-            Logger.Log($"[ResourceManager] 开始下载资源依赖 [{key}]...");
+            GameLog.Log($"[ResourceManager] 开始下载资源依赖 [{key}]...");
 
             try
             {
@@ -323,19 +323,19 @@ namespace Framework
 
                 if (handle.Status != AsyncOperationStatus.Succeeded)
                 {
-                    Logger.Error($"[ResourceManager] 下载依赖失败 [{key}]: {handle.OperationException?.Message}");
+                    GameLog.Error($"[ResourceManager] 下载依赖失败 [{key}]: {handle.OperationException?.Message}");
                     Addressables.Release(handle);
                     return false;
                 }
 
                 onProgress?.Invoke(1f);
                 Addressables.Release(handle);
-                Logger.Log($"[ResourceManager] 资源依赖下载完成 [{key}]");
+                GameLog.Log($"[ResourceManager] 资源依赖下载完成 [{key}]");
                 return true;
             }
             catch (Exception e)
             {
-                Logger.Error($"[ResourceManager] DownloadDependenciesAsync 异常 [{key}]: {e.Message}");
+                GameLog.Error($"[ResourceManager] DownloadDependenciesAsync 异常 [{key}]: {e.Message}");
                 return false;
             }
         }
@@ -355,7 +355,7 @@ namespace Framework
         {
             if (string.IsNullOrEmpty(address))
             {
-                Logger.Error("LoadAssetAsync: address 不能为空");
+                GameLog.Error("LoadAssetAsync: address 不能为空");
                 return null;
             }
 
@@ -381,17 +381,17 @@ namespace Framework
 
                 if (asset == null)
                 {
-                    Logger.Error($"LoadAssetAsync: 加载资源失败 - {address}");
+                    GameLog.Error($"LoadAssetAsync: 加载资源失败 - {address}");
                     RollbackLoad(address, handle); // 回滚缓存/计数并释放失败句柄
                     return null;
                 }
 
-                Logger.Log($"LoadAssetAsync: 加载资源成功 - {address}");
+                GameLog.Log($"LoadAssetAsync: 加载资源成功 - {address}");
                 return asset;
             }
             catch (Exception e)
             {
-                Logger.Error($"LoadAssetAsync: 加载资源异常 - {address}, 错误: {e.Message}");
+                GameLog.Error($"LoadAssetAsync: 加载资源异常 - {address}, 错误: {e.Message}");
                 // 句柄已入缓存时回滚，避免异常路径泄漏
                 if (_handleCache.TryGetValue(address, out var failed))
                 {
@@ -408,7 +408,7 @@ namespace Framework
         {
             if (string.IsNullOrEmpty(address))
             {
-                Logger.Error("LoadAssetAsync: address 不能为空");
+                GameLog.Error("LoadAssetAsync: address 不能为空");
                 return null;
             }
 
@@ -444,18 +444,18 @@ namespace Framework
                 T asset = handle.Result;
                 if (asset == null)
                 {
-                    Logger.Error($"LoadAssetAsync: 加载资源失败 - {address}");
+                    GameLog.Error($"LoadAssetAsync: 加载资源失败 - {address}");
                     RollbackLoad(address, handle); // 回滚缓存/计数并释放失败句柄
                     return null;
                 }
 
                 onProgress?.Invoke(1f);
-                Logger.Log($"LoadAssetAsync: 加载资源成功 - {address}");
+                GameLog.Log($"LoadAssetAsync: 加载资源成功 - {address}");
                 return asset;
             }
             catch (Exception e)
             {
-                Logger.Error($"LoadAssetAsync: 加载资源异常 - {address}, 错误: {e.Message}");
+                GameLog.Error($"LoadAssetAsync: 加载资源异常 - {address}, 错误: {e.Message}");
                 if (_handleCache.TryGetValue(address, out var failed))
                 {
                     RollbackLoad(address, failed);
@@ -475,7 +475,7 @@ namespace Framework
         {
             if (string.IsNullOrEmpty(address))
             {
-                Logger.Error("LoadAsset: address 不能为空");
+                GameLog.Error("LoadAsset: address 不能为空");
                 return null;
             }
 
@@ -486,7 +486,7 @@ namespace Framework
                 return cachedHandle.Result as T;
             }
 
-            Logger.Warning($"LoadAsset: 资源未预加载，建议使用 LoadAssetAsync - {address}");
+            GameLog.Warning($"LoadAsset: 资源未预加载，建议使用 LoadAssetAsync - {address}");
             
             // 同步加载（会阻塞主线程，不推荐）
             var handle = Addressables.LoadAssetAsync<T>(address);
@@ -512,7 +512,7 @@ namespace Framework
         {
             if (string.IsNullOrEmpty(address))
             {
-                Logger.Error("InstantiateAsync: address 不能为空");
+                GameLog.Error("InstantiateAsync: address 不能为空");
                 return null;
             }
 
@@ -524,7 +524,7 @@ namespace Framework
 
                 if (instance == null)
                 {
-                    Logger.Error($"InstantiateAsync: 实例化失败 - {address}");
+                    GameLog.Error($"InstantiateAsync: 实例化失败 - {address}");
                     return null;
                 }
 
@@ -534,12 +534,12 @@ namespace Framework
                 // 增加实例计数（与资源句柄计数分离）
                 AddInstanceRef(address);
 
-                Logger.Log($"InstantiateAsync: 实例化成功 - {address}");
+                GameLog.Log($"InstantiateAsync: 实例化成功 - {address}");
                 return instance;
             }
             catch (Exception e)
             {
-                Logger.Error($"InstantiateAsync: 实例化异常 - {address}, 错误: {e.Message}");
+                GameLog.Error($"InstantiateAsync: 实例化异常 - {address}, 错误: {e.Message}");
                 return null;
             }
         }
@@ -555,7 +555,7 @@ namespace Framework
         {
             if (string.IsNullOrEmpty(address))
             {
-                Logger.Error("InstantiateAsync: address 不能为空");
+                GameLog.Error("InstantiateAsync: address 不能为空");
                 return null;
             }
 
@@ -567,19 +567,19 @@ namespace Framework
 
                 if (instance == null)
                 {
-                    Logger.Error($"InstantiateAsync: 实例化失败 - {address}");
+                    GameLog.Error($"InstantiateAsync: 实例化失败 - {address}");
                     return null;
                 }
 
                 _instanceToAddress[instance] = address;
                 AddInstanceRef(address);
 
-                Logger.Log($"InstantiateAsync: 实例化成功 - {address}");
+                GameLog.Log($"InstantiateAsync: 实例化成功 - {address}");
                 return instance;
             }
             catch (Exception e)
             {
-                Logger.Error($"InstantiateAsync: 实例化异常 - {address}, 错误: {e.Message}");
+                GameLog.Error($"InstantiateAsync: 实例化异常 - {address}, 错误: {e.Message}");
                 return null;
             }
         }
@@ -595,7 +595,7 @@ namespace Framework
         {
             if (addresses == null || addresses.Count == 0)
             {
-                Logger.Warning("PreloadAssetsAsync: 预加载列表为空");
+                GameLog.Warning("PreloadAssetsAsync: 预加载列表为空");
                 return;
             }
 
@@ -609,7 +609,7 @@ namespace Framework
                 onProgress?.Invoke((float)loadedCount / totalCount);
             }
 
-            Logger.Log($"PreloadAssetsAsync: 预加载完成，共 {totalCount} 个资源");
+            GameLog.Log($"PreloadAssetsAsync: 预加载完成，共 {totalCount} 个资源");
         }
 
         /// <summary>
@@ -619,14 +619,14 @@ namespace Framework
         {
             if (string.IsNullOrEmpty(label))
             {
-                Logger.Error("PreloadAssetsByLabelAsync: label 不能为空");
+                GameLog.Error("PreloadAssetsByLabelAsync: label 不能为空");
                 return;
             }
 
             // 已预加载过该标签：跳过，避免重复加载产生第二个无法释放的句柄
             if (_labelHandleCache.ContainsKey(label))
             {
-                Logger.Warning($"PreloadAssetsByLabelAsync: 标签 '{label}' 已预加载，跳过");
+                GameLog.Warning($"PreloadAssetsByLabelAsync: 标签 '{label}' 已预加载，跳过");
                 onProgress?.Invoke(1f);
                 return;
             }
@@ -643,7 +643,7 @@ namespace Framework
 
                 if (handle.Status != AsyncOperationStatus.Succeeded)
                 {
-                    Logger.Error($"PreloadAssetsByLabelAsync: 预加载标签失败 - {label}: {handle.OperationException?.Message}");
+                    GameLog.Error($"PreloadAssetsByLabelAsync: 预加载标签失败 - {label}: {handle.OperationException?.Message}");
                     if (handle.IsValid()) Addressables.Release(handle);
                     return;
                 }
@@ -652,13 +652,13 @@ namespace Framework
                 _labelHandleCache[label] = handle;
 
                 var assets = handle.Result;
-                Logger.Log($"PreloadAssetsByLabelAsync: 预加载标签 '{label}' 完成，共 {assets.Count} 个资源");
+                GameLog.Log($"PreloadAssetsByLabelAsync: 预加载标签 '{label}' 完成，共 {assets.Count} 个资源");
 
                 onProgress?.Invoke(1f);
             }
             catch (Exception e)
             {
-                Logger.Error($"PreloadAssetsByLabelAsync: 预加载标签异常 - {label}, 错误: {e.Message}");
+                GameLog.Error($"PreloadAssetsByLabelAsync: 预加载标签异常 - {label}, 错误: {e.Message}");
             }
         }
 
@@ -691,7 +691,7 @@ namespace Framework
                 }
                 
                 _handleCache.Remove(address);
-                Logger.Log($"ReleaseAsset: 释放资源 - {address}");
+                GameLog.Log($"ReleaseAsset: 释放资源 - {address}");
             }
         }
 
@@ -713,7 +713,7 @@ namespace Framework
                     Addressables.Release(handle);
                 }
                 _labelHandleCache.Remove(label);
-                Logger.Log($"ReleaseAssetsByLabel: 释放标签资源 - {label}");
+                GameLog.Log($"ReleaseAssetsByLabel: 释放标签资源 - {label}");
             }
         }
 
@@ -736,11 +736,11 @@ namespace Framework
                 // 释放实例（实例句柄由 Addressables 独立管理，与资源句柄无关）
                 Addressables.ReleaseInstance(instance);
 
-                Logger.Log($"ReleaseInstance: 释放实例 - {address}");
+                GameLog.Log($"ReleaseInstance: 释放实例 - {address}");
             }
             else
             {
-                Logger.Warning($"ReleaseInstance: 实例不是通过 ResourceManager 创建的");
+                GameLog.Warning($"ReleaseInstance: 实例不是通过 ResourceManager 创建的");
                 UnityEngine.Object.Destroy(instance);
             }
         }
@@ -857,16 +857,16 @@ namespace Framework
         /// </summary>
         public void PrintLoadedAssets()
         {
-            Logger.Log("=== 已加载资源列表 ===");
+            GameLog.Log("=== 已加载资源列表 ===");
             foreach (var kvp in _referenceCount)
             {
-                Logger.Log($"  [资源] {kvp.Key} - 引用计数: {kvp.Value}");
+                GameLog.Log($"  [资源] {kvp.Key} - 引用计数: {kvp.Value}");
             }
             foreach (var kvp in _instanceCountByAddress)
             {
-                Logger.Log($"  [实例] {kvp.Key} - 实例计数: {kvp.Value}");
+                GameLog.Log($"  [实例] {kvp.Key} - 实例计数: {kvp.Value}");
             }
-            Logger.Log($"总计: 资源 {_referenceCount.Count} 个 / 实例地址 {_instanceCountByAddress.Count} 个");
+            GameLog.Log($"总计: 资源 {_referenceCount.Count} 个 / 实例地址 {_instanceCountByAddress.Count} 个");
         }
 
         #endregion

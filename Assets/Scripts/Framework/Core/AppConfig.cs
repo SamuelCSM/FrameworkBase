@@ -19,14 +19,14 @@ namespace Framework.Core
             _cached = Resources.Load<AppConfigAsset>(ResourcesPath);
             if (_cached != null)
             {
-                Logger.Log($"[AppConfig] 已加载 ScriptableObject Env={_cached.AppEnv} " +
+                GameLog.Log($"[AppConfig] 已加载 ScriptableObject Env={_cached.AppEnv} " +
                            $"UpdateServerUrl={_cached.UpdateServerUrl} " +
                            $"GS={_cached.GameServerHost}:{_cached.GameServerPort} " +
                            $"UseNetworkLogin={_cached.UseNetworkLogin}");
                 return _cached;
             }
 
-            Logger.Warning("[AppConfig] 未找到 Resources/AppConfig.asset，使用运行时默认配置");
+            GameLog.Warning("[AppConfig] 未找到 Resources/AppConfig.asset，使用运行时默认配置");
             _cached = ScriptableObject.CreateInstance<AppConfigAsset>();
             return _cached;
         }

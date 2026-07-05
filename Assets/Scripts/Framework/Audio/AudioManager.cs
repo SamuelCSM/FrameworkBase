@@ -92,7 +92,7 @@ namespace Framework
 
         public override void OnInit()
         {
-            Logger.Log("AudioManager 初始化");
+            GameLog.Log("AudioManager 初始化");
             
             // 创建音频源对象池
             _audioSourcePool = new AudioSourcePool(10);
@@ -137,7 +137,7 @@ namespace Framework
                 _musicSource = null;
             }
             
-            Logger.Log("AudioManager 关闭");
+            GameLog.Log("AudioManager 关闭");
         }
 
         #endregion
@@ -154,14 +154,14 @@ namespace Framework
         {
             if (string.IsNullOrEmpty(address))
             {
-                Logger.Error("PlayMusicAsync: address 不能为空");
+                GameLog.Error("PlayMusicAsync: address 不能为空");
                 return;
             }
 
             // 如果正在播放相同的音乐，不做处理
             if (_currentMusicAddress == address && _musicSource.isPlaying)
             {
-                Logger.Log($"PlayMusicAsync: 音乐已在播放 - {address}");
+                GameLog.Log($"PlayMusicAsync: 音乐已在播放 - {address}");
                 return;
             }
 
@@ -175,7 +175,7 @@ namespace Framework
             var audioClip = await Core.GameEntry.Resource.LoadAssetAsync<AudioClip>(address);
             if (audioClip == null)
             {
-                Logger.Error($"PlayMusicAsync: 加载音频失败 - {address}");
+                GameLog.Error($"PlayMusicAsync: 加载音频失败 - {address}");
                 return;
             }
 
@@ -199,7 +199,7 @@ namespace Framework
                 _musicSource.Play();
             }
 
-            Logger.Log($"PlayMusicAsync: 播放音乐 - {address}");
+            GameLog.Log($"PlayMusicAsync: 播放音乐 - {address}");
         }
 
         /// <summary>
@@ -219,7 +219,7 @@ namespace Framework
             if (_musicSource != null && _musicSource.isPlaying)
             {
                 _musicSource.Pause();
-                Logger.Log("PauseMusic: 暂停音乐");
+                GameLog.Log("PauseMusic: 暂停音乐");
             }
         }
 
@@ -231,7 +231,7 @@ namespace Framework
             if (_musicSource != null && _musicSource.clip != null)
             {
                 _musicSource.UnPause();
-                Logger.Log("ResumeMusic: 恢复音乐");
+                GameLog.Log("ResumeMusic: 恢复音乐");
             }
         }
 
@@ -261,7 +261,7 @@ namespace Framework
                 _currentMusicAddress = null;
             }
 
-            Logger.Log("StopMusicInternal: 停止音乐");
+            GameLog.Log("StopMusicInternal: 停止音乐");
         }
 
         #endregion
@@ -278,7 +278,7 @@ namespace Framework
         {
             if (string.IsNullOrEmpty(address))
             {
-                Logger.Error("PlaySoundAsync: address 不能为空");
+                GameLog.Error("PlaySoundAsync: address 不能为空");
                 return null;
             }
 
@@ -286,7 +286,7 @@ namespace Framework
             var audioClip = await Core.GameEntry.Resource.LoadAssetAsync<AudioClip>(address);
             if (audioClip == null)
             {
-                Logger.Error($"PlaySoundAsync: 加载音频失败 - {address}");
+                GameLog.Error($"PlaySoundAsync: 加载音频失败 - {address}");
                 return null;
             }
 
@@ -294,7 +294,7 @@ namespace Framework
             var audioSource = _audioSourcePool.Get();
             if (audioSource == null)
             {
-                Logger.Error("PlaySoundAsync: 无法获取音频源");
+                GameLog.Error("PlaySoundAsync: 无法获取音频源");
                 Core.GameEntry.Resource.ReleaseAsset(address);
                 return null;
             }
@@ -319,7 +319,7 @@ namespace Framework
             audioSource.Play();
             _activeSounds.Add(audioSource);
 
-            Logger.Log($"PlaySoundAsync: 播放音效 - {address}");
+            GameLog.Log($"PlaySoundAsync: 播放音效 - {address}");
             return audioSource;
         }
 
@@ -338,7 +338,7 @@ namespace Framework
             _activeSounds.Remove(source);
             _audioSourcePool.Release(source);
 
-            Logger.Log("StopSound: 停止音效");
+            GameLog.Log("StopSound: 停止音效");
         }
 
         /// <summary>
@@ -356,7 +356,7 @@ namespace Framework
             }
 
             _activeSounds.Clear();
-            Logger.Log("StopAllSounds: 停止所有音效");
+            GameLog.Log("StopAllSounds: 停止所有音效");
         }
 
         #endregion

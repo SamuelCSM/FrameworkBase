@@ -87,7 +87,7 @@ namespace Framework
         public override void OnInit()
         {
             _currentScene = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;
-            Logger.Log($"[SceneManager] 初始化完成，当前场景: {_currentScene}");
+            GameLog.Log($"[SceneManager] 初始化完成，当前场景: {_currentScene}");
         }
 
         public override void OnShutdown()
@@ -105,7 +105,7 @@ namespace Framework
             OnSwitchStarted   = null;
             OnSwitchCompleted = null;
 
-            Logger.Log("[SceneManager] 已关闭");
+            GameLog.Log("[SceneManager] 已关闭");
         }
 
         // ── 过场提供者注入 ────────────────────────────────────────────────────
@@ -137,7 +137,7 @@ namespace Framework
         public void SetTransitionProvider(ISceneTransitionProvider provider)
         {
             _transitionProvider = provider;
-            Logger.Log($"[SceneManager] 过场提供者已更换: {provider?.GetType().Name ?? "null（将使用内置）"}");
+            GameLog.Log($"[SceneManager] 过场提供者已更换: {provider?.GetType().Name ?? "null（将使用内置）"}");
         }
 
         /// <summary>获取当前使用的过场提供者（若未注入则懒加载内置实现）。</summary>
@@ -169,13 +169,13 @@ namespace Framework
         {
             if (string.IsNullOrEmpty(sceneName))
             {
-                Logger.Error("[SceneManager] SwitchToAsync: 场景名称不能为空");
+                GameLog.Error("[SceneManager] SwitchToAsync: 场景名称不能为空");
                 return;
             }
 
             if (_isSwitching)
             {
-                Logger.Warning($"[SceneManager] 场景切换进行中，忽略: {sceneName}");
+                GameLog.Warning($"[SceneManager] 场景切换进行中，忽略: {sceneName}");
                 return;
             }
 
@@ -184,7 +184,7 @@ namespace Framework
             string fromScene = _currentScene;
             _isSwitching = true;
             OnSwitchStarted?.Invoke(fromScene, sceneName);
-            Logger.Log($"[SceneManager] 切换开始: {fromScene} → {sceneName}");
+            GameLog.Log($"[SceneManager] 切换开始: {fromScene} → {sceneName}");
 
             var provider = GetOrCreateTransitionProvider();
 
@@ -219,11 +219,11 @@ namespace Framework
                 await provider.EndAsync(config.FadeDuration);
 
                 OnSwitchCompleted?.Invoke(fromScene, sceneName);
-                Logger.Log($"[SceneManager] 切换完成: {fromScene} → {sceneName}");
+                GameLog.Log($"[SceneManager] 切换完成: {fromScene} → {sceneName}");
             }
             catch (Exception ex)
             {
-                Logger.Error($"[SceneManager] 切换异常 [{sceneName}]: {ex.Message}");
+                GameLog.Error($"[SceneManager] 切换异常 [{sceneName}]: {ex.Message}");
                 provider.ForceHide();
                 throw;
             }
@@ -251,11 +251,11 @@ namespace Framework
         {
             if (string.IsNullOrEmpty(sceneName))
             {
-                Logger.Error("[SceneManager] LoadSceneAsync: 场景名称不能为空");
+                GameLog.Error("[SceneManager] LoadSceneAsync: 场景名称不能为空");
                 return;
             }
 
-            Logger.Log($"[SceneManager] 加载场景: {sceneName}");
+            GameLog.Log($"[SceneManager] 加载场景: {sceneName}");
 
             try
             {
@@ -264,7 +264,7 @@ namespace Framework
                 if (_preloadedScenes.TryGetValue(sceneName, out var preloaded))
                 {
                     // 激活预加载场景（已在内存中，仅需 Activate）
-                    Logger.Log($"[SceneManager] 激活预加载场景: {sceneName}");
+                    GameLog.Log($"[SceneManager] 激活预加载场景: {sceneName}");
                     var activateOp = preloaded.Result.ActivateAsync();
                     while (!activateOp.isDone)
                     {
@@ -285,7 +285,7 @@ namespace Framework
 
                     if (handle.Status != AsyncOperationStatus.Succeeded)
                     {
-                        Logger.Error($"[SceneManager] 加载失败: {sceneName}");
+                        GameLog.Error($"[SceneManager] 加载失败: {sceneName}");
                         return;
                     }
                 }
@@ -295,12 +295,12 @@ namespace Framework
                     _currentScene = sceneName;
 
                 onProgress?.Invoke(1f);
-                Logger.Log($"[SceneManager] 加载完成: {sceneName}");
+                GameLog.Log($"[SceneManager] 加载完成: {sceneName}");
                 OnSceneLoaded?.Invoke(sceneName);
             }
             catch (Exception ex)
             {
-                Logger.Error($"[SceneManager] 加载异常 [{sceneName}]: {ex.Message}");
+                GameLog.Error($"[SceneManager] 加载异常 [{sceneName}]: {ex.Message}");
                 throw;
             }
         }
@@ -313,20 +313,20 @@ namespace Framework
         {
             if (string.IsNullOrEmpty(sceneName))
             {
-                Logger.Error("[SceneManager] UnloadSceneAsync: 场景名称不能为空");
+                GameLog.Error("[SceneManager] UnloadSceneAsync: 场景名称不能为空");
                 return;
             }
 
             if (sceneName == _currentScene &&
                 UnityEngine.SceneManagement.SceneManager.sceneCount == 1)
             {
-                Logger.Warning($"[SceneManager] 不能卸载唯一场景: {sceneName}");
+                GameLog.Warning($"[SceneManager] 不能卸载唯一场景: {sceneName}");
                 return;
             }
 
             if (!_loadedScenes.TryGetValue(sceneName, out var handle))
             {
-                Logger.Warning($"[SceneManager] 非托管场景，尝试原生卸载: {sceneName}");
+                GameLog.Warning($"[SceneManager] 非托管场景，尝试原生卸载: {sceneName}");
                 var scene = UnityEngine.SceneManagement.SceneManager.GetSceneByName(sceneName);
                 if (scene.isLoaded)
                 {
@@ -336,7 +336,7 @@ namespace Framework
                 return;
             }
 
-            Logger.Log($"[SceneManager] 卸载场景: {sceneName}");
+            GameLog.Log($"[SceneManager] 卸载场景: {sceneName}");
 
             try
             {
@@ -345,12 +345,12 @@ namespace Framework
 
                 if (unloadHandle.Status != AsyncOperationStatus.Succeeded)
                 {
-                    Logger.Error($"[SceneManager] 卸载失败: {sceneName}");
+                    GameLog.Error($"[SceneManager] 卸载失败: {sceneName}");
                     return;
                 }
 
                 _loadedScenes.Remove(sceneName);
-                Logger.Log($"[SceneManager] 卸载完成: {sceneName}");
+                GameLog.Log($"[SceneManager] 卸载完成: {sceneName}");
                 OnSceneUnloaded?.Invoke(sceneName);
 
                 // 异步释放未使用资源，避免阻塞主线程
@@ -359,7 +359,7 @@ namespace Framework
             }
             catch (Exception ex)
             {
-                Logger.Error($"[SceneManager] 卸载异常 [{sceneName}]: {ex.Message}");
+                GameLog.Error($"[SceneManager] 卸载异常 [{sceneName}]: {ex.Message}");
                 throw;
             }
         }
@@ -377,17 +377,17 @@ namespace Framework
         {
             if (string.IsNullOrEmpty(sceneName))
             {
-                Logger.Error("[SceneManager] PreloadSceneAsync: 场景名称不能为空");
+                GameLog.Error("[SceneManager] PreloadSceneAsync: 场景名称不能为空");
                 return;
             }
 
             if (_preloadedScenes.ContainsKey(sceneName))
             {
-                Logger.Warning($"[SceneManager] 已预加载: {sceneName}");
+                GameLog.Warning($"[SceneManager] 已预加载: {sceneName}");
                 return;
             }
 
-            Logger.Log($"[SceneManager] 预加载开始: {sceneName}");
+            GameLog.Log($"[SceneManager] 预加载开始: {sceneName}");
 
             try
             {
@@ -397,16 +397,16 @@ namespace Framework
 
                 if (handle.Status != AsyncOperationStatus.Succeeded)
                 {
-                    Logger.Error($"[SceneManager] 预加载失败: {sceneName}");
+                    GameLog.Error($"[SceneManager] 预加载失败: {sceneName}");
                     return;
                 }
 
                 _preloadedScenes[sceneName] = handle;
-                Logger.Log($"[SceneManager] 预加载完成: {sceneName}");
+                GameLog.Log($"[SceneManager] 预加载完成: {sceneName}");
             }
             catch (Exception ex)
             {
-                Logger.Error($"[SceneManager] 预加载异常 [{sceneName}]: {ex.Message}");
+                GameLog.Error($"[SceneManager] 预加载异常 [{sceneName}]: {ex.Message}");
                 throw;
             }
         }
@@ -418,7 +418,7 @@ namespace Framework
             {
                 if (handle.IsValid()) Addressables.UnloadSceneAsync(handle);
                 _preloadedScenes.Remove(sceneName);
-                Logger.Log($"[SceneManager] 取消预加载: {sceneName}");
+                GameLog.Log($"[SceneManager] 取消预加载: {sceneName}");
             }
         }
 
@@ -461,14 +461,14 @@ namespace Framework
         {
             if (context == null)
             {
-                Logger.Error("[SceneManager] RegisterContext: context 为 null");
+                GameLog.Error("[SceneManager] RegisterContext: context 为 null");
                 return;
             }
 
             var type = context.GetType();
             _sceneContexts[type] = context;
             CurrentContext = context;
-            Logger.Log($"[SceneManager] 注册场景上下文: {type.Name}");
+            GameLog.Log($"[SceneManager] 注册场景上下文: {type.Name}");
         }
 
         /// <summary>
@@ -484,7 +484,7 @@ namespace Framework
                 _sceneContexts.Remove(type);
                 if (CurrentContext == context)
                     CurrentContext = null;
-                Logger.Log($"[SceneManager] 注销场景上下文: {type.Name}");
+                GameLog.Log($"[SceneManager] 注销场景上下文: {type.Name}");
             }
         }
 
@@ -497,7 +497,7 @@ namespace Framework
             if (_sceneContexts.TryGetValue(type, out var context))
                 return context as T;
 
-            Logger.Warning($"[SceneManager] 场景上下文未找到: {type.Name}");
+            GameLog.Warning($"[SceneManager] 场景上下文未找到: {type.Name}");
             return null;
         }
     }

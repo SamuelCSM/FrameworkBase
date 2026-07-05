@@ -61,7 +61,7 @@ namespace Framework.UI
             var nm = GameEntry.Network;
             if (nm == null)
             {
-                Logger.Warning("[ReconnectPanel] GameEntry.Network 为空，无法订阅重连事件");
+                GameLog.Warning("[ReconnectPanel] GameEntry.Network 为空，无法订阅重连事件");
                 return;
             }
 
@@ -108,7 +108,7 @@ namespace Framework.UI
         {
             StopCountdown();
             SetVisible(false);
-            Logger.Log("[ReconnectPanel] 重连成功，隐藏面板");
+            GameLog.Log("[ReconnectPanel] 重连成功，隐藏面板");
         }
 
         private void HandleReconnectFailed()
@@ -203,7 +203,7 @@ namespace Framework.UI
 
         private void OnExitClicked()
         {
-            Logger.Log("[ReconnectPanel] 玩家选择返回登录");
+            GameLog.Log("[ReconnectPanel] 玩家选择返回登录");
             SetVisible(false);
             Framework.Core.Auth.AuthSession.Clear();
             GameEntry.Auth?.RetryLastLoginAsync().Forget();

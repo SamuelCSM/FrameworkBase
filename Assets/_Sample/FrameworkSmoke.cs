@@ -1,6 +1,6 @@
+using Framework;
 using Framework.Core;
 using UnityEngine;
-using Logger = Framework.Logger; // 消歧：Framework.Logger 与 UnityEngine.Logger 同名，Framework 命名空间外的文件须显式别名
 
 /// <summary>
 /// 地基冒烟自检（Sample，编译进 Assembly-CSharp，不属于 Framework 程序集）。
@@ -31,15 +31,15 @@ public sealed class FrameworkSmoke : MonoBehaviour
 
         if (!ok)
         {
-            Logger.Error("[FrameworkSmoke] ❌ 部分 Manager 未初始化，确认场景中有 GameEntry 且其 Awake 先于本组件执行");
+            GameLog.Error("[FrameworkSmoke] ❌ 部分 Manager 未初始化，确认场景中有 GameEntry 且其 Awake 先于本组件执行");
             return;
         }
 
         // 用 Timer 排一个一次性回调，证明 Manager 真正在运转（非仅构造成功）。
         GameEntry.Timer.AddTimer(
-            () => Logger.Log("[FrameworkSmoke] ✅ Timer 0.5s 回调触发，地基运转正常"),
+            () => GameLog.Log("[FrameworkSmoke] ✅ Timer 0.5s 回调触发，地基运转正常"),
             0.5f);
 
-        Logger.Log("[FrameworkSmoke] ✅ Framework OK —— 所有 Manager 已启动（Event/Timer/Resource/UI/Network/RefData/Audio/Scene/Auth）");
+        GameLog.Log("[FrameworkSmoke] ✅ Framework OK —— 所有 Manager 已启动（Event/Timer/Resource/UI/Network/RefData/Audio/Scene/Auth）");
     }
 }

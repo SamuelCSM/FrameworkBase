@@ -19,13 +19,13 @@ namespace Framework
         {
             if (string.IsNullOrEmpty(key))
             {
-                Logger.Error("[AddressableGameObjectProvider] GetAsync 失败，key 为空");
+                GameLog.Error("[AddressableGameObjectProvider] GetAsync 失败，key 为空");
                 return null;
             }
 
             if (GameEntry.Resource == null)
             {
-                Logger.Error($"[AddressableGameObjectProvider] GetAsync 失败，ResourceManager 未就绪: {key}");
+                GameLog.Error($"[AddressableGameObjectProvider] GetAsync 失败，ResourceManager 未就绪: {key}");
                 return null;
             }
 

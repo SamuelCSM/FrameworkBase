@@ -22,7 +22,7 @@ namespace Framework.UI
             _view = view;
             if (_view == null)
             {
-                Logger.Error("[LoginWindow] LoginView 为 null");
+                GameLog.Error("[LoginWindow] LoginView 为 null");
                 return;
             }
 

@@ -23,7 +23,7 @@ namespace Framework.HotUpdate
             {
                 if (!File.Exists(filePath))
                 {
-                    Logger.Error($"[FileVerifier] 文件不存在: {filePath}");
+                    GameLog.Error($"[FileVerifier] 文件不存在: {filePath}");
                     return false;
                 }
                 
@@ -32,18 +32,18 @@ namespace Framework.HotUpdate
                 
                 if (isValid)
                 {
-                    Logger.Log($"[FileVerifier] 文件校验通过: {filePath}");
+                    GameLog.Log($"[FileVerifier] 文件校验通过: {filePath}");
                 }
                 else
                 {
-                    Logger.Error($"[FileVerifier] 文件校验失败: {filePath}, 期望MD5={expectedMD5}, 实际MD5={actualMD5}");
+                    GameLog.Error($"[FileVerifier] 文件校验失败: {filePath}, 期望MD5={expectedMD5}, 实际MD5={actualMD5}");
                 }
                 
                 return isValid;
             }
             catch (Exception ex)
             {
-                Logger.Error($"[FileVerifier] 校验文件异常: {ex.Message}");
+                GameLog.Error($"[FileVerifier] 校验文件异常: {ex.Message}");
                 return false;
             }
         }
@@ -74,7 +74,7 @@ namespace Framework.HotUpdate
             int totalCount = files.Count;
             int currentCount = 0;
             
-            Logger.Log($"[FileVerifier] 开始批量校验，共{totalCount}个文件");
+            GameLog.Log($"[FileVerifier] 开始批量校验，共{totalCount}个文件");
             
             foreach (var kvp in files)
             {
@@ -94,7 +94,7 @@ namespace Framework.HotUpdate
                 if (result) passCount++;
             }
             
-            Logger.Log($"[FileVerifier] 批量校验完成: {passCount}/{totalCount} 通过");
+            GameLog.Log($"[FileVerifier] 批量校验完成: {passCount}/{totalCount} 通过");
             
             return results;
         }
@@ -113,7 +113,7 @@ namespace Framework.HotUpdate
         {
             if (patchFiles == null || patchFiles.Count == 0)
             {
-                Logger.Log("[FileVerifier] 没有需要校验的文件");
+                GameLog.Log("[FileVerifier] 没有需要校验的文件");
                 return true;
             }
             

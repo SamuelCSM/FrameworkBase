@@ -45,7 +45,7 @@ namespace Framework
         {
             if (IsDisposed)
             {
-                Logger.Warning($"[SceneSubPrefab] 已释放的子预制不能重新初始化: {GetType().Name}");
+                GameLog.Warning($"[SceneSubPrefab] 已释放的子预制不能重新初始化: {GetType().Name}");
                 return;
             }
 
@@ -56,13 +56,13 @@ namespace Framework
 
             if (view == null)
             {
-                Logger.Error($"[SceneSubPrefab] Initialize 失败，View 为空: {GetType().Name}");
+                GameLog.Error($"[SceneSubPrefab] Initialize 失败，View 为空: {GetType().Name}");
                 return;
             }
 
             if (!ViewType.IsInstanceOfType(view))
             {
-                Logger.Error($"[SceneSubPrefab] Initialize 失败，View 类型不匹配: Prefab={GetType().Name}, Need={ViewType.Name}, Actual={view.GetType().Name}");
+                GameLog.Error($"[SceneSubPrefab] Initialize 失败，View 类型不匹配: Prefab={GetType().Name}, Need={ViewType.Name}, Actual={view.GetType().Name}");
                 return;
             }
 
@@ -157,13 +157,13 @@ namespace Framework
         {
             if (IsDisposed)
             {
-                Logger.Warning($"[SceneSubPrefab] 已释放的子预制不能执行 {operation}: {GetType().Name}");
+                GameLog.Warning($"[SceneSubPrefab] 已释放的子预制不能执行 {operation}: {GetType().Name}");
                 return false;
             }
 
             if (!IsInitialized)
             {
-                Logger.Error($"[SceneSubPrefab] 未初始化的子预制不能执行 {operation}: {GetType().Name}");
+                GameLog.Error($"[SceneSubPrefab] 未初始化的子预制不能执行 {operation}: {GetType().Name}");
                 return false;
             }
 

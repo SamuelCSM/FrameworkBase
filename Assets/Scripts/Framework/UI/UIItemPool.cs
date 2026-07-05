@@ -149,7 +149,7 @@ namespace Framework
 
             if (!activeItems.Remove(item))
             {
-                Logger.Warning($"[UIItemPool] 尝试回收未借出的条目: {typeof(TView).Name}");
+                GameLog.Warning($"[UIItemPool] 尝试回收未借出的条目: {typeof(TView).Name}");
                 return;
             }
 

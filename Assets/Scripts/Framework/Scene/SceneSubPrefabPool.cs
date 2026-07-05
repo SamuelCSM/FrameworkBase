@@ -42,7 +42,7 @@ namespace Framework
         {
             if (disposed)
             {
-                Logger.Warning($"[SceneSubPrefabPool] 已释放的缓存池不能加载: {typeof(TPrefab).Name}");
+                GameLog.Warning($"[SceneSubPrefabPool] 已释放的缓存池不能加载: {typeof(TPrefab).Name}");
                 return null;
             }
 

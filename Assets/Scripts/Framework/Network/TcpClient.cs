@@ -101,7 +101,7 @@ namespace Framework.Network
         {
             if (IsConnected)
             {
-                Logger.Warning("已经连接到服务器，无需重复连接");
+                GameLog.Warning("已经连接到服务器，无需重复连接");
                 return;
             }
 
@@ -131,7 +131,7 @@ namespace Framework.Network
             catch (Exception ex)
             {
                 _isConnected = false;
-                Logger.Error($"连接服务器失败: {ex.Message}");
+                GameLog.Error($"连接服务器失败: {ex.Message}");
                 OnError?.Invoke($"连接失败: {ex.Message}");
                 throw;
             }
@@ -146,7 +146,7 @@ namespace Framework.Network
         {
             if (IsConnected)
             {
-                Logger.Warning("已经连接到服务器，无需重复连接");
+                GameLog.Warning("已经连接到服务器，无需重复连接");
                 return;
             }
 
@@ -164,7 +164,7 @@ namespace Framework.Network
             catch (Exception ex)
             {
                 _isConnected = false;
-                Logger.Error($"连接服务器失败: {ex.Message}");
+                GameLog.Error($"连接服务器失败: {ex.Message}");
                 OnError?.Invoke($"连接失败: {ex.Message}");
                 throw;
             }
@@ -190,7 +190,7 @@ namespace Framework.Network
 
             _isConnected = true;
             _messageBufferOffset = 0;
-            Logger.Log($"成功连接到服务器 {host}:{port}" + (Tls is { Enabled: true } ? "（TLS 已启用）" : string.Empty));
+            GameLog.Log($"成功连接到服务器 {host}:{port}" + (Tls is { Enabled: true } ? "（TLS 已启用）" : string.Empty));
 
             // 启动收发线程
             _sendQueue = new BlockingCollection<byte[]>();
@@ -244,7 +244,7 @@ namespace Framework.Network
 
             if (certificate == null || Tls == null || string.IsNullOrEmpty(Tls.CertSha256))
             {
-                Logger.Error($"服务器证书校验失败（{sslPolicyErrors}）且未配置指纹固定，拒绝连接");
+                GameLog.Error($"服务器证书校验失败（{sslPolicyErrors}）且未配置指纹固定，拒绝连接");
                 return false;
             }
 
@@ -260,7 +260,7 @@ namespace Framework.Network
             bool matched = string.Equals(actual, expected, StringComparison.OrdinalIgnoreCase);
             if (!matched)
             {
-                Logger.Error($"服务器证书指纹不匹配，疑似中间人或证书未同步：实际={actual}");
+                GameLog.Error($"服务器证书指纹不匹配，疑似中间人或证书未同步：实际={actual}");
             }
 
             return matched;
@@ -316,7 +316,7 @@ namespace Framework.Network
                     catch (Exception ex)
                     {
                         // Shutdown 在对端已断开时可能抛 SocketException，记录后继续 Close
-                        Logger.Debug($"Socket Shutdown 异常（通常可忽略）: {ex.Message}");
+                        GameLog.Debug($"Socket Shutdown 异常（通常可忽略）: {ex.Message}");
                     }
 
                     _socket.Close();
@@ -337,7 +337,7 @@ namespace Framework.Network
                 // 清空消息缓冲
                 _messageBufferOffset = 0;
 
-                Logger.Log("已断开与服务器的连接");
+                GameLog.Log("已断开与服务器的连接");
             }
 
             // 事件回调放在锁外触发，避免订阅方回调里再次进入网络逻辑造成死锁
@@ -372,14 +372,14 @@ namespace Framework.Network
         {
             if (!IsConnected)
             {
-                Logger.Error("未连接到服务器，无法发送数据");
+                GameLog.Error("未连接到服务器，无法发送数据");
                 OnError?.Invoke("未连接到服务器");
                 return;
             }
 
             if (data == null || data.Length == 0)
             {
-                Logger.Warning("发送数据为空");
+                GameLog.Warning("发送数据为空");
                 return;
             }
 
@@ -390,7 +390,7 @@ namespace Framework.Network
             catch (Exception ex)
             {
                 // 队列已 CompleteAdding/Dispose（断开中），属正常竞态，记录后忽略
-                Logger.Debug($"入队发送数据失败（连接可能正在断开）: {ex.Message}");
+                GameLog.Debug($"入队发送数据失败（连接可能正在断开）: {ex.Message}");
             }
         }
 
@@ -453,7 +453,7 @@ namespace Framework.Network
             {
                 if (_isConnected)
                 {
-                    Logger.Error($"发送数据失败: {ex.Message}");
+                    GameLog.Error($"发送数据失败: {ex.Message}");
                     OnError?.Invoke($"发送失败: {ex.Message}");
                 }
             }
@@ -488,7 +488,7 @@ namespace Framework.Network
                     if (bytesRead <= 0)
                     {
                         // 连接已断开
-                        Logger.Warning("服务器断开连接");
+                        GameLog.Warning("服务器断开连接");
                         break;
                     }
 
@@ -508,7 +508,7 @@ namespace Framework.Network
             {
                 if (_isConnected)
                 {
-                    Logger.Error($"接收数据时发生Socket异常: {ex.Message}");
+                    GameLog.Error($"接收数据时发生Socket异常: {ex.Message}");
                     OnError?.Invoke($"接收失败: {ex.Message}");
                 }
             }
@@ -520,7 +520,7 @@ namespace Framework.Network
             {
                 if (_isConnected)
                 {
-                    Logger.Error($"接收数据时发生异常: {ex.Message}");
+                    GameLog.Error($"接收数据时发生异常: {ex.Message}");
                     OnError?.Invoke($"接收失败: {ex.Message}");
                 }
             }
@@ -571,7 +571,7 @@ namespace Framework.Network
                 // 验证消息长度：下限为消息头，上限为可配置的 MaxMessageSize
                 if (messageLength < 8 || messageLength > MaxMessageSize)
                 {
-                    Logger.Error($"无效的消息长度: {messageLength}（上限 {MaxMessageSize}），断开连接以重建会话");
+                    GameLog.Error($"无效的消息长度: {messageLength}（上限 {MaxMessageSize}），断开连接以重建会话");
                     OnError?.Invoke($"协议错误：无效消息长度 {messageLength}");
                     // 无法安全地从错位的字节流中恢复帧边界，交由上层重连/重建快照
                     return false;
@@ -603,7 +603,7 @@ namespace Framework.Network
                 }
                 catch (Exception ex)
                 {
-                    Logger.Error($"处理接收消息时发生异常: {ex.Message}");
+                    GameLog.Error($"处理接收消息时发生异常: {ex.Message}");
                 }
             }
 

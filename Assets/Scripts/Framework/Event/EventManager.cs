@@ -42,7 +42,7 @@ namespace Framework
         public override void OnInit()
         {
             base.OnInit();
-            Logger.Log("[EventManager] 事件管理器初始化完成");
+            GameLog.Log("[EventManager] 事件管理器初始化完成");
         }
 
         /// <summary>
@@ -51,7 +51,7 @@ namespace Framework
         public override void OnShutdown()
         {
             Clear();
-            Logger.Log("[EventManager] 事件管理器已关闭");
+            GameLog.Log("[EventManager] 事件管理器已关闭");
             base.OnShutdown();
         }
 
@@ -169,7 +169,7 @@ namespace Framework
             triggeringEvents.Clear();
             needSortEvents.Clear();
             snapshotPool.Clear();
-            Logger.Debug("[EventManager] 清除所有事件监听器");
+            GameLog.Debug("[EventManager] 清除所有事件监听器");
         }
 
         /// <summary>
@@ -183,7 +183,7 @@ namespace Framework
         {
             if (callback == null)
             {
-                Logger.Warning($"[EventManager] 订阅消息失败，回调为 null，消息: {GetMessageName(messageId)}");
+                GameLog.Warning($"[EventManager] 订阅消息失败，回调为 null，消息: {GetMessageName(messageId)}");
                 return EventSubscription.CreateDisposed();
             }
 
@@ -216,7 +216,7 @@ namespace Framework
         {
             if (triggeringEvents.Contains(messageId))
             {
-                Logger.Warning($"[EventManager] 检测到消息循环触发，已阻止: {GetMessageName(messageId)}");
+                GameLog.Warning($"[EventManager] 检测到消息循环触发，已阻止: {GetMessageName(messageId)}");
                 return;
             }
 
@@ -243,7 +243,7 @@ namespace Framework
 
                     if (listener.Callback.GetType() != expectedDelegateType)
                     {
-                        Logger.Warning($"[EventManager] 跳过消息回调，参数签名不匹配: {GetMessageName(messageId)}, 期望={expectedDelegateType.Name}, 实际={listener.Callback.GetType().Name}");
+                        GameLog.Warning($"[EventManager] 跳过消息回调，参数签名不匹配: {GetMessageName(messageId)}, 期望={expectedDelegateType.Name}, 实际={listener.Callback.GetType().Name}");
                         continue;
                     }
 
@@ -253,7 +253,7 @@ namespace Framework
                     }
                     catch (Exception ex)
                     {
-                        Logger.Error($"[EventManager] 触发消息回调异常: {GetMessageName(messageId)}, 错误: {ex.Message}\n{ex.StackTrace}");
+                        GameLog.Error($"[EventManager] 触发消息回调异常: {GetMessageName(messageId)}, 错误: {ex.Message}\n{ex.StackTrace}");
                     }
                 }
             }

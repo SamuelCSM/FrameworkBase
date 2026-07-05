@@ -212,7 +212,7 @@ namespace Framework
             }
             catch (System.Exception ex)
             {
-                Logger.Error($"创建目录失败: {path}, 错误: {ex.Message}");
+                GameLog.Error($"创建目录失败: {path}, 错误: {ex.Message}");
                 return false;
             }
         }
@@ -234,7 +234,7 @@ namespace Framework
             }
             catch (System.Exception ex)
             {
-                Logger.Error($"删除文件失败: {path}, 错误: {ex.Message}");
+                GameLog.Error($"删除文件失败: {path}, 错误: {ex.Message}");
                 return false;
             }
         }
@@ -256,7 +256,7 @@ namespace Framework
             }
             catch (System.Exception ex)
             {
-                Logger.Error($"删除目录失败: {path}, 错误: {ex.Message}");
+                GameLog.Error($"删除目录失败: {path}, 错误: {ex.Message}");
                 return false;
             }
         }

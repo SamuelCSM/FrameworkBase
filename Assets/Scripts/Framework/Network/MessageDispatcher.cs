@@ -98,7 +98,7 @@ namespace Framework.Network
         {
             if (handler == null)
             {
-                Logger.Error("消息订阅处理器不能为空");
+                GameLog.Error("消息订阅处理器不能为空");
                 return MessageSubscription.CreateDisposed();
             }
 
@@ -116,7 +116,7 @@ namespace Framework.Network
                 {
                     // 反序列化失败时外层多为包装异常，真因在 InnerException（如 IL2CPP 下缺 AOT 实例化）；一并打出避免被吞。
                     Exception root = ex.InnerException ?? ex;
-                    Logger.Error($"处理类型化消息失败: 主ID={mainId}, 子ID={subId}, 类型={typeof(T).Name}, 错误={ex.Message}, 内层={root.GetType().Name}:{root.Message}\n{root.StackTrace}");
+                    GameLog.Error($"处理类型化消息失败: 主ID={mainId}, 子ID={subId}, 类型={typeof(T).Name}, 错误={ex.Message}, 内层={root.GetType().Name}:{root.Message}\n{root.StackTrace}");
                 }
             }, priority);
         }
@@ -139,7 +139,7 @@ namespace Framework.Network
                 _handlers.Clear();
             }
 
-            Logger.Debug("已清除所有消息处理器");
+            GameLog.Debug("已清除所有消息处理器");
         }
 
         /// <summary>
@@ -160,7 +160,7 @@ namespace Framework.Network
                 {
                     if (warnIfMissing)
                     {
-                        Logger.Warning($"未注册的消息: 主ID={mainId}, 子ID={subId}");
+                        GameLog.Warning($"未注册的消息: 主ID={mainId}, 子ID={subId}");
                     }
 
                     ReturnHandlerSnapshot(snapshot);
@@ -189,7 +189,7 @@ namespace Framework.Network
                     }
                     catch (Exception ex)
                     {
-                        Logger.Error($"处理消息时发生异常: 主ID={mainId}, 子ID={subId}, 订阅Id={entry.Id}, 错误={ex.Message}\n{ex.StackTrace}");
+                        GameLog.Error($"处理消息时发生异常: 主ID={mainId}, 子ID={subId}, 订阅Id={entry.Id}, 错误={ex.Message}\n{ex.StackTrace}");
                     }
                 }
             }
@@ -381,7 +381,7 @@ namespace Framework.Network
         {
             if (handler == null)
             {
-                Logger.Error("消息订阅处理器不能为空");
+                GameLog.Error("消息订阅处理器不能为空");
                 return MessageSubscription.CreateDisposed();
             }
 
@@ -406,7 +406,7 @@ namespace Framework.Network
                 entries.Sort(CompareHandlerEntry);
             }
 
-            Logger.Debug($"订阅消息: 主ID={mainId}, 子ID={subId}, Priority={priority}");
+            GameLog.Debug($"订阅消息: 主ID={mainId}, 子ID={subId}, Priority={priority}");
             return new MessageSubscription(() => RemoveHandler(msgId, entry));
         }
 

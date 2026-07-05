@@ -94,7 +94,7 @@ namespace Framework
         public override void OnInit()
         {
             base.OnInit();
-            Logger.Log("[TimerManager] 定时器管理器初始化完成");
+            GameLog.Log("[TimerManager] 定时器管理器初始化完成");
         }
 
         /// <summary>
@@ -104,7 +104,7 @@ namespace Framework
         {
             CancelAllTimers();
             _entryPool.Clear();
-            Logger.Log("[TimerManager] 定时器管理器已关闭");
+            GameLog.Log("[TimerManager] 定时器管理器已关闭");
             base.OnShutdown();
         }
 
@@ -175,13 +175,13 @@ namespace Framework
         {
             if (duration <= 0)
             {
-                Logger.Warning($"[TimerManager] 定时器持续时间必须大于0，当前值: {duration}");
+                GameLog.Warning($"[TimerManager] 定时器持续时间必须大于0，当前值: {duration}");
                 return -1;
             }
 
             if (onComplete == null)
             {
-                Logger.Warning("[TimerManager] 定时器回调不能为 null");
+                GameLog.Warning("[TimerManager] 定时器回调不能为 null");
                 return -1;
             }
 
@@ -195,7 +195,7 @@ namespace Framework
             t.LoopCount = 1;
 
             Register(t);
-            Logger.Debug($"[TimerManager] 添加一次性定时器，ID: {t.Id}, 持续时间: {duration}秒");
+            GameLog.Debug($"[TimerManager] 添加一次性定时器，ID: {t.Id}, 持续时间: {duration}秒");
             return t.Id;
         }
 
@@ -211,13 +211,13 @@ namespace Framework
         {
             if (interval <= 0)
             {
-                Logger.Warning($"[TimerManager] 定时器间隔时间必须大于0，当前值: {interval}");
+                GameLog.Warning($"[TimerManager] 定时器间隔时间必须大于0，当前值: {interval}");
                 return -1;
             }
 
             if (onTick == null)
             {
-                Logger.Warning("[TimerManager] 定时器回调不能为 null");
+                GameLog.Warning("[TimerManager] 定时器回调不能为 null");
                 return -1;
             }
 
@@ -232,7 +232,7 @@ namespace Framework
 
             Register(t);
             string loopInfo = loopCount < 0 ? "无限" : loopCount.ToString();
-            Logger.Debug($"[TimerManager] 添加循环定时器，ID: {t.Id}, 间隔: {interval}秒, 循环次数: {loopInfo}");
+            GameLog.Debug($"[TimerManager] 添加循环定时器，ID: {t.Id}, 间隔: {interval}秒, 循环次数: {loopInfo}");
             return t.Id;
         }
 
@@ -251,12 +251,12 @@ namespace Framework
                 if (!t.IsPaused)
                 {
                     t.IsPaused = true;
-                    Logger.Debug($"[TimerManager] 暂停定时器，ID: {timerId}, 剩余: {t.Remaining}秒");
+                    GameLog.Debug($"[TimerManager] 暂停定时器，ID: {timerId}, 剩余: {t.Remaining}秒");
                 }
             }
             else
             {
-                Logger.Warning($"[TimerManager] 暂停定时器失败，定时器不存在，ID: {timerId}");
+                GameLog.Warning($"[TimerManager] 暂停定时器失败，定时器不存在，ID: {timerId}");
             }
         }
 
@@ -271,12 +271,12 @@ namespace Framework
                 if (t.IsPaused)
                 {
                     t.IsPaused = false;
-                    Logger.Debug($"[TimerManager] 恢复定时器，ID: {timerId}, 剩余: {t.Remaining}秒");
+                    GameLog.Debug($"[TimerManager] 恢复定时器，ID: {timerId}, 剩余: {t.Remaining}秒");
                 }
             }
             else
             {
-                Logger.Warning($"[TimerManager] 恢复定时器失败，定时器不存在，ID: {timerId}");
+                GameLog.Warning($"[TimerManager] 恢复定时器失败，定时器不存在，ID: {timerId}");
             }
         }
 
@@ -289,11 +289,11 @@ namespace Framework
             if (_timers.TryGetValue(timerId, out TimerEntry t) && !t.IsDead)
             {
                 MarkDead(t);
-                Logger.Debug($"[TimerManager] 取消定时器，ID: {timerId}");
+                GameLog.Debug($"[TimerManager] 取消定时器，ID: {timerId}");
             }
             else
             {
-                Logger.Warning($"[TimerManager] 取消定时器失败，定时器不存在，ID: {timerId}");
+                GameLog.Warning($"[TimerManager] 取消定时器失败，定时器不存在，ID: {timerId}");
             }
         }
 
@@ -321,7 +321,7 @@ namespace Framework
                 _active.Clear();
             }
 
-            Logger.Debug($"[TimerManager] 取消所有定时器，共 {count} 个");
+            GameLog.Debug($"[TimerManager] 取消所有定时器，共 {count} 个");
         }
 
         #endregion
@@ -414,7 +414,7 @@ namespace Framework
             }
             catch (Exception ex)
             {
-                Logger.Error($"[TimerManager] 定时器回调异常，ID: {t.Id}, 错误: {ex.Message}\n{ex.StackTrace}");
+                GameLog.Error($"[TimerManager] 定时器回调异常，ID: {t.Id}, 错误: {ex.Message}\n{ex.StackTrace}");
             }
         }
 

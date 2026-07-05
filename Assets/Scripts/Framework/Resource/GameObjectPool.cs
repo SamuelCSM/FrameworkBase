@@ -94,7 +94,7 @@ namespace Framework
                 _template = await GameEntry.Resource.LoadAssetAsync<GameObject>(_address);
                 if (_template == null)
                 {
-                    Logger.Error($"GameObjectPool.PrewarmAsync: 加载预制体失败 - {_address}");
+                    GameLog.Error($"GameObjectPool.PrewarmAsync: 加载预制体失败 - {_address}");
                     return;
                 }
             }
@@ -108,7 +108,7 @@ namespace Framework
                 _createCount++;
             }
 
-            Logger.Log($"GameObjectPool.PrewarmAsync: 预热{count}个对象 - {_address}");
+            GameLog.Log($"GameObjectPool.PrewarmAsync: 预热{count}个对象 - {_address}");
         }
 
         /// <summary>
@@ -148,7 +148,7 @@ namespace Framework
                     _template = await GameEntry.Resource.LoadAssetAsync<GameObject>(_address);
                     if (_template == null)
                     {
-                        Logger.Error($"GameObjectPool.GetAsync: 加载预制体失败 - {_address}");
+                        GameLog.Error($"GameObjectPool.GetAsync: 加载预制体失败 - {_address}");
                         return null;
                     }
                 }
@@ -212,14 +212,14 @@ namespace Framework
         {
             if (obj == null)
             {
-                Logger.Warning("GameObjectPool.Release: 尝试回收null对象");
+                GameLog.Warning("GameObjectPool.Release: 尝试回收null对象");
                 return;
             }
 
             // 检查是否是活跃对象
             if (!_activeObjects.Contains(obj))
             {
-                Logger.Error($"GameObjectPool.Release: 对象不在活跃列表中，可能已被回收 - {obj.name}");
+                GameLog.Error($"GameObjectPool.Release: 对象不在活跃列表中，可能已被回收 - {obj.name}");
                 return;
             }
 
@@ -229,7 +229,7 @@ namespace Framework
             // 检查池大小限制
             if (_pool.Count >= _maxSize)
             {
-                Logger.Warning($"GameObjectPool.Release: 对象池已满({_maxSize})，销毁对象 - {obj.name}");
+                GameLog.Warning($"GameObjectPool.Release: 对象池已满({_maxSize})，销毁对象 - {obj.name}");
                 Object.Destroy(obj);
                 _createCount--;
                 return;
@@ -287,7 +287,7 @@ namespace Framework
                 _template = null;
             }
 
-            Logger.Log($"GameObjectPool.Clear: 清空对象池 - {_address}");
+            GameLog.Log($"GameObjectPool.Clear: 清空对象池 - {_address}");
         }
 
         /// <summary>
@@ -317,7 +317,7 @@ namespace Framework
                 _createCount--;
             }
 
-            Logger.Log($"GameObjectPool.Shrink: 收缩对象池，移除{removeCount}个对象 - {_address}");
+            GameLog.Log($"GameObjectPool.Shrink: 收缩对象池，移除{removeCount}个对象 - {_address}");
         }
 
         /// <summary>
@@ -339,7 +339,7 @@ namespace Framework
         /// </summary>
         public void PrintStatistics()
         {
-            Logger.Log(GetStatistics());
+            GameLog.Log(GetStatistics());
         }
     }
 }

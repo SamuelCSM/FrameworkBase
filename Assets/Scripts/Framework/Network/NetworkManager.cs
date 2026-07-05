@@ -174,7 +174,7 @@ namespace Framework
                 OnHideWaiting = () => OnWaitingEnd?.Invoke(),
                 OnShowTimeoutTip = msg => OnRequestTimeout?.Invoke(msg),
             };
-            Logger.Log("[NetworkManager] 初始化完成");
+            GameLog.Log("[NetworkManager] 初始化完成");
         }
 
         public override void OnUpdate(float deltaTime)
@@ -200,7 +200,7 @@ namespace Framework
                 _timeSinceLastData += deltaTime;
                 if (_timeSinceLastData > _heartbeatTimeoutSeconds)
                 {
-                    Logger.Warning($"[NetworkManager] 心跳超时 ({_heartbeatTimeoutSeconds:0}s 未收到数据)，主动断开重连");
+                    GameLog.Warning($"[NetworkManager] 心跳超时 ({_heartbeatTimeoutSeconds:0}s 未收到数据)，主动断开重连");
                     _timeSinceLastData = 0f;
                     // 直接断 TCP，不走公开 Disconnect()（公开方法会关闭自动重连）
                     _client.Disconnect();
@@ -232,7 +232,7 @@ namespace Framework
                 && _enableAutoReconnect
                 && !string.IsNullOrEmpty(_lastHost))
             {
-                Logger.Log("[NetworkManager] 回到前台，检测到断线，自动触发重连...");
+                GameLog.Log("[NetworkManager] 回到前台，检测到断线，自动触发重连...");
                 TryReconnectAsync().Forget();
             }
         }
@@ -244,7 +244,7 @@ namespace Framework
         {
             if (IsConnected)
             {
-                Logger.Warning("[NetworkManager] 已连接，跳过");
+                GameLog.Warning("[NetworkManager] 已连接，跳过");
                 return;
             }
 
@@ -264,12 +264,12 @@ namespace Framework
         {
             if (string.IsNullOrEmpty(_lastHost))
             {
-                Logger.Warning("[NetworkManager] 无法重连：尚未连接过任何服务器");
+                GameLog.Warning("[NetworkManager] 无法重连：尚未连接过任何服务器");
                 return;
             }
             if (_isReconnecting)
             {
-                Logger.Warning("[NetworkManager] 重连已在进行中");
+                GameLog.Warning("[NetworkManager] 重连已在进行中");
                 return;
             }
 
@@ -307,7 +307,7 @@ namespace Framework
         {
             if (!IsConnected)
             {
-                Logger.Error("[NetworkManager] 未连接，无法发送请求");
+                GameLog.Error("[NetworkManager] 未连接，无法发送请求");
                 return UniTask.FromResult<TResp>(null);
             }
             if (config == null) config = NetworkRequestConfig.Default;
@@ -325,7 +325,7 @@ namespace Framework
                     }
                     catch (Exception ex)
                     {
-                        Logger.Error($"[NetworkManager] 反序列化响应失败: {typeof(TResp).Name}, 错误={ex.Message}");
+                        GameLog.Error($"[NetworkManager] 反序列化响应失败: {typeof(TResp).Name}, 错误={ex.Message}");
                         tcs.TrySetResult(null);
                     }
                 },
@@ -489,7 +489,7 @@ namespace Framework
         {
             if (windowSeconds <= 0f)
             {
-                Logger.Warning("[NetworkManager] ConfigureReconnectWithinWindow 收到非法窗口值，沿用默认退避");
+                GameLog.Warning("[NetworkManager] ConfigureReconnectWithinWindow 收到非法窗口值，沿用默认退避");
                 return;
             }
 
@@ -519,7 +519,7 @@ namespace Framework
             _reconnectIntervals = intervals.ToArray();
             _maxReconnectAttempts = intervals.Count;
 
-            Logger.Log($"[NetworkManager] 重连退避按窗口编排: 窗口={windowSeconds:0}s, 预算={budget:0}s, " +
+            GameLog.Log($"[NetworkManager] 重连退避按窗口编排: 窗口={windowSeconds:0}s, 预算={budget:0}s, " +
                        $"次数={_maxReconnectAttempts}, 间隔(s)=[{string.Join(",", _reconnectIntervals)}]");
         }
 
@@ -538,7 +538,7 @@ namespace Framework
         {
             if (!IsConnected)
             {
-                Logger.Error("[NetworkManager] 未连接，无法发送消息");
+                GameLog.Error("[NetworkManager] 未连接，无法发送消息");
                 return false;
             }
 
@@ -557,7 +557,7 @@ namespace Framework
             }
             catch (Exception ex)
             {
-                Logger.Error($"[NetworkManager] 发送失败: {ex.Message}");
+                GameLog.Error($"[NetworkManager] 发送失败: {ex.Message}");
                 OnError?.Invoke($"发送失败: {ex.Message}");
                 return false;
             }
@@ -594,7 +594,7 @@ namespace Framework
             }
             catch (Exception ex)
             {
-                Logger.Error($"[NetworkManager] 连接失败: {ex.Message}");
+                GameLog.Error($"[NetworkManager] 连接失败: {ex.Message}");
                 OnError?.Invoke($"连接失败: {ex.Message}");
 
                 if (_enableAutoReconnect && !_isReconnecting)
@@ -640,18 +640,18 @@ namespace Framework
             //      并发启动第二轮 TryReconnectAsync，破坏退避状态机。
             if (_isReconnecting)
             {
-                Logger.Log("[NetworkManager] 传输层已连接（重连中，等待重新鉴权恢复会话）");
+                GameLog.Log("[NetworkManager] 传输层已连接（重连中，等待重新鉴权恢复会话）");
                 return;
             }
 
             _currentReconnectAttempt = 0;
-            Logger.Log("[NetworkManager] 连接成功");
+            GameLog.Log("[NetworkManager] 连接成功");
             OnConnected?.Invoke();
         }
 
         private void HandleDisconnected()
         {
-            Logger.Log("[NetworkManager] 连接断开");
+            GameLog.Log("[NetworkManager] 连接断开");
             _requestTracker?.CancelAll();
             OnDisconnected?.Invoke();
 
@@ -670,7 +670,7 @@ namespace Framework
             }
             else
             {
-                Logger.Error("[NetworkManager] 消息包解析失败");
+                GameLog.Error("[NetworkManager] 消息包解析失败");
             }
         }
 
@@ -753,7 +753,7 @@ namespace Framework
             }
             catch (Exception ex)
             {
-                Logger.Error($"[NetworkManager] 响应错误码解析失败: MainId={mainId} SubId={subId} SeqId={seqId}, 错误={ex.Message}");
+                GameLog.Error($"[NetworkManager] 响应错误码解析失败: MainId={mainId} SubId={subId} SeqId={seqId}, 错误={ex.Message}");
                 return false;
             }
 
@@ -772,7 +772,7 @@ namespace Framework
                 _requestTracker?.TryMarkIntercepted(seqId);
             }
 
-            Logger.Warning($"[NetworkManager] 全局错误码已拦截: MainId={mainId} SubId={subId} SeqId={seqId} ResultCode={response.ResultCode}");
+            GameLog.Warning($"[NetworkManager] 全局错误码已拦截: MainId={mainId} SubId={subId} SeqId={seqId} ResultCode={response.ResultCode}");
             return true;
         }
 
@@ -788,7 +788,7 @@ namespace Framework
 
         private void HandleError(string error)
         {
-            Logger.Error($"[NetworkManager] 网络错误: {error}");
+            GameLog.Error($"[NetworkManager] 网络错误: {error}");
             OnError?.Invoke(error);
         }
 
@@ -820,7 +820,7 @@ namespace Framework
             {
                 if (!_heartbeatFactoryMissingWarned)
                 {
-                    Logger.Warning("[NetworkManager] 未注入心跳消息工厂，跳过心跳发送（请在业务层调用 SetHeartbeatProvider）");
+                    GameLog.Warning("[NetworkManager] 未注入心跳消息工厂，跳过心跳发送（请在业务层调用 SetHeartbeatProvider）");
                     _heartbeatFactoryMissingWarned = true;
                 }
                 return;
@@ -847,7 +847,7 @@ namespace Framework
             }
             catch (Exception ex)
             {
-                Logger.Error($"[NetworkManager] 心跳发送失败: {ex.Message}");
+                GameLog.Error($"[NetworkManager] 心跳发送失败: {ex.Message}");
             }
         }
 
@@ -866,7 +866,7 @@ namespace Framework
                 int   idx      = Math.Min(_currentReconnectAttempt - 1, _reconnectIntervals.Length - 1);
                 float waitSecs = _reconnectIntervals[idx];
 
-                Logger.Log($"[NetworkManager] 重连中 ({_currentReconnectAttempt}/{_maxReconnectAttempts})，{waitSecs}s 后重试...");
+                GameLog.Log($"[NetworkManager] 重连中 ({_currentReconnectAttempt}/{_maxReconnectAttempts})，{waitSecs}s 后重试...");
 
                 // 通知 UI：当前是第几次尝试、还有多久
                 OnReconnecting?.Invoke(_currentReconnectAttempt, _maxReconnectAttempts, waitSecs);
@@ -882,26 +882,26 @@ namespace Framework
                     // 鉴权失败时主动断开这条未鉴权连接，让下一轮退避重新建连 + 登录。
                     if (!await TryReauthenticateAsync())
                     {
-                        Logger.Warning($"[NetworkManager] 第 {_currentReconnectAttempt} 次重连传输已恢复但重新鉴权失败，断开后继续重试");
+                        GameLog.Warning($"[NetworkManager] 第 {_currentReconnectAttempt} 次重连传输已恢复但重新鉴权失败，断开后继续重试");
                         _client.Disconnect();
                         continue;
                     }
 
                     // 连接 + 鉴权均成功
-                    Logger.Log("[NetworkManager] 重连成功");
+                    GameLog.Log("[NetworkManager] 重连成功");
                     _isReconnecting = false;
                     OnReconnectSucceeded?.Invoke();
                     return;
                 }
                 catch (Exception ex)
                 {
-                    Logger.Warning($"[NetworkManager] 第 {_currentReconnectAttempt} 次重连失败: {ex.Message}");
+                    GameLog.Warning($"[NetworkManager] 第 {_currentReconnectAttempt} 次重连失败: {ex.Message}");
                 }
             }
 
             // 全部次数用尽
             _isReconnecting = false;
-            Logger.Error($"[NetworkManager] 达到最大重连次数 ({_maxReconnectAttempts})，放弃重连");
+            GameLog.Error($"[NetworkManager] 达到最大重连次数 ({_maxReconnectAttempts})，放弃重连");
             OnReconnectFailed?.Invoke();
             OnError?.Invoke("网络连接失败，请检查网络后手动重连");
         }
@@ -924,7 +924,7 @@ namespace Framework
             }
             catch (Exception ex)
             {
-                Logger.Warning($"[NetworkManager] 重连重新鉴权异常: {ex.Message}");
+                GameLog.Warning($"[NetworkManager] 重连重新鉴权异常: {ex.Message}");
                 return false;
             }
         }
@@ -940,7 +940,7 @@ namespace Framework
             _dispatcher = null;
             _messageTypeRegistry = null;
             _protocolReceiveLogHandler = null;
-            Logger.Log("[NetworkManager] 已关闭");
+            GameLog.Log("[NetworkManager] 已关闭");
         }
     }
 }

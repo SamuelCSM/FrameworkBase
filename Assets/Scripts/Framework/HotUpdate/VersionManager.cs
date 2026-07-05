@@ -119,7 +119,7 @@ namespace Framework.HotUpdate
             }
             catch (Exception ex)
             {
-                Logger.Error($"[VersionManager] 版本比较失败: {version1} vs {version2}, 错误: {ex.Message}");
+                GameLog.Error($"[VersionManager] 版本比较失败: {version1} vs {version2}, 错误: {ex.Message}");
                 return 0;
             }
         }
@@ -134,7 +134,7 @@ namespace Framework.HotUpdate
         {
             if (currentVersion == null || targetVersion == null)
             {
-                Logger.Warning("[VersionManager] 版本信息为空，无法判断更新类型");
+                GameLog.Warning("[VersionManager] 版本信息为空，无法判断更新类型");
                 return UpdateType.None;
             }
             
@@ -144,7 +144,7 @@ namespace Framework.HotUpdate
             // 如果应用版本不同，需要整包更新
             if (appVersionCompare != 0)
             {
-                Logger.Log($"[VersionManager] 应用版本不同，需要整包更新: {currentVersion.AppVersion} -> {targetVersion.AppVersion}");
+                GameLog.Log($"[VersionManager] 应用版本不同，需要整包更新: {currentVersion.AppVersion} -> {targetVersion.AppVersion}");
                 return UpdateType.FullUpdate;
             }
             
@@ -154,13 +154,13 @@ namespace Framework.HotUpdate
             
             if (resourceChanged || codeChanged)
             {
-                Logger.Log($"[VersionManager] 资源或代码版本不同，需要热更新: " +
+                GameLog.Log($"[VersionManager] 资源或代码版本不同，需要热更新: " +
                           $"资源版本 {currentVersion.ResourceVersion} -> {targetVersion.ResourceVersion}, " +
                           $"代码版本 {currentVersion.CodeVersion} -> {targetVersion.CodeVersion}");
                 return UpdateType.HotUpdate;
             }
             
-            Logger.Log("[VersionManager] 版本相同，无需更新");
+            GameLog.Log("[VersionManager] 版本相同，无需更新");
             return UpdateType.None;
         }
 
@@ -203,7 +203,7 @@ namespace Framework.HotUpdate
 
             if (string.IsNullOrEmpty(updateServerUrl))
             {
-                Logger.Warning("[VersionManager] CodeVersion 已变更但 UpdateServerUrl 为空，无法补全补丁 URL");
+                GameLog.Warning("[VersionManager] CodeVersion 已变更但 UpdateServerUrl 为空，无法补全补丁 URL");
                 return false;
             }
 
@@ -220,7 +220,7 @@ namespace Framework.HotUpdate
                 });
             }
 
-            Logger.Log($"[VersionManager] PatchFiles 为空，已按约定补全 {patchFiles.Count} 个热更程序集: " +
+            GameLog.Log($"[VersionManager] PatchFiles 为空，已按约定补全 {patchFiles.Count} 个热更程序集: " +
                        $"{string.Join(", ", patchFiles.ConvertAll(p => p.FileName))}");
             return true;
         }
@@ -244,11 +244,11 @@ namespace Framework.HotUpdate
             
             if (!isCompatible)
             {
-                Logger.Warning($"[VersionManager] 版本不兼容: 当前版本 {currentVersion} < 最低兼容版本 {minCompatibleVersion}");
+                GameLog.Warning($"[VersionManager] 版本不兼容: 当前版本 {currentVersion} < 最低兼容版本 {minCompatibleVersion}");
             }
             else
             {
-                Logger.Log($"[VersionManager] 版本兼容: 当前版本 {currentVersion} >= 最低兼容版本 {minCompatibleVersion}");
+                GameLog.Log($"[VersionManager] 版本兼容: 当前版本 {currentVersion} >= 最低兼容版本 {minCompatibleVersion}");
             }
             
             return isCompatible;
@@ -274,11 +274,11 @@ namespace Framework.HotUpdate
                         // 若 AppVersion 与当前安装包不一致，忽略该缓存并回退读取 StreamingAssets 出厂版本。
                         if (!string.Equals(versionInfo.AppVersion, Application.version, StringComparison.Ordinal))
                         {
-                            Logger.Warning($"[VersionManager] 忽略旧本地版本（persistent）：{versionInfo.AppVersion}，当前安装包版本：{Application.version}");
+                            GameLog.Warning($"[VersionManager] 忽略旧本地版本（persistent）：{versionInfo.AppVersion}，当前安装包版本：{Application.version}");
                         }
                         else
                         {
-                            Logger.Log($"[VersionManager] 读取本地版本（persistent）: " +
+                            GameLog.Log($"[VersionManager] 读取本地版本（persistent）: " +
                                        $"App={versionInfo.AppVersion} Resource={versionInfo.ResourceVersion} Code={versionInfo.CodeVersion}");
                             return versionInfo;
                         }
@@ -286,7 +286,7 @@ namespace Framework.HotUpdate
                 }
                 catch (Exception ex)
                 {
-                    Logger.Error($"[VersionManager] 读取本地版本文件失败: {ex.Message}");
+                    GameLog.Error($"[VersionManager] 读取本地版本文件失败: {ex.Message}");
                 }
             }
 
@@ -298,18 +298,18 @@ namespace Framework.HotUpdate
                 {
                     string json = System.IO.File.ReadAllText(streamingPath);
                     UpdateInfo versionInfo = JsonUtility.FromJson<UpdateInfo>(json);
-                    Logger.Log($"[VersionManager] 读取出厂版本（StreamingAssets）: " +
+                    GameLog.Log($"[VersionManager] 读取出厂版本（StreamingAssets）: " +
                                $"Resource={versionInfo.ResourceVersion} Code={versionInfo.CodeVersion}");
                     return versionInfo;
                 }
                 catch (Exception ex)
                 {
-                    Logger.Error($"[VersionManager] 读取 StreamingAssets 版本失败: {ex.Message}");
+                    GameLog.Error($"[VersionManager] 读取 StreamingAssets 版本失败: {ex.Message}");
                 }
             }
 
             // 最后兜底（理论上不应走到这里）
-            Logger.Warning("[VersionManager] 未找到任何版本文件，使用硬编码默认值 Resource=1 Code=1");
+            GameLog.Warning("[VersionManager] 未找到任何版本文件，使用硬编码默认值 Resource=1 Code=1");
             return new UpdateInfo
             {
                 AppVersion           = Application.version,
@@ -331,7 +331,7 @@ namespace Framework.HotUpdate
         {
             if (serverVersion == null)
             {
-                Logger.Warning("[VersionManager] CommitResourceUpdate 跳过: serverVersion 为空");
+                GameLog.Warning("[VersionManager] CommitResourceUpdate 跳过: serverVersion 为空");
                 return;
             }
 
@@ -352,7 +352,7 @@ namespace Framework.HotUpdate
                 local.PatchFiles.Clear();
 
             SaveLocalVersion(local);
-            Logger.Log($"[VersionManager] 资源热更版本已落盘: Resource={local.ResourceVersion}, Code={local.CodeVersion}");
+            GameLog.Log($"[VersionManager] 资源热更版本已落盘: Resource={local.ResourceVersion}, Code={local.CodeVersion}");
         }
 
         /// <summary>
@@ -362,7 +362,7 @@ namespace Framework.HotUpdate
         {
             if (serverVersion == null)
             {
-                Logger.Warning("[VersionManager] CommitCodeUpdate 跳过: serverVersion 为空");
+                GameLog.Warning("[VersionManager] CommitCodeUpdate 跳过: serverVersion 为空");
                 return;
             }
 
@@ -382,7 +382,7 @@ namespace Framework.HotUpdate
                 local.PatchFiles.Clear();
 
             SaveLocalVersion(local);
-            Logger.Log($"[VersionManager] 代码热更版本已落盘: Resource={local.ResourceVersion}, Code={local.CodeVersion}");
+            GameLog.Log($"[VersionManager] 代码热更版本已落盘: Resource={local.ResourceVersion}, Code={local.CodeVersion}");
         }
 
         /// <summary>
@@ -396,11 +396,11 @@ namespace Framework.HotUpdate
                 string versionFilePath = System.IO.Path.Combine(Application.persistentDataPath, "version.json");
                 string json = JsonUtility.ToJson(versionInfo, true);
                 System.IO.File.WriteAllText(versionFilePath, json);
-                Logger.Log($"[VersionManager] 保存本地版本: {versionInfo.AppVersion}");
+                GameLog.Log($"[VersionManager] 保存本地版本: {versionInfo.AppVersion}");
             }
             catch (Exception ex)
             {
-                Logger.Error($"[VersionManager] 保存本地版本文件失败: {ex.Message}");
+                GameLog.Error($"[VersionManager] 保存本地版本文件失败: {ex.Message}");
             }
         }
         

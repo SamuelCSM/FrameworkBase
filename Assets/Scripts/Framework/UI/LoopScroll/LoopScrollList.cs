@@ -73,13 +73,13 @@ namespace Framework
         {
             if (View.CellTemplate == null)
             {
-                Logger.Error("[LoopScrollList] CellTemplate 未配置，列表无法工作");
+                GameLog.Error("[LoopScrollList] CellTemplate 未配置，列表无法工作");
                 return;
             }
 
             if (View.Content == null || View.Viewport == null || View.ScrollRect == null)
             {
-                Logger.Error("[LoopScrollList] ScrollRect/Viewport/Content 引用缺失");
+                GameLog.Error("[LoopScrollList] ScrollRect/Viewport/Content 引用缺失");
                 return;
             }
 
@@ -570,7 +570,7 @@ namespace Framework
             bool vertical = View.Axis == LoopAxis.Vertical;
             if ((vertical ? height : width) <= 0f)
             {
-                Logger.Warning("[LoopScrollList] 行模板主轴尺寸为 0，请检查模板 RectTransform 尺寸");
+                GameLog.Warning("[LoopScrollList] 行模板主轴尺寸为 0，请检查模板 RectTransform 尺寸");
             }
 
             return new LoopLayoutConfig
@@ -604,7 +604,7 @@ namespace Framework
 
             if (_source != null)
             {
-                Logger.Error("[LoopScrollList] 配置为变长模式但数据源未实现 ILoopVariableSource，项尺寸按 0 处理");
+                GameLog.Error("[LoopScrollList] 配置为变长模式但数据源未实现 ILoopVariableSource，项尺寸按 0 处理");
             }
 
             return null;

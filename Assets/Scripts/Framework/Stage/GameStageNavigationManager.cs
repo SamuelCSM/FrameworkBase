@@ -43,14 +43,14 @@ namespace Framework
         /// <summary>初始化阶段导航管理器。</summary>
         public override void OnInit()
         {
-            Logger.Log("[GameStageNavigationManager] 初始化完成");
+            GameLog.Log("[GameStageNavigationManager] 初始化完成");
         }
 
         /// <summary>关闭阶段导航管理器并清空返回栈。</summary>
         public override void OnShutdown()
         {
             _backStack.Clear();
-            Logger.Log("[GameStageNavigationManager] 已关闭");
+            GameLog.Log("[GameStageNavigationManager] 已关闭");
         }
 
         // ── 阶段导航 ─────────────────────────────────────────────────────────
@@ -107,7 +107,7 @@ namespace Framework
         {
             if (_isNavigating)
             {
-                Logger.Warning("[GameStageNavigationManager] 阶段导航进行中，忽略返回");
+                GameLog.Warning("[GameStageNavigationManager] 阶段导航进行中，忽略返回");
                 return false;
             }
 
@@ -132,7 +132,7 @@ namespace Framework
 
             if (_backStack.Count == 0)
             {
-                Logger.Warning("[GameStageNavigationManager] 阶段返回栈为空");
+                GameLog.Warning("[GameStageNavigationManager] 阶段返回栈为空");
                 return false;
             }
 
@@ -161,7 +161,7 @@ namespace Framework
         {
             if (nextStage == null)
             {
-                Logger.Error($"[GameStageNavigationManager] {apiName}: nextStage 为 null");
+                GameLog.Error($"[GameStageNavigationManager] {apiName}: nextStage 为 null");
                 return false;
             }
 
@@ -172,13 +172,13 @@ namespace Framework
         {
             if (_isNavigating)
             {
-                Logger.Warning($"[GameStageNavigationManager] {apiName}: 阶段导航进行中，忽略");
+                GameLog.Warning($"[GameStageNavigationManager] {apiName}: 阶段导航进行中，忽略");
                 return false;
             }
 
             if (GameEntry.StageManager == null)
             {
-                Logger.Error($"[GameStageNavigationManager] {apiName}: StageManager 未初始化");
+                GameLog.Error($"[GameStageNavigationManager] {apiName}: StageManager 未初始化");
                 return false;
             }
 

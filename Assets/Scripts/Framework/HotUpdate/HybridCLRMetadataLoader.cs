@@ -16,13 +16,13 @@ namespace Framework.HotUpdate
         public static async UniTask<bool> LoadAllAsync()
         {
 #if UNITY_EDITOR
-            Logger.Log("[HybridCLRMetadataLoader] 编辑器模式：跳过 AOT 元数据加载");
+            GameLog.Log("[HybridCLRMetadataLoader] 编辑器模式：跳过 AOT 元数据加载");
             return true;
 #else
             string[] assemblies = await ResolveAssemblyListAsync();
             if (assemblies == null || assemblies.Length == 0)
             {
-                Logger.Warning("[HybridCLRMetadataLoader] 元数据程序集列表为空，跳过");
+                GameLog.Warning("[HybridCLRMetadataLoader] 元数据程序集列表为空，跳过");
                 return true;
             }
 
@@ -55,7 +55,7 @@ namespace Framework.HotUpdate
                 }
                 catch (Exception ex)
                 {
-                    Logger.Warning($"[HybridCLRMetadataLoader] 解析 manifest 失败，使用内置列表: {ex.Message}");
+                    GameLog.Warning($"[HybridCLRMetadataLoader] 解析 manifest 失败，使用内置列表: {ex.Message}");
                 }
             }
 
@@ -73,18 +73,18 @@ namespace Framework.HotUpdate
 
             if (dllBytes == null || dllBytes.Length == 0)
             {
-                Logger.Error($"[HybridCLRMetadataLoader] 未找到 AOT 元数据: {bytesFileName}");
+                GameLog.Error($"[HybridCLRMetadataLoader] 未找到 AOT 元数据: {bytesFileName}");
                 return false;
             }
 
             LoadImageErrorCode err = RuntimeApi.LoadMetadataForAOTAssembly(dllBytes, HomologousImageMode.SuperSet);
             if (err == LoadImageErrorCode.OK || err == LoadImageErrorCode.HOMOLOGOUS_ASSEMBLY_HAS_LOADED)
             {
-                Logger.Log($"[HybridCLRMetadataLoader] 元数据已加载: {assemblyFileName} ({err})");
+                GameLog.Log($"[HybridCLRMetadataLoader] 元数据已加载: {assemblyFileName} ({err})");
                 return true;
             }
 
-            Logger.Error($"[HybridCLRMetadataLoader] 加载失败: {assemblyFileName}, code={err}");
+            GameLog.Error($"[HybridCLRMetadataLoader] 加载失败: {assemblyFileName}, code={err}");
             return false;
         }
 
@@ -100,7 +100,7 @@ namespace Framework.HotUpdate
             }
             catch (Exception ex)
             {
-                Logger.Warning($"[HybridCLRMetadataLoader] 读取 persistent 元数据失败: {path}, {ex.Message}");
+                GameLog.Warning($"[HybridCLRMetadataLoader] 读取 persistent 元数据失败: {path}, {ex.Message}");
                 return null;
             }
         }

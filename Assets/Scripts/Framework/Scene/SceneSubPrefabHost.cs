@@ -55,13 +55,13 @@ namespace Framework
         {
             if (string.IsNullOrEmpty(key))
             {
-                Logger.Error($"[SceneSubPrefabHost] LoadAsync 失败，key 为空: {typeof(TPrefab).Name}");
+                GameLog.Error($"[SceneSubPrefabHost] LoadAsync 失败，key 为空: {typeof(TPrefab).Name}");
                 return null;
             }
 
             if (parent == null)
             {
-                Logger.Error($"[SceneSubPrefabHost] LoadAsync 失败，父节点为空: {typeof(TPrefab).Name}");
+                GameLog.Error($"[SceneSubPrefabHost] LoadAsync 失败，父节点为空: {typeof(TPrefab).Name}");
                 return null;
             }
 
@@ -76,7 +76,7 @@ namespace Framework
             if (prefabObject == null)
             {
                 ResetRuntimeState();
-                Logger.Error($"[SceneSubPrefabHost] 加载子预制失败: {typeof(TPrefab).Name}, Key={key}");
+                GameLog.Error($"[SceneSubPrefabHost] 加载子预制失败: {typeof(TPrefab).Name}, Key={key}");
                 return null;
             }
 
@@ -84,7 +84,7 @@ namespace Framework
             SceneSubView view = prefabObject.GetComponent(prefab.ViewType) as SceneSubView;
             if (view == null)
             {
-                Logger.Error($"[SceneSubPrefabHost] 子预制缺少 View 组件: {prefab.ViewType.Name}, Key={key}");
+                GameLog.Error($"[SceneSubPrefabHost] 子预制缺少 View 组件: {prefab.ViewType.Name}, Key={key}");
                 prefab.Dispose();
                 prefab = null;
                 ReleasePrefabObject();

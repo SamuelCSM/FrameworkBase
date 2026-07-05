@@ -87,7 +87,7 @@ namespace Framework
             // Canvas 层级由 UIBootstrap 在场景中负责创建。
             // SetBootstrap() 在 GameEntry.InitializeManagers() 结束后立即调用，
             // 早于任何 OpenUIAsync，因此无需在此创建节点。
-            Logger.Log("[UIManager] 初始化完成（等待 SetBootstrap 注入 Canvas 层级）");
+            GameLog.Log("[UIManager] 初始化完成（等待 SetBootstrap 注入 Canvas 层级）");
         }
 
         public override void OnShutdown()
@@ -109,7 +109,7 @@ namespace Framework
             _registerInfos.Clear();
             _uiPools.Clear();
 
-            Logger.Log("[UIManager] 已关闭");
+            GameLog.Log("[UIManager] 已关闭");
         }
 
         // ── Bootstrap 注入 ───────────────────────────────────────────────────
@@ -123,11 +123,11 @@ namespace Framework
         {
             if (bootstrap == null)
             {
-                Logger.Error("[UIManager] SetBootstrap: bootstrap 为空，请在 GameEntry Inspector 中赋值 UIBootstrap");
+                GameLog.Error("[UIManager] SetBootstrap: bootstrap 为空，请在 GameEntry Inspector 中赋值 UIBootstrap");
                 return;
             }
             _bootstrap = bootstrap;
-            Logger.Log("[UIManager] Bootstrap 注入完成，UI 层级就绪");
+            GameLog.Log("[UIManager] Bootstrap 注入完成，UI 层级就绪");
         }
 
         /// <summary>获取指定层级 Canvas 的父节点 Transform（用于在编辑器脚本或特殊 UI 中手动挂载）</summary>
@@ -135,7 +135,7 @@ namespace Framework
         {
             if (_bootstrap == null)
             {
-                Logger.Error("[UIManager] GetLayerRoot: bootstrap 未注入");
+                GameLog.Error("[UIManager] GetLayerRoot: bootstrap 未注入");
                 return null;
             }
             return _bootstrap.GetLayerRoot(layer);
@@ -181,26 +181,26 @@ namespace Framework
         {
             if (uiType == null)
             {
-                Logger.Error("[UIManager] RegisterUI: uiType 为空");
+                GameLog.Error("[UIManager] RegisterUI: uiType 为空");
                 return;
             }
 
             if (!typeof(UIBaseCore).IsAssignableFrom(uiType))
             {
-                Logger.Error($"[UIManager] RegisterUI: {uiType.FullName} 不是 UIBaseCore 子类");
+                GameLog.Error($"[UIManager] RegisterUI: {uiType.FullName} 不是 UIBaseCore 子类");
                 return;
             }
 
             if (string.IsNullOrWhiteSpace(address))
             {
-                Logger.Error($"[UIManager] RegisterUI: {uiType.Name} 的 Address 为空");
+                GameLog.Error($"[UIManager] RegisterUI: {uiType.Name} 的 Address 为空");
                 return;
             }
 
             var type = uiType;
             if (_registerInfos.ContainsKey(type))
             {
-                Logger.Warning($"[UIManager] 重复注册: {type.Name}");
+                GameLog.Warning($"[UIManager] 重复注册: {type.Name}");
                 return;
             }
             _registerInfos[type] = new UIRegisterInfo
@@ -212,7 +212,7 @@ namespace Framework
                 StackBehavior = stackBehavior,
                 BlockerMode   = blockerMode,
             };
-            Logger.Log($"[UIManager] 注册: {type.Name} Layer={layer}");
+            GameLog.Log($"[UIManager] 注册: {type.Name} Layer={layer}");
         }
 
         // ── 打开 ─────────────────────────────────────────────────────────────
@@ -228,7 +228,7 @@ namespace Framework
 
             if (!_registerInfos.TryGetValue(type, out var info))
             {
-                Logger.Error($"[UIManager] 未注册: {type.Name}");
+                GameLog.Error($"[UIManager] 未注册: {type.Name}");
                 return null;
             }
 
@@ -236,7 +236,7 @@ namespace Framework
                 && _openedUIs.TryGetValue(type, out var existing)
                 && existing.Count > 0)
             {
-                Logger.Warning($"[UIManager] 已打开且不允许多实例: {type.Name}");
+                GameLog.Warning($"[UIManager] 已打开且不允许多实例: {type.Name}");
                 return existing[0] as TWindow;
             }
 
@@ -247,7 +247,7 @@ namespace Framework
 
             if (uiObj == null)
             {
-                Logger.Error($"[UIManager] 加载失败: {type.Name}");
+                GameLog.Error($"[UIManager] 加载失败: {type.Name}");
                 return null;
             }
 
@@ -255,7 +255,7 @@ namespace Framework
             var view = uiObj.GetComponent(window.ViewType) as UIView;
             if (view == null)
             {
-                Logger.Error($"[UIManager] 缺少 View 组件: {window.ViewType.Name}");
+                GameLog.Error($"[UIManager] 缺少 View 组件: {window.ViewType.Name}");
                 GameObject.Destroy(uiObj);
                 return null;
             }
@@ -314,7 +314,7 @@ namespace Framework
 
             await window.OpenWithAnimAsync(userData);
 
-            Logger.Log($"[UIManager] 打开: {type.Name}");
+            GameLog.Log($"[UIManager] 打开: {type.Name}");
             return window;
         }
 
@@ -339,7 +339,7 @@ namespace Framework
             RecycleOrDestroy(ui, type, uiObj, destroy);
             _uiGameObjects.Remove(ui);
 
-            Logger.Log($"[UIManager] 关闭: {type.Name}");
+            GameLog.Log($"[UIManager] 关闭: {type.Name}");
         }
 
         /// <summary>异步关闭指定类型的第一个实例。</summary>
@@ -447,7 +447,7 @@ namespace Framework
         {
             if (_uiStack.Count <= 1)
             {
-                Logger.Warning("[UIManager] GoBack: 栈中不足两个 UI");
+                GameLog.Warning("[UIManager] GoBack: 栈中不足两个 UI");
                 return;
             }
 
@@ -534,7 +534,7 @@ namespace Framework
         {
             if (_bootstrap == null)
             {
-                Logger.Error("[UIManager] GetLayerCanvas: bootstrap 未注入，请确认 GameEntry 已调用 SetBootstrap");
+                GameLog.Error("[UIManager] GetLayerCanvas: bootstrap 未注入，请确认 GameEntry 已调用 SetBootstrap");
                 return null;
             }
             return _bootstrap.GetLayerCanvas(layer);

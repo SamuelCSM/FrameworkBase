@@ -119,21 +119,21 @@ namespace Framework
         {
             if (obj == null)
             {
-                Logger.Warning("ObjectPool.Release: 尝试回收null对象");
+                GameLog.Warning("ObjectPool.Release: 尝试回收null对象");
                 return;
             }
 
             // 检查重复回收（HashSet O(1)，避免对栈做 O(n) 线性扫描）
             if (_checkDuplicate && _inPoolSet.Contains(obj))
             {
-                Logger.Error($"ObjectPool.Release: 对象已在池中，重复回收 - {typeof(T).Name}");
+                GameLog.Error($"ObjectPool.Release: 对象已在池中，重复回收 - {typeof(T).Name}");
                 return;
             }
 
             // 检查池大小限制
             if (_pool.Count >= _maxSize)
             {
-                Logger.Warning($"ObjectPool.Release: 对象池已满({_maxSize})，丢弃对象 - {typeof(T).Name}");
+                GameLog.Warning($"ObjectPool.Release: 对象池已满({_maxSize})，丢弃对象 - {typeof(T).Name}");
                 return;
             }
 
@@ -172,7 +172,7 @@ namespace Framework
                 _inPoolSet?.Add(obj);
             }
 
-            Logger.Log($"ObjectPool.Prewarm: 预热{count}个对象 - {typeof(T).Name}");
+            GameLog.Log($"ObjectPool.Prewarm: 预热{count}个对象 - {typeof(T).Name}");
         }
 
         /// <summary>
@@ -192,7 +192,7 @@ namespace Framework
 
             _pool.Clear();
             _inPoolSet?.Clear();
-            Logger.Log($"ObjectPool.Clear: 清空对象池 - {typeof(T).Name}");
+            GameLog.Log($"ObjectPool.Clear: 清空对象池 - {typeof(T).Name}");
         }
 
         /// <summary>
@@ -223,7 +223,7 @@ namespace Framework
                 _createCount--;
             }
 
-            Logger.Log($"ObjectPool.Shrink: 收缩对象池，移除{removeCount}个对象 - {typeof(T).Name}");
+            GameLog.Log($"ObjectPool.Shrink: 收缩对象池，移除{removeCount}个对象 - {typeof(T).Name}");
         }
 
         /// <summary>
@@ -245,7 +245,7 @@ namespace Framework
         /// </summary>
         public void PrintStatistics()
         {
-            Logger.Log(GetStatistics());
+            GameLog.Log(GetStatistics());
         }
     }
 }

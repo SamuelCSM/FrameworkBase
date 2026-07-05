@@ -25,7 +25,7 @@ namespace Framework
                 await request.SendWebRequest();
                 if (request.result != UnityWebRequest.Result.Success)
                 {
-                    Logger.Warning($"[StreamingAssetsBytesReader] 读取失败: {sourceUrl}, {request.error}");
+                    GameLog.Warning($"[StreamingAssetsBytesReader] 读取失败: {sourceUrl}, {request.error}");
                     return null;
                 }
 

@@ -133,7 +133,7 @@ namespace Framework.Core.Telemetry
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
-                Logger.Warning($"[CrashReporter] 读取本地崩溃记录失败：{ex.Message}");
+                GameLog.Warning($"[CrashReporter] 读取本地崩溃记录失败：{ex.Message}");
                 return false;
             }
 
@@ -152,7 +152,7 @@ namespace Framework.Core.Telemetry
 
                     if (request.result != UnityWebRequest.Result.Success)
                     {
-                        Logger.Warning($"[CrashReporter] 崩溃记录上报失败（保留本地下次重试）：{request.error}");
+                        GameLog.Warning($"[CrashReporter] 崩溃记录上报失败（保留本地下次重试）：{request.error}");
                         return false;
                     }
                 }
@@ -162,12 +162,12 @@ namespace Framework.Core.Telemetry
                     File.Delete(_filePath);
                 }
 
-                Logger.Log("[CrashReporter] 积压崩溃记录已上报并清理");
+                GameLog.Log("[CrashReporter] 积压崩溃记录已上报并清理");
                 return true;
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or UnityWebRequestException)
             {
-                Logger.Warning($"[CrashReporter] 崩溃记录上报异常（保留本地下次重试）：{ex.Message}");
+                GameLog.Warning($"[CrashReporter] 崩溃记录上报异常（保留本地下次重试）：{ex.Message}");
                 return false;
             }
         }

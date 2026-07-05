@@ -82,7 +82,7 @@ namespace Framework.Core.Auth
     {
         public UniTask PresentAsync(AuthPopupDecision decision, Func<UniTask> retryHandler, Action exitHandler)
         {
-            Logger.Warning($"[AuthPopup] code={decision.ErrorCode}, msg={decision.Message}, retry={decision.ShowRetry}, exit={decision.ShowExit}");
+            GameLog.Warning($"[AuthPopup] code={decision.ErrorCode}, msg={decision.Message}, retry={decision.ShowRetry}, exit={decision.ShowExit}");
             return UniTask.CompletedTask;
         }
     }

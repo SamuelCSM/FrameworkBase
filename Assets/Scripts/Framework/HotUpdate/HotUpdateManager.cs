@@ -53,7 +53,7 @@ namespace Framework.HotUpdate
             base.OnInit();
             _patchDownloader = new PatchDownloader();
             _fileVerifier = new FileVerifier();
-            Logger.Log("[HotUpdateManager] 热更新管理器初始化");
+            GameLog.Log("[HotUpdateManager] 热更新管理器初始化");
         }
         
         /// <summary>
@@ -64,13 +64,13 @@ namespace Framework.HotUpdate
         public async UniTask<UpdateInfo> CheckUpdateAsync(string updateUrl)
         {
             _state = UpdateState.CheckingUpdate;
-            Logger.Log($"[HotUpdateManager] 开始检查更新: {updateUrl}");
+            GameLog.Log($"[HotUpdateManager] 开始检查更新: {updateUrl}");
             
             try
             {
                 // 获取本地版本
                 UpdateInfo localVersion = VersionManager.GetLocalVersion();
-                Logger.Log($"[HotUpdateManager] 本地版本: {localVersion.AppVersion}, 资源版本: {localVersion.ResourceVersion}, 代码版本: {localVersion.CodeVersion}");
+                GameLog.Log($"[HotUpdateManager] 本地版本: {localVersion.AppVersion}, 资源版本: {localVersion.ResourceVersion}, 代码版本: {localVersion.CodeVersion}");
                 
                 // 从服务器下载version.json
                 // version.json：每次必须拿最新，forceRefresh=true 跳过断点续传
@@ -81,7 +81,7 @@ namespace Framework.HotUpdate
                 
                 if (!downloadSuccess)
                 {
-                    Logger.Error("[HotUpdateManager] 下载版本文件失败");
+                    GameLog.Error("[HotUpdateManager] 下载版本文件失败");
                     _state = UpdateState.Error;
                     OnUpdateError?.Invoke("下载版本文件失败");
                     return null;
@@ -91,7 +91,7 @@ namespace Framework.HotUpdate
                 string json = File.ReadAllText(tempPath);
                 UpdateInfo serverVersion = JsonUtility.FromJson<UpdateInfo>(json);
                 
-                Logger.Log($"[HotUpdateManager] 服务器版本: {serverVersion.AppVersion}, 资源版本: {serverVersion.ResourceVersion}, 代码版本: {serverVersion.CodeVersion}");
+                GameLog.Log($"[HotUpdateManager] 服务器版本: {serverVersion.AppVersion}, 资源版本: {serverVersion.ResourceVersion}, 代码版本: {serverVersion.CodeVersion}");
                 
                 // 判断更新类型
                 UpdateType updateType = VersionManager.DetermineUpdateType(localVersion, serverVersion);
@@ -104,7 +104,7 @@ namespace Framework.HotUpdate
                     
                     if (!isCompatible)
                     {
-                        Logger.Warning("[HotUpdateManager] 版本不兼容，需要强制更新");
+                        GameLog.Warning("[HotUpdateManager] 版本不兼容，需要强制更新");
                         serverVersion.ForceUpdate = true;
                         serverVersion.Type = UpdateType.FullUpdate;
                     }
@@ -114,11 +114,11 @@ namespace Framework.HotUpdate
                 if (updateType != UpdateType.None)
                 {
                     OnUpdateAvailable?.Invoke(serverVersion);
-                    Logger.Log($"[HotUpdateManager] 发现更新: {updateType}, 补丁数量: {serverVersion.PatchFiles.Count}");
+                    GameLog.Log($"[HotUpdateManager] 发现更新: {updateType}, 补丁数量: {serverVersion.PatchFiles.Count}");
                 }
                 else
                 {
-                    Logger.Log("[HotUpdateManager] 版本检查完成，无需更新");
+                    GameLog.Log("[HotUpdateManager] 版本检查完成，无需更新");
                 }
                 
                 _state = UpdateState.None;
@@ -126,7 +126,7 @@ namespace Framework.HotUpdate
             }
             catch (Exception ex)
             {
-                Logger.Error($"[HotUpdateManager] 检查更新失败: {ex.Message}");
+                GameLog.Error($"[HotUpdateManager] 检查更新失败: {ex.Message}");
                 _state = UpdateState.Error;
                 OnUpdateError?.Invoke(ex.Message);
                 throw;
@@ -144,7 +144,7 @@ namespace Framework.HotUpdate
         {
             if (!VersionManager.ShouldUpdateCode(serverVersion, localVersion))
             {
-                Logger.Log("[HotUpdateManager] 代码版本一致，跳过补丁下载");
+                GameLog.Log("[HotUpdateManager] 代码版本一致，跳过补丁下载");
                 return true;
             }
 
@@ -167,19 +167,19 @@ namespace Framework.HotUpdate
 
             if (updateInfo == null || patchFiles == null || patchFiles.Count == 0)
             {
-                Logger.Log("[HotUpdateManager] 没有需要下载的补丁文件");
+                GameLog.Log("[HotUpdateManager] 没有需要下载的补丁文件");
                 _state = UpdateState.None;
                 return false;
             }
 
-            Logger.Log($"[HotUpdateManager] 开始下载补丁，共{patchFiles.Count}个文件");
+            GameLog.Log($"[HotUpdateManager] 开始下载补丁，共{patchFiles.Count}个文件");
 
             try
             {
                 long totalSize = VersionManager.CalculateTotalSize(patchFiles);
                 long downloadedSize = 0;
 
-                Logger.Log($"[HotUpdateManager] 总下载大小: {VersionManager.FormatFileSize(totalSize)}");
+                GameLog.Log($"[HotUpdateManager] 总下载大小: {VersionManager.FormatFileSize(totalSize)}");
 
                 string downloadDir = Application.persistentDataPath;
 
@@ -188,7 +188,7 @@ namespace Framework.HotUpdate
                     PatchFile patchFile = patchFiles[i];
                     string savePath = Path.Combine(downloadDir, patchFile.FileName);
 
-                    Logger.Log($"[HotUpdateManager] 下载文件 ({i + 1}/{patchFiles.Count}): {patchFile.FileName}");
+                    GameLog.Log($"[HotUpdateManager] 下载文件 ({i + 1}/{patchFiles.Count}): {patchFile.FileName}");
 
                     bool success = await _patchDownloader.DownloadFileAsync(
                         patchFile.Url, savePath,
@@ -203,7 +203,7 @@ namespace Framework.HotUpdate
 
                     if (!success)
                     {
-                        Logger.Error($"[HotUpdateManager] 下载文件失败: {patchFile.FileName}");
+                        GameLog.Error($"[HotUpdateManager] 下载文件失败: {patchFile.FileName}");
                         _state = UpdateState.Error;
                         OnUpdateError?.Invoke($"下载文件失败: {patchFile.FileName}");
                         return false;
@@ -215,7 +215,7 @@ namespace Framework.HotUpdate
                         bool verified = await _fileVerifier.VerifyFileAsync(savePath, patchFile.MD5);
                         if (!verified)
                         {
-                            Logger.Error($"[HotUpdateManager] 文件校验失败: {patchFile.FileName}");
+                            GameLog.Error($"[HotUpdateManager] 文件校验失败: {patchFile.FileName}");
 
                             if (File.Exists(savePath))
                                 File.Delete(savePath);
@@ -230,14 +230,14 @@ namespace Framework.HotUpdate
                 }
 
                 VersionManager.CommitCodeUpdate(updateInfo);
-                Logger.Log("[HotUpdateManager] 补丁下载完成");
+                GameLog.Log("[HotUpdateManager] 补丁下载完成");
                 onProgress?.Invoke(1.0f);
                 _state = UpdateState.Complete;
                 return true;
             }
             catch (Exception ex)
             {
-                Logger.Error($"[HotUpdateManager] 下载补丁失败: {ex.Message}");
+                GameLog.Error($"[HotUpdateManager] 下载补丁失败: {ex.Message}");
                 _state = UpdateState.Error;
                 OnUpdateError?.Invoke(ex.Message);
                 throw;
@@ -249,14 +249,14 @@ namespace Framework.HotUpdate
         /// </summary>
         public async UniTask<bool> LoadMetadataAsync()
         {
-            Logger.Log("[HotUpdateManager] 开始加载 AOT 泛型补充元数据");
+            GameLog.Log("[HotUpdateManager] 开始加载 AOT 泛型补充元数据");
             try
             {
                 return await HybridCLRMetadataLoader.LoadAllAsync();
             }
             catch (Exception ex)
             {
-                Logger.Error($"[HotUpdateManager] 加载元数据失败: {ex.Message}");
+                GameLog.Error($"[HotUpdateManager] 加载元数据失败: {ex.Message}");
                 throw;
             }
         }
@@ -279,7 +279,7 @@ namespace Framework.HotUpdate
         /// </summary>
         public async UniTask<bool> LoadHotUpdateAssemblyAsync()
         {
-            Logger.Log("[HotUpdateManager] 开始加载热更新程序集");
+            GameLog.Log("[HotUpdateManager] 开始加载热更新程序集");
 
             try
             {
@@ -299,7 +299,7 @@ namespace Framework.HotUpdate
 
                     if (assembly == null)
                     {
-                        Logger.Error($"[HotUpdateManager] 在编辑器中找不到热更程序集: {assemblyName}");
+                        GameLog.Error($"[HotUpdateManager] 在编辑器中找不到热更程序集: {assemblyName}");
                         return false;
                     }
 
@@ -307,7 +307,7 @@ namespace Framework.HotUpdate
                     if (assemblyName == VersionManager.EntryHotUpdateAssemblyName)
                         _hotUpdateAssembly = assembly;
 
-                    Logger.Log($"[HotUpdateManager] 编辑器模式：使用已加载程序集 {assemblyName}");
+                    GameLog.Log($"[HotUpdateManager] 编辑器模式：使用已加载程序集 {assemblyName}");
                 }
 #else
                 // 真机（IL2CPP）：HybridCLR 解释域通过 Assembly.Load 加载热更 DLL，须先完成 LoadMetadataAsync。
@@ -319,7 +319,7 @@ namespace Framework.HotUpdate
                     byte[] dllBytes = await ReadHotUpdateDllBytesAsync(bytesFileName);
                     if (dllBytes == null || dllBytes.Length == 0)
                     {
-                        Logger.Error($"[HotUpdateManager] 无法读取热更程序集字节: {bytesFileName}");
+                        GameLog.Error($"[HotUpdateManager] 无法读取热更程序集字节: {bytesFileName}");
                         return false;
                     }
 
@@ -328,22 +328,22 @@ namespace Framework.HotUpdate
                     if (assemblyName == VersionManager.EntryHotUpdateAssemblyName)
                         _hotUpdateAssembly = assembly;
 
-                    Logger.Log($"[HotUpdateManager] 热更程序集加载成功: {assembly.FullName}");
+                    GameLog.Log($"[HotUpdateManager] 热更程序集加载成功: {assembly.FullName}");
                 }
 #endif
 
                 if (_hotUpdateAssembly == null)
                 {
-                    Logger.Error($"[HotUpdateManager] 未能定位热更入口程序集: {VersionManager.EntryHotUpdateAssemblyName}");
+                    GameLog.Error($"[HotUpdateManager] 未能定位热更入口程序集: {VersionManager.EntryHotUpdateAssemblyName}");
                     return false;
                 }
 
-                Logger.Log($"[HotUpdateManager] 热更程序集全部加载完成，共 {_loadedHotUpdateAssemblies.Count} 个");
+                GameLog.Log($"[HotUpdateManager] 热更程序集全部加载完成，共 {_loadedHotUpdateAssemblies.Count} 个");
                 return true;
             }
             catch (Exception ex)
             {
-                Logger.Error($"[HotUpdateManager] 加载热更新程序集失败: {ex.Message}");
+                GameLog.Error($"[HotUpdateManager] 加载热更新程序集失败: {ex.Message}");
                 throw;
             }
         }
@@ -355,7 +355,7 @@ namespace Framework.HotUpdate
             if (File.Exists(persistentPath))
                 return await UniTask.RunOnThreadPool(() => File.ReadAllBytes(persistentPath));
 
-            Logger.Warning($"[HotUpdateManager] persistent 无热更 DLL，回退 StreamingAssets: {fileName}");
+            GameLog.Warning($"[HotUpdateManager] persistent 无热更 DLL，回退 StreamingAssets: {fileName}");
             return await StreamingAssetsBytesReader.ReadAsync(fileName);
         }
         
@@ -364,13 +364,13 @@ namespace Framework.HotUpdate
         /// </summary>
         public void StartHotfix()
         {
-            Logger.Log("[HotUpdateManager] 启动热更新逻辑");
+            GameLog.Log("[HotUpdateManager] 启动热更新逻辑");
             
             try
             {
                 if (_hotUpdateAssembly == null)
                 {
-                    Logger.Error("[HotUpdateManager] 热更新程序集未加载，无法启动");
+                    GameLog.Error("[HotUpdateManager] 热更新程序集未加载，无法启动");
                     return;
                 }
                 
@@ -378,7 +378,7 @@ namespace Framework.HotUpdate
                 Type entryType = _hotUpdateAssembly.GetType("HotUpdate.Entry.HotfixEntry");
                 if (entryType == null)
                 {
-                    Logger.Error("[HotUpdateManager] 找不到HotfixEntry类型");
+                    GameLog.Error("[HotUpdateManager] 找不到HotfixEntry类型");
                     return;
                 }
                 
@@ -387,25 +387,25 @@ namespace Framework.HotUpdate
                 
                 if (startMethod == null)
                 {
-                    Logger.Error("[HotUpdateManager] 找不到Start方法");
+                    GameLog.Error("[HotUpdateManager] 找不到Start方法");
                     return;
                 }
                 
                 startMethod.Invoke(entryInstance, null);
                 
-                Logger.Log("[HotUpdateManager] 热更新逻辑启动成功");
+                GameLog.Log("[HotUpdateManager] 热更新逻辑启动成功");
                 OnUpdateComplete?.Invoke();
             }
             catch (TargetInvocationException ex) when (ex.InnerException != null)
             {
-                Logger.Error($"[HotUpdateManager] 启动热更新逻辑失败: {ex.InnerException.Message}\n{ex.InnerException}");
+                GameLog.Error($"[HotUpdateManager] 启动热更新逻辑失败: {ex.InnerException.Message}\n{ex.InnerException}");
                 OnUpdateError?.Invoke(ex.InnerException.Message);
                 ExceptionDispatchInfo.Capture(ex.InnerException).Throw();
                 throw;
             }
             catch (Exception ex)
             {
-                Logger.Error($"[HotUpdateManager] 启动热更新逻辑失败: {ex.Message}");
+                GameLog.Error($"[HotUpdateManager] 启动热更新逻辑失败: {ex.Message}");
                 OnUpdateError?.Invoke(ex.Message);
                 throw;
             }
@@ -416,7 +416,7 @@ namespace Framework.HotUpdate
             base.OnShutdown();
             _hotUpdateAssembly = null;
             _loadedHotUpdateAssemblies.Clear();
-            Logger.Log("[HotUpdateManager] 热更新管理器关闭");
+            GameLog.Log("[HotUpdateManager] 热更新管理器关闭");
         }
     }
     
