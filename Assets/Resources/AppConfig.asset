@@ -11,18 +11,19 @@ MonoBehaviour:
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 749cf2e0dd153984680f5dba586ddad9, type: 3}
   m_Name: AppConfig
-  m_EditorClassIdentifier: 
+  m_EditorClassIdentifier:
   AppEnv: dev
-  UpdateServerUrl: http://127.0.0.1:80/Updates
-  UseNetworkLogin: 1
+  UpdateServerUrl:
+  UseNetworkLogin: 0
   AutoGuestLogin: 0
   GameServerHost: 127.0.0.1
   GameServerPort: 9000
   NetworkTimeoutSeconds: 30
   UseTls: 0
-  TlsServerName: clientbase-gs
-  TlsCertSha256: 
-  CrashReportUrl: 
+  TlsServerName: framework-gs
+  TlsCertSha256:
+  CrashReportUrl:
+  EnableHotUpdate: 0
   HotUpdateAssemblyFiles: []
-  LoginServerHost: 
+  LoginServerHost:
   LoginServerPort: 0
