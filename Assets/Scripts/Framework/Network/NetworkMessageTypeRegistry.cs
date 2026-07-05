@@ -1,11 +1,13 @@
 using System;
 using System.Collections.Generic;
-using System.Reflection;
+using Google.Protobuf;
 
 namespace Framework.Network
 {
     /// <summary>
     /// 网络协议类型注册表，负责记录协议号与运行时解析器的映射。
+    /// 采用惰性显式登记：每次 <c>Subscribe&lt;T&gt;</c>/<c>RequestAsync&lt;TResp&gt;</c> 都以具体类型 T 调用 <see cref="Register{T}"/>，
+    /// 解析器闭包内 <c>new T()</c> + <c>MergeFrom</c>，全程无反射（不用 Activator/MakeGenericMethod），保证 IL2CPP(AOT) 安全。
     /// </summary>
     internal sealed class NetworkMessageTypeRegistry
     {
@@ -14,63 +16,57 @@ namespace Framework.Network
             new Dictionary<ushort, Func<byte[], IResponse>>();
 
         /// <summary>普通协议解析器字典，Key 为完整协议消息 ID，用于协议日志还原消息字段。</summary>
-        private readonly Dictionary<ushort, Func<byte[], IMessage>> _messageParsers =
-            new Dictionary<ushort, Func<byte[], IMessage>>();
+        private readonly Dictionary<ushort, Func<byte[], INetMessage>> _messageParsers =
+            new Dictionary<ushort, Func<byte[], INetMessage>>();
 
         /// <summary>协议显示名字典，Key 为完整协议消息 ID，用于未知 payload 时仍能打印协议名。</summary>
         private readonly Dictionary<ushort, string> _messageNames =
             new Dictionary<ushort, string>();
-
-        /// <summary>Protobuf 泛型反序列化方法缓存，减少协议日志解析时的反射查找。</summary>
-        private static readonly MethodInfo DeserializeMethod =
-            typeof(ProtobufUtil).GetMethod(nameof(ProtobufUtil.Deserialize), BindingFlags.Public | BindingFlags.Static);
 
         /// <summary>类型注册锁，保护运行期订阅和请求并发登记。</summary>
         private readonly object _lock = new object();
 
         /// <summary>
         /// 登记协议类型。如果类型实现了 <see cref="IResponse"/>，则额外登记错误码解析器。
+        /// 以具体类型 T 登记，解析走 <c>new T()</c> + <c>MergeFrom</c>，AOT 安全。
         /// </summary>
         /// <typeparam name="T">协议消息类型。</typeparam>
-        public void Register<T>() where T : class, IMessage, new()
+        public void Register<T>() where T : class, INetMessage, new()
         {
             T prototype = new T();
-            RegisterType(typeof(T), prototype, true);
+            byte mainId = prototype.GetMainId();
+            byte subId = prototype.GetSubId();
+            ushort messageId = MessagePacket.CombineMessageId(mainId, subId);
+            string typeName = typeof(T).Name;
+            bool isResponse = prototype is IResponse;
+
+            lock (_lock)
+            {
+                _messageParsers[messageId] = ParseTyped<T>;
+                _messageNames[messageId] = typeName;
+
+                if (isResponse)
+                {
+                    _responseParsers[messageId] = payload => (IResponse)ParseTyped<T>(payload);
+                }
+            }
         }
 
         /// <summary>
-        /// 扫描当前已加载程序集中的协议类型，提前登记日志解析器。
-        /// 后续热更程序集加载出的类型仍会在 Subscribe/Request 时补充登记。
+        /// 以具体类型解析 Protobuf 消息。空 payload 视为字段默认值消息。全程无反射。
         /// </summary>
-        public void RegisterLoadedMessageTypes()
+        /// <typeparam name="T">协议消息类型。</typeparam>
+        /// <param name="payload">协议消息体字节数据。</param>
+        /// <returns>解析出的协议消息对象。</returns>
+        private static INetMessage ParseTyped<T>(byte[] payload) where T : class, INetMessage, new()
         {
-            Assembly[] assemblies = AppDomain.CurrentDomain.GetAssemblies();
-            for (int i = 0; i < assemblies.Length; i++)
+            var message = new T();
+            if (payload != null && payload.Length > 0)
             {
-                Type[] types;
-                try
-                {
-                    types = assemblies[i].GetTypes();
-                }
-                catch (ReflectionTypeLoadException ex)
-                {
-                    types = ex.Types;
-                }
-                catch
-                {
-                    continue;
-                }
-
-                if (types == null)
-                {
-                    continue;
-                }
-
-                for (int j = 0; j < types.Length; j++)
-                {
-                    RegisterType(types[j], null, false);
-                }
+                message.MergeFrom(payload);
             }
+
+            return message;
         }
 
         /// <summary>
@@ -81,11 +77,11 @@ namespace Framework.Network
         /// <param name="payload">协议消息体字节数据。</param>
         /// <param name="message">解析出的协议消息对象。</param>
         /// <returns>存在解析器且解析成功时返回 true。</returns>
-        public bool TryParseMessage(byte mainId, byte subId, byte[] payload, out IMessage message)
+        public bool TryParseMessage(byte mainId, byte subId, byte[] payload, out INetMessage message)
         {
             message = null;
             ushort messageId = MessagePacket.CombineMessageId(mainId, subId);
-            Func<byte[], IMessage> parser;
+            Func<byte[], INetMessage> parser;
             lock (_lock)
             {
                 if (!_messageParsers.TryGetValue(messageId, out parser))
@@ -116,88 +112,6 @@ namespace Framework.Network
             }
 
             return $"Unknown_{mainId}_{subId}";
-        }
-
-        /// <summary>
-        /// 登记单个协议类型，并建立协议号到类型解析器的映射。
-        /// </summary>
-        /// <param name="type">协议类型。</param>
-        /// <param name="prototype">已创建的协议实例，可避免重复构造。</param>
-        /// <param name="force">是否覆盖既有协议号映射，显式注册需要覆盖自动扫描结果。</param>
-        private void RegisterType(Type type, IMessage prototype, bool force)
-        {
-            if (type == null
-                || !typeof(IMessage).IsAssignableFrom(type)
-                || type.IsInterface
-                || type.IsAbstract
-                || type.GetConstructor(Type.EmptyTypes) == null)
-            {
-                return;
-            }
-
-            IMessage instance = prototype;
-            if (instance == null)
-            {
-                try
-                {
-                    instance = (IMessage)Activator.CreateInstance(type);
-                }
-                catch
-                {
-                    return;
-                }
-            }
-
-            byte mainId = instance.GetMainId();
-            byte subId = instance.GetSubId();
-            ushort messageId = MessagePacket.CombineMessageId(mainId, subId);
-
-            lock (_lock)
-            {
-                if (force || !_messageParsers.ContainsKey(messageId) || IsServerToClientMessage(type))
-                {
-                    _messageParsers[messageId] = payload => ParseMessage(type, payload);
-                    _messageNames[messageId] = type.Name;
-                }
-
-                if (typeof(IResponse).IsAssignableFrom(type) && (force || !_responseParsers.ContainsKey(messageId)))
-                {
-                    _responseParsers[messageId] = payload => ParseMessage(type, payload) as IResponse;
-                }
-            }
-        }
-
-        /// <summary>
-        /// 按运行时类型解析 Protobuf 消息。空 payload 视为字段默认值消息。
-        /// </summary>
-        /// <param name="type">协议类型。</param>
-        /// <param name="payload">协议消息体字节数据。</param>
-        /// <returns>解析出的协议消息对象。</returns>
-        private static IMessage ParseMessage(Type type, byte[] payload)
-        {
-            if (payload == null || payload.Length == 0)
-            {
-                return (IMessage)Activator.CreateInstance(type);
-            }
-
-            if (DeserializeMethod == null)
-            {
-                return null;
-            }
-
-            return DeserializeMethod.MakeGenericMethod(type).Invoke(null, new object[] { payload }) as IMessage;
-        }
-
-        /// <summary>
-        /// 判断协议类型是否为服务端下发到客户端的消息，客户端 RECV 日志同协议号时优先使用该方向解析。
-        /// </summary>
-        /// <param name="type">协议类型。</param>
-        /// <returns>属于服务端下行命名空间时返回 true。</returns>
-        private static bool IsServerToClientMessage(Type type)
-        {
-            return type != null
-                   && type.Namespace != null
-                   && type.Namespace.IndexOf(".GS2GC", StringComparison.Ordinal) >= 0;
         }
 
         /// <summary>
@@ -238,5 +152,4 @@ namespace Framework.Network
             }
         }
     }
-
 }

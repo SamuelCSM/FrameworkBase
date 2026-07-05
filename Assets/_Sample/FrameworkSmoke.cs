@@ -1,5 +1,7 @@
 using Framework;
 using Framework.Core;
+using Framework.Network;
+using Game.Protocol;
 using UnityEngine;
 
 /// <summary>
@@ -41,5 +43,41 @@ public sealed class FrameworkSmoke : MonoBehaviour
             0.5f);
 
         GameLog.Log("[FrameworkSmoke] ✅ Framework OK —— 所有 Manager 已启动（Event/Timer/Resource/UI/Network/RefData/Audio/Scene/Auth）");
+
+        ProtobufRoundTrip();
+    }
+
+    /// <summary>
+    /// Google.Protobuf 收发链路自检：走框架完整路径（ProtobufUtil 序列化 → MessagePacket 组包 → 解包 → 反序列化），
+    /// 验证生成协议、路由号（GetMainId/GetSubId）与二进制往返均正常，不依赖真实网络连接。
+    /// </summary>
+    private void ProtobufRoundTrip()
+    {
+        var request = new GC2GS_009_001_HeartbeatRequest { ClientTime = 1234567890123, SequenceId = 7 };
+
+        byte[] payload = ProtobufUtil.Serialize(request);
+        byte[] packet = MessagePacket.Pack(request, payload, seqId: 42);
+
+        if (!MessagePacket.Unpack(packet, out byte mainId, out byte subId, out ushort seqId, out byte[] body))
+        {
+            GameLog.Error("[FrameworkSmoke] ❌ Protobuf 往返失败：消息包解析失败");
+            return;
+        }
+
+        var back = ProtobufUtil.Deserialize<GC2GS_009_001_HeartbeatRequest>(body);
+        bool ok = mainId == request.GetMainId()
+                  && subId == request.GetSubId()
+                  && seqId == 42
+                  && back.ClientTime == request.ClientTime
+                  && back.SequenceId == request.SequenceId;
+
+        if (ok)
+        {
+            GameLog.Log($"[FrameworkSmoke] ✅ Protobuf 往返正常（main={mainId}, sub={subId}, seq={seqId}, ClientTime={back.ClientTime}, Seq={back.SequenceId}）");
+        }
+        else
+        {
+            GameLog.Error("[FrameworkSmoke] ❌ Protobuf 往返字段不一致");
+        }
     }
 }

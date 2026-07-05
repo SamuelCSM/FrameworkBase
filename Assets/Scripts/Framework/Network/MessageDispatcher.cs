@@ -94,7 +94,7 @@ namespace Framework.Network
         /// <param name="priority">订阅优先级，值越大越先触发。</param>
         /// <returns>用于释放本次订阅的句柄。</returns>
         public MessageSubscription Subscribe<T>(Action<T> handler, int priority = 0)
-            where T : class, IMessage, new()
+            where T : class, INetMessage, new()
         {
             if (handler == null)
             {

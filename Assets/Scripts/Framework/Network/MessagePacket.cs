@@ -63,7 +63,7 @@ namespace Framework.Network
         /// <param name="payload">消息体（Protobuf序列化后的数据）</param>
         /// <param name="seqId">请求序列号，0 表示推送/通知消息。</param>
         /// <returns>完整的消息包</returns>
-        public static byte[] Pack(IMessage message, byte[] payload, ushort seqId = 0)
+        public static byte[] Pack(INetMessage message, byte[] payload, ushort seqId = 0)
         {
             return Pack(message.GetMainId(), message.GetSubId(), payload, seqId);
         }

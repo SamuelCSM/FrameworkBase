@@ -1,35 +1,23 @@
 using System;
 using System.IO;
 using System.IO.Compression;
-using ProtoBuf;
-using ProtoBuf.Meta;
+using Google.Protobuf;
 
 namespace Framework
 {
     /// <summary>
-    /// Protobuf序列化工具类
-    /// 提供消息的序列化、反序列化和压缩功能
+    /// Protobuf 序列化工具类（Google.Protobuf 实现）。
+    /// 提供消息的序列化、反序列化和压缩功能。
+    /// 仅走二进制路径（<c>ToByteArray</c>/<c>MergeFrom</c>），不触碰 <c>Descriptor</c>/JSON/反射，保证 IL2CPP(AOT) 安全。
     /// </summary>
     public static class ProtobufUtil
     {
         /// <summary>
-        /// 静态构造：在任何序列化发生前关闭运行时编译。
-        /// IL2CPP（AOT）下无法在运行时用 Reflection.Emit 动态生成序列化器，
-        /// 必须让 protobuf-net 走反射解释路径；否则首次序列化会在 AOT 上抛 Emit 相关异常。
-        /// 所有协议消息均经本工具收发，故在此设置可全局生效。
+        /// 序列化消息为字节数组。
         /// </summary>
-        static ProtobufUtil()
-        {
-            RuntimeTypeModel.Default.AutoCompile = false;
-        }
-
-        /// <summary>
-        /// 序列化消息为字节数组
-        /// </summary>
-        /// <typeparam name="T">消息类型</typeparam>
-        /// <param name="message">消息对象</param>
-        /// <returns>序列化后的字节数组</returns>
-        public static byte[] Serialize<T>(T message) where T : class
+        /// <param name="message">消息对象。</param>
+        /// <returns>序列化后的字节数组。</returns>
+        public static byte[] Serialize(IMessage message)
         {
             if (message == null)
             {
@@ -38,36 +26,34 @@ namespace Framework
 
             try
             {
-                using (var stream = new MemoryStream())
-                {
-                    Serializer.Serialize(stream, message);
-                    return stream.ToArray();
-                }
+                return message.ToByteArray();
             }
             catch (Exception ex)
             {
-                throw new InvalidOperationException($"Failed to serialize message of type {typeof(T).Name}", ex);
+                throw new InvalidOperationException($"Failed to serialize message of type {message.GetType().Name}", ex);
             }
         }
 
         /// <summary>
-        /// 反序列化字节数组为消息对象
+        /// 反序列化字节数组为消息对象。
         /// </summary>
-        /// <typeparam name="T">消息类型</typeparam>
-        /// <param name="data">字节数组</param>
-        /// <returns>反序列化后的消息对象</returns>
-        public static T Deserialize<T>(byte[] data) where T : class
+        /// <typeparam name="T">消息类型。</typeparam>
+        /// <param name="data">字节数组。</param>
+        /// <returns>反序列化后的消息对象。</returns>
+        public static T Deserialize<T>(byte[] data) where T : class, IMessage, new()
         {
             try
             {
                 // 空 / null payload 是合法的「全默认值」protobuf 消息：protobuf 不写默认值字段，
-                // 当一条消息所有字段均为默认（如冷启动「无进行中对局」时复用的 MatchFound：RoomId=0、空列表）
-                // 时整体即 0 字节。按 protobuf 语义反序列化为默认实例，交由上层按字段（如 RoomId<=0）判定，
-                // 而非在此抛「Data cannot be null or empty」。
-                using (var stream = new MemoryStream(data ?? Array.Empty<byte>()))
+                // 当一条消息所有字段均为默认时整体即 0 字节。按 protobuf 语义返回默认实例，交由上层按字段判定，
+                // 而非在此抛异常。
+                var message = new T();
+                if (data != null && data.Length > 0)
                 {
-                    return Serializer.Deserialize<T>(stream);
+                    message.MergeFrom(data);
                 }
+
+                return message;
             }
             catch (Exception ex)
             {
@@ -76,12 +62,11 @@ namespace Framework
         }
 
         /// <summary>
-        /// 序列化消息并压缩
+        /// 序列化消息并压缩。
         /// </summary>
-        /// <typeparam name="T">消息类型</typeparam>
-        /// <param name="message">消息对象</param>
-        /// <returns>压缩后的字节数组</returns>
-        public static byte[] SerializeWithCompression<T>(T message) where T : class
+        /// <param name="message">消息对象。</param>
+        /// <returns>压缩后的字节数组。</returns>
+        public static byte[] SerializeWithCompression(IMessage message)
         {
             if (message == null)
             {
@@ -95,17 +80,17 @@ namespace Framework
             }
             catch (Exception ex)
             {
-                throw new InvalidOperationException($"Failed to serialize and compress message of type {typeof(T).Name}", ex);
+                throw new InvalidOperationException($"Failed to serialize and compress message of type {message.GetType().Name}", ex);
             }
         }
 
         /// <summary>
-        /// 解压缩并反序列化消息
+        /// 解压缩并反序列化消息。
         /// </summary>
-        /// <typeparam name="T">消息类型</typeparam>
-        /// <param name="compressedData">压缩的字节数组</param>
-        /// <returns>反序列化后的消息对象</returns>
-        public static T DeserializeWithDecompression<T>(byte[] compressedData) where T : class
+        /// <typeparam name="T">消息类型。</typeparam>
+        /// <param name="compressedData">压缩的字节数组。</param>
+        /// <returns>反序列化后的消息对象。</returns>
+        public static T DeserializeWithDecompression<T>(byte[] compressedData) where T : class, IMessage, new()
         {
             if (compressedData == null || compressedData.Length == 0)
             {
@@ -124,10 +109,10 @@ namespace Framework
         }
 
         /// <summary>
-        /// 压缩字节数组（使用GZip）
+        /// 压缩字节数组（使用GZip）。
         /// </summary>
-        /// <param name="data">原始字节数组</param>
-        /// <returns>压缩后的字节数组</returns>
+        /// <param name="data">原始字节数组。</param>
+        /// <returns>压缩后的字节数组。</returns>
         public static byte[] Compress(byte[] data)
         {
             if (data == null || data.Length == 0)
@@ -153,10 +138,10 @@ namespace Framework
         }
 
         /// <summary>
-        /// 解压缩字节数组（使用GZip）
+        /// 解压缩字节数组（使用GZip）。
         /// </summary>
-        /// <param name="compressedData">压缩的字节数组</param>
-        /// <returns>解压缩后的字节数组</returns>
+        /// <param name="compressedData">压缩的字节数组。</param>
+        /// <returns>解压缩后的字节数组。</returns>
         public static byte[] Decompress(byte[] compressedData)
         {
             if (compressedData == null || compressedData.Length == 0)
@@ -181,11 +166,11 @@ namespace Framework
         }
 
         /// <summary>
-        /// 计算压缩率
+        /// 计算压缩率。
         /// </summary>
-        /// <param name="originalSize">原始大小</param>
-        /// <param name="compressedSize">压缩后大小</param>
-        /// <returns>压缩率（0-1之间，越小压缩效果越好）</returns>
+        /// <param name="originalSize">原始大小。</param>
+        /// <param name="compressedSize">压缩后大小。</param>
+        /// <returns>压缩率（0-1之间，越小压缩效果越好）。</returns>
         public static float GetCompressionRatio(int originalSize, int compressedSize)
         {
             if (originalSize <= 0)

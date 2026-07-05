@@ -35,7 +35,7 @@ namespace Framework.Network
         /// <param name="message">协议消息对象。</param>
         /// <param name="packetSize">完整包字节数。</param>
         /// <param name="seqId">请求序列号。</param>
-        public static void LogSend(IMessage message, int packetSize, ushort seqId)
+        public static void LogSend(INetMessage message, int packetSize, ushort seqId)
         {
             if (message == null)
             {
@@ -77,7 +77,7 @@ namespace Framework.Network
 
             try
             {
-                if (registry != null && registry.TryParseMessage(mainId, subId, payload, out IMessage message))
+                if (registry != null && registry.TryParseMessage(mainId, subId, payload, out INetMessage message))
                 {
                     name = message.GetType().Name;
                     body = FormatObject(message, 0);

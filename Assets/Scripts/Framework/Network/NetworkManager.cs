@@ -118,7 +118,7 @@ namespace Framework
         /// 心跳消息工厂（由业务层组合根注入）：参数为 (clientTimeMs, sequenceId)，返回待发送的心跳协议消息。
         /// 框架网络层只负责定时与序号自增，不依赖具体心跳协议类型。未注入时跳过心跳发送（并告警一次）。
         /// </summary>
-        private Func<long, int, IMessage> _heartbeatMessageFactory;
+        private Func<long, int, INetMessage> _heartbeatMessageFactory;
 
         /// <summary>心跳工厂缺失告警去重标记，避免每个心跳周期刷屏。</summary>
         private bool _heartbeatFactoryMissingWarned;
@@ -164,7 +164,7 @@ namespace Framework
         {
             _dispatcher = new MessageDispatcher();
             _messageTypeRegistry = new NetworkMessageTypeRegistry();
-            _messageTypeRegistry.RegisterLoadedMessageTypes();
+            // 协议类型改为惰性登记：首次 Subscribe<T>/RequestAsync<TResp> 时以具体类型登记，避免启动期全程序集反射扫描（IL2CPP 不安全）。
             _messageInterceptHandler = ShouldConsumeBeforeDispatch;
             _seqResponseHandler = CompleteSeqResponse;
             _protocolReceiveLogHandler = LogReceivedProtocol;
@@ -293,7 +293,7 @@ namespace Framework
         /// 发送一条不需要匹配响应的通知消息（seqId = 0）。
         /// 适用场景：投降、聊天发送、操作确认等服务端不回响应或由推送通道广播的消息。
         /// </summary>
-        public void Notify<T>(T message) where T : class, IMessage
+        public void Notify<T>(T message) where T : class, INetMessage
         {
             SendMessageInternal(message, 0);
         }
@@ -302,8 +302,8 @@ namespace Framework
         /// 发送请求并等待对应类型的响应。通过包头 SeqId 精确匹配请求与响应。
         /// </summary>
         public UniTask<TResp> RequestAsync<TReq, TResp>(TReq request, NetworkRequestConfig config = null)
-            where TReq : class, IMessage
-            where TResp : class, IMessage, new()
+            where TReq : class, INetMessage
+            where TResp : class, INetMessage, new()
         {
             if (!IsConnected)
             {
@@ -360,7 +360,7 @@ namespace Framework
         /// <param name="config">请求配置。为 null 时使用默认配置。</param>
         /// <returns>响应消息实例；超时或取消时返回 null。</returns>
         public UniTask<TResp> RequestAsync<TResp>(IRequest<TResp> request, NetworkRequestConfig config = null)
-            where TResp : class, IMessage, new()
+            where TResp : class, INetMessage, new()
         {
             return RequestAsync<IRequest<TResp>, TResp>(request, config);
         }
@@ -385,7 +385,7 @@ namespace Framework
         /// <param name="priority">订阅优先级，值越大越先触发。</param>
         /// <returns>用于释放本次订阅的句柄。</returns>
         public MessageSubscription Subscribe<T>(Action<T> handler, int priority = 0)
-            where T : class, IMessage, new()
+            where T : class, INetMessage, new()
         {
             _messageTypeRegistry?.Register<T>();
             return _dispatcher.Subscribe(handler, priority);
@@ -459,7 +459,7 @@ namespace Framework
         /// 具体心跳协议类型即可定时发送保活心跳。参数：(clientTimeMs, sequenceId)。
         /// </summary>
         /// <param name="factory">心跳消息工厂；返回的消息须为 System 通道协议。传 null 可清除。</param>
-        public void SetHeartbeatProvider(Func<long, int, IMessage> factory)
+        public void SetHeartbeatProvider(Func<long, int, INetMessage> factory)
         {
             _heartbeatMessageFactory = factory;
         }
@@ -534,7 +534,7 @@ namespace Framework
         /// 内部发送消息（携带 seqId）。
         /// </summary>
         /// <returns>发送成功返回 true；未连接或序列化/发送异常返回 false，供请求方据此立即失败收尾。</returns>
-        private bool SendMessageInternal<T>(T message, ushort seqId) where T : class, IMessage
+        private bool SendMessageInternal<T>(T message, ushort seqId) where T : class, INetMessage
         {
             if (!IsConnected)
             {
@@ -834,7 +834,7 @@ namespace Framework
                 }
 
                 long clientTime = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-                IMessage request = _heartbeatMessageFactory(clientTime, ++_heartbeatSequenceId);
+                INetMessage request = _heartbeatMessageFactory(clientTime, ++_heartbeatSequenceId);
 
                 byte[] payload = ProtobufUtil.Serialize(request);
                 byte[] packet = MessagePacket.Pack(request, payload);

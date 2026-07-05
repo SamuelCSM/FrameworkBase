@@ -4,16 +4,16 @@ using UnityEditor;
 namespace Editor
 {
     /// <summary>
-    /// Protobuf安装助手
-    /// 提供protobuf-net包的安装指导
+    /// Google.Protobuf 安装助手。
+    /// 提供 Google.Protobuf 运行时的安装指导，以及一键协议生成器 ProtoGen 的使用入口。
     /// </summary>
     public class ProtobufInstaller : EditorWindow
     {
-        [MenuItem("Framework/Install Protobuf-net")]
+        [MenuItem("Framework/Protobuf Setup")]
         public static void ShowWindow()
         {
-            var window = GetWindow<ProtobufInstaller>("Protobuf Installer");
-            window.minSize = new Vector2(500, 400);
+            var window = GetWindow<ProtobufInstaller>("Protobuf Setup");
+            window.minSize = new Vector2(520, 420);
             window.Show();
         }
 
@@ -23,93 +23,42 @@ namespace Editor
         {
             scrollPosition = EditorGUILayout.BeginScrollView(scrollPosition);
 
-            GUILayout.Label("Protobuf-net Installation Guide", EditorStyles.boldLabel);
+            GUILayout.Label("Google.Protobuf Setup", EditorStyles.boldLabel);
             GUILayout.Space(10);
 
             EditorGUILayout.HelpBox(
-                "The Framework requires protobuf-net for network message serialization. " +
-                "Please follow one of the installation methods below.",
+                "网络层序列化使用官方 Google.Protobuf（protoc 生成显式代码，IL2CPP/AOT 安全）。" +
+                "协议消息由仓库根的一键生成器 ProtoGen 从 proto/*.proto 生成，请勿手写协议类。",
                 MessageType.Info);
 
             GUILayout.Space(10);
 
-            // Method 1: NuGet for Unity
-            DrawInstallationMethod(
-                "Method 1: NuGet for Unity (Recommended)",
+            DrawSection(
+                "1) 安装 Google.Protobuf 运行时（NuGetForUnity）",
                 new string[]
                 {
-                    "1. Install 'NuGet for Unity' from Unity Asset Store or GitHub",
-                    "2. Open: Window > NuGet > Manage NuGet Packages",
-                    "3. Search for 'protobuf-net'",
-                    "4. Install version 2.4.x (do NOT use 3.x: its repeated fields crash on IL2CPP/AOT)",
-                    "5. Restart Unity Editor"
+                    "本工程已内置 NuGetForUnity，且 Assets/packages.config 已声明 Google.Protobuf。",
+                    "打开 Unity 时会自动还原到 Assets/Packages/Google.Protobuf.<版本>/。",
+                    "如未自动还原：菜单 NuGet > Restore Packages，或 Manage NuGet Packages 搜索 Google.Protobuf 安装。",
+                    "只需 Google.Protobuf.dll；若报缺 System.Memory/System.Buffers，再按提示补对应 NuGet 包。"
                 },
-                "https://github.com/GlitchEnzo/NuGetForUnity"
-            );
+                "https://github.com/GlitchEnzo/NuGetForUnity");
 
             GUILayout.Space(10);
 
-            // Method 2: Manual Installation
-            DrawInstallationMethod(
-                "Method 2: Manual Installation",
+            DrawSection(
+                "2) 定义并生成协议",
                 new string[]
                 {
-                    "1. Download protobuf-net from GitHub releases",
-                    "2. Extract the following DLL (2.4.x is a single assembly, there is no protobuf-net.Core):",
-                    "   - protobuf-net.dll",
-                    "3. Create folder: Assets/Plugins/protobuf-net/",
-                    "4. Copy DLLs to the Plugins folder",
-                    "5. Restart Unity Editor"
+                    "在仓库根 proto/ 下编写 proto3 源，消息命名遵循 <方向>_<主号3位>_<子号3位>_<名称>。",
+                    "双击仓库根 gen-proto.bat（或运行 Tools/ProtoGen），双端协议类 + 路由伴生 partial 一并生成。",
+                    "生成物勿手改；使用说明见 Tools/ProtoGen/README.md。"
                 },
-                "https://github.com/protobuf-net/protobuf-net/releases"
-            );
-
-            GUILayout.Space(10);
-
-            // Method 3: Package Manager
-            DrawInstallationMethod(
-                "Method 3: Unity Package Manager (Advanced)",
-                new string[]
-                {
-                    "1. Open: Window > Package Manager",
-                    "2. Click '+' > Add package from git URL",
-                    "3. Enter: com.unity.nuget.protobuf-net",
-                    "4. Note: This method may not work for all Unity versions"
-                },
-                null
-            );
+                null);
 
             GUILayout.Space(20);
 
-            // Verification section
-            GUILayout.Label("Verification", EditorStyles.boldLabel);
-            EditorGUILayout.HelpBox(
-                "After installation, verify that:\n" +
-                "1. No compilation errors in Console\n" +
-                "2. Framework/Network scripts compile successfully\n" +
-                "3. You can create Protobuf messages with [ProtoContract] attribute",
-                MessageType.Info);
-
-            GUILayout.Space(10);
-
-            if (GUILayout.Button("Open Setup Documentation", GUILayout.Height(30)))
-            {
-                var path = "Assets/Scripts/Framework/Network/PROTOBUF_SETUP.md";
-                var asset = AssetDatabase.LoadAssetAtPath<TextAsset>(path);
-                if (asset != null)
-                {
-                    Selection.activeObject = asset;
-                    EditorGUIUtility.PingObject(asset);
-                }
-                else
-                {
-                    Debug.LogWarning($"Documentation not found at: {path}");
-                }
-            }
-
-            GUILayout.Space(10);
-
-            if (GUILayout.Button("Check Installation Status", GUILayout.Height(30)))
+            if (GUILayout.Button("检查 Google.Protobuf 是否已安装", GUILayout.Height(30)))
             {
                 CheckInstallationStatus();
             }
@@ -117,7 +66,13 @@ namespace Editor
             EditorGUILayout.EndScrollView();
         }
 
-        private void DrawInstallationMethod(string title, string[] steps, string url)
+        /// <summary>
+        /// 绘制一个带标题、步骤与可选链接的区块。
+        /// </summary>
+        /// <param name="title">区块标题。</param>
+        /// <param name="steps">步骤文本行。</param>
+        /// <param name="url">可选的外部链接。</param>
+        private void DrawSection(string title, string[] steps, string url)
         {
             GUILayout.Label(title, EditorStyles.boldLabel);
 
@@ -130,44 +85,36 @@ namespace Editor
 
             if (!string.IsNullOrEmpty(url))
             {
-                if (GUILayout.Button($"Open: {url}", GUILayout.Height(25)))
+                if (GUILayout.Button($"打开: {url}", GUILayout.Height(25)))
                 {
                     Application.OpenURL(url);
                 }
             }
         }
 
+        /// <summary>
+        /// 检查当前程序域内是否已加载 Google.Protobuf 运行时。
+        /// </summary>
         private void CheckInstallationStatus()
         {
-            // Try to find protobuf-net assembly
             var assemblies = System.AppDomain.CurrentDomain.GetAssemblies();
             bool found = false;
 
             foreach (var assembly in assemblies)
             {
-                if (assembly.GetName().Name.Contains("protobuf-net"))
+                if (assembly.GetName().Name == "Google.Protobuf")
                 {
                     found = true;
                     Debug.Log($"✓ Found: {assembly.GetName().Name} (Version: {assembly.GetName().Version})");
                 }
             }
 
-            if (found)
-            {
-                EditorUtility.DisplayDialog(
-                    "Installation Check",
-                    "✓ protobuf-net is installed!\n\n" +
-                    "You can now use Protobuf serialization in your project.",
-                    "OK");
-            }
-            else
-            {
-                EditorUtility.DisplayDialog(
-                    "Installation Check",
-                    "✗ protobuf-net is NOT installed.\n\n" +
-                    "Please follow one of the installation methods above.",
-                    "OK");
-            }
+            EditorUtility.DisplayDialog(
+                "安装检查",
+                found
+                    ? "✓ Google.Protobuf 已安装，可以正常收发协议。"
+                    : "✗ 未检测到 Google.Protobuf。请先按步骤 1 通过 NuGetForUnity 还原。",
+                "OK");
         }
     }
 }

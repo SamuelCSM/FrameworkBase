@@ -1,5 +1,5 @@
 fileFormatVersion: 2
-guid: 033caf2115fe90b4e97df27fbf0e840c
+guid: 9403cc2a9d4c443698339a6f3c3f4f4b
 labels:
 - NuGetForUnity
 PluginImporter:
@@ -14,10 +14,10 @@ PluginImporter:
   validateReferences: 1
   platformData:
   - first:
-      Any: 
+      Any:
     second:
       enabled: 1
       settings: {}
-  userData: 
-  assetBundleName: 
-  assetBundleVariant: 
+  userData:
+  assetBundleName:
+  assetBundleVariant:
