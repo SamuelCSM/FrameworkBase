@@ -1,6 +1,6 @@
-using Framework;
 using Framework.Core;
 using UnityEngine;
+using Logger = Framework.Logger; // 消歧：Framework.Logger 与 UnityEngine.Logger 同名，Framework 命名空间外的文件须显式别名
 
 /// <summary>
 /// 地基冒烟自检（Sample，编译进 Assembly-CSharp，不属于 Framework 程序集）。
