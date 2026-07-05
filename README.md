@@ -1,0 +1,27 @@
+# FrameworkBase
+
+从 **ClientBase（Blokus）** 剥离出的可复用 Unity 底层地基 + 最小可跑壳工程，用于「引地基 + 写业务」快速起新项目。
+
+- **Unity 版本**：2022.3.62f3（须与之一致）
+- **形态**：最小 Unity 壳工程，内含 `Framework` asmdef（运行时地基）+ 复用所需的 package/插件；同时充当新项目模板。
+- **来源**：ClientBase 的 `Assets/Scripts/Framework/` 单向抽取（复制，非 submodule 反向引用）。ClientBase 保持不动，二者从此各自演进。
+
+## 目录
+
+```
+Assets/Scripts/Framework/   地基运行时（Audio/Camera/ConfigData/Core/Event/Input/
+                            Localization/Network/Resource/Save/Scene/Stage/Timer/Tips/UI/Utils/HotUpdate）
+Assets/Packages/            插件 DLL（protobuf-net 2.4.6 / SQLite / ExcelDataReader ...，走 NuGetForUnity）
+Packages/ ProjectSettings/  与 ClientBase 一致的 Unity 版本与包版本
+```
+
+## 现状与路线
+
+- [x] **A1** Framework 运行时 + 配置照搬入壳（本提交）
+- [ ] **A2** 通用 Editor 工具移入 + 拆 `Framework.Editor.asmdef`（ProtoGenerator 等协议绑定工具不迁）
+- [ ] **B** 最小启动场景 + 登录/心跳运行时冒烟
+- [ ] **C** 序列化库替换：`protobuf-net` → `Google.Protobuf`（AOT 主因，`.proto` + protoc 双端生成 + 路由伴生 partial）
+
+### 已知「模板卫生」待清理（不阻断编译）
+- `Framework/Event/GameMessage.cs`：含 Blokus 专有事件枚举（20000-20999），新项目应替换为自身业务事件。
+- `Framework/HotUpdate/VersionManager.cs`：默认热更程序集名硬编码为 Blokus.Core/GameProtocol/HotUpdate，新项目经 `AppConfig` 覆盖或改默认。
