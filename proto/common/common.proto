@@ -1,0 +1,9 @@
+syntax = "proto3";
+option csharp_namespace = "Game.Protocol";
+
+// 自定义数据消息（非请求/响应，无路由）——可当字段类型复用
+message CommonItem {
+  int32 Id = 1;
+  string Name = 2;
+  int32 Count = 3;
+}

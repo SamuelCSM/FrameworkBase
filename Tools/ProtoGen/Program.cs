@@ -28,7 +28,8 @@ internal static class Program
         try
         {
             Console.OutputEncoding = Encoding.UTF8; // 保证中文日志在 cmd/bat 双击时不乱码
-            string repoRoot = Directory.GetCurrentDirectory();
+            // 仓库根由工具自身位置向上找 .git 定位，不依赖工作目录（双击 bat 时 cwd 可能不对）。
+            string repoRoot = FindRepoRoot() ?? Directory.GetCurrentDirectory();
             string configPath = args.Length > 0 ? args[0] : Path.Combine("Tools", "ProtoGen", "protogen.json");
             configPath = Path.GetFullPath(configPath, repoRoot);
 
@@ -78,6 +79,20 @@ internal static class Program
             Console.Error.WriteLine($"[ProtoGen] 失败: {ex.Message}\n{ex.StackTrace}");
             return 1;
         }
+    }
+
+    /// <summary>从工具所在位置向上查找含 .git 的仓库根，使双击运行时不依赖工作目录。</summary>
+    private static string? FindRepoRoot()
+    {
+        DirectoryInfo? dir = new(AppContext.BaseDirectory);
+        while (dir != null)
+        {
+            if (Directory.Exists(Path.Combine(dir.FullName, ".git"))
+                || File.Exists(Path.Combine(dir.FullName, "Tools", "ProtoGen", "protogen.json")))
+                return dir.FullName;
+            dir = dir.Parent;
+        }
+        return null;
     }
 
     /// <summary>
