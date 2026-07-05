@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>ProtoGen</AssemblyName>
+    <RootNamespace>ProtoGen</RootNamespace>
+  </PropertyGroup>
+
+  <!-- 仅为借用 Grpc.Tools 内置的 protoc 二进制与 well-known 导入目录（运行时从 NuGet 包目录定位）；不使用其 MSBuild 协议编译集成。 -->
+  <ItemGroup>
+    <PackageReference Include="Grpc.Tools" Version="2.66.0" PrivateAssets="all" />
+  </ItemGroup>
+
+</Project>

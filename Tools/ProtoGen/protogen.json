@@ -1,0 +1,10 @@
+{
+  "protoDir": "proto",
+  "targets": [
+    {
+      "name": "Client",
+      "outDir": "Assets/Scripts/GameProtocol/Messages",
+      "routingNamespace": "Framework.Network"
+    }
+  ]
+}

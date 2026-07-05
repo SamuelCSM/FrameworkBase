@@ -1,0 +1,15 @@
+syntax = "proto3";
+
+option csharp_namespace = "Game.Protocol";
+
+// ── 系统模块（主号 009）──────────────────────────────
+// 心跳请求（GC2GS_009_001）↔ 心跳响应（GS2GC_009_001，同主/子号配对）
+message GC2GS_009_001_HeartbeatRequest {
+  int64 ClientTime = 1;   // 客户端时间戳（毫秒）
+  int32 SequenceId = 2;   // 序列号（匹配请求/响应）
+}
+
+message GS2GC_009_001_HeartbeatResponse {
+  int64 ServerTime = 1;   // 服务端时间戳（毫秒）
+  int32 SequenceId = 2;   // 回填请求序列号
+}
