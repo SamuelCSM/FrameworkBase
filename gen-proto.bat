@@ -7,19 +7,18 @@ dotnet build "%~dp0Tools\ProtoGen\ProtoGen.csproj" -c Debug -v quiet
 if errorlevel 1 goto err
 
 echo [ProtoGen] generating protocol...
-dotnet "%~dp0Tools\ProtoGenin\Debug
-et8.0\ProtoGen.dll" %*
+dotnet "%~dp0Tools\ProtoGen\bin\Debug\net8.0\ProtoGen.dll" %*
 if errorlevel 1 goto err
 
 echo.
-echo [ProtoGen] Done. 协议已生成。
+echo [ProtoGen] Done.
 popd
 pause
 exit /b 0
 
 :err
 echo.
-echo [ProtoGen] FAILED 生成失败，见上方错误。
+echo [ProtoGen] FAILED. See errors above.
 popd
 pause
 exit /b 1
