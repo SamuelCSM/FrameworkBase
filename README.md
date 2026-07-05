@@ -17,8 +17,8 @@ Packages/ ProjectSettings/  与 ClientBase 一致的 Unity 版本与包版本
 
 ## 现状与路线
 
-- [x] **A1** Framework 运行时 + 配置照搬入壳（本提交）
-- [ ] **A2** 通用 Editor 工具移入 + 拆 `Framework.Editor.asmdef`（ProtoGenerator 等协议绑定工具不迁）
+- [x] **A1** Framework 运行时 + 配置照搬入壳（已移除 URP/timeline/visualscripting/2d.sprite）
+- [x] **A2** 通用 Editor 工具移入 `Framework/Editor/` + `Framework.Editor.asmdef`（AddressablesSetup/ProtobufInstaller/HotUpdatePublisher/HybridCLRStreamingAssetsSync/FullPackage*/AppConfigAssetMenu/ExcelTool；ProtoGenerator 等协议绑定工具不迁）
 - [ ] **B** 最小启动场景 + 登录/心跳运行时冒烟
 - [ ] **C** 序列化库替换：`protobuf-net` → `Google.Protobuf`（AOT 主因，`.proto` + protoc 双端生成 + 路由伴生 partial）
 
