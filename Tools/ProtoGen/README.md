@@ -59,9 +59,9 @@ message GS2GC_009_001_HeartbeatResponse {
 - `routingNamespace` = 路由接口（`INetMessage/IRequest/IResponse`）所在命名空间：客户端 = `Framework.Network`，服务端 = 你服务端框架对应命名空间。
 
 ## 产物
-每个目标目录下：
-- `<文件名>.cs` —— protoc 生成的 Google.Protobuf 消息类（**勿手改**）。
-- `ProtoRouting.g.cs` —— 路由伴生 partial（**勿手改**）。
+每个目标目录下（**一个源 `.proto` 各出一对**，避免单文件膨胀与合并冲突）：
+- `<源名>.cs` —— protoc 生成的 Google.Protobuf 消息类（**勿手改**）。
+- `<源名>.Routing.g.cs` —— 路由伴生 partial（**勿手改**）；该 `.proto` 无 `GC2GS_/GS2GC_` 路由消息时不生成（如纯数据 `common.proto`）。
 
 ## 注意
 - 生成物是产物，改协议改 `.proto` 后重跑本工具，不手改 `.cs`。
