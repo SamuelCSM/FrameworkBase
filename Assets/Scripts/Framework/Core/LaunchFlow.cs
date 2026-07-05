@@ -193,6 +193,18 @@ namespace Framework.Core
                 else
                     LaunchTelemetryHelper.EndPhaseMetric(step6c, true, "resource_updated=false,skip_apply");
 
+                // ── 热更总开关：无业务热更程序集的项目（纯框架壳/单机）跳过 Step 7-9，直接进入登录 ──
+                if (!IsHotUpdateEnabled())
+                {
+                    loading.SetStatus("正在进入游戏...");
+                    loading.SetProgress(0.95f);
+                    Debug.Log("[LaunchFlow] 热更已关闭（AppConfig.EnableHotUpdate=false），跳过 AOT 元数据 / 热更程序集 / StartHotfix");
+                    await loading.HideAsync();
+                    Debug.Log("[LaunchFlow] ========== 启动流程完成（纯框架模式）==========");
+                    LaunchTelemetryHelper.FinalizeRunMetric(runMetric, true, TelemetryErrorCodes.Launch.Ok);
+                    return LaunchFlowOutcome.ReadyForLogin;
+                }
+
                 // ── Step 7: 加载 AOT 元数据（须在热更 DLL 之前）────
                 var step7 = LaunchTelemetryHelper.BeginPhaseMetric(runMetric, LaunchPhase.MetadataLoad, "step07_metadata_load");
                 loading.SetStatus("正在加载运行时元数据...");
@@ -259,6 +271,17 @@ namespace Framework.Core
                 return config.UpdateServerUrl;
 
             return PlayerPrefs.GetString("UpdateServerUrl", string.Empty);
+        }
+
+        /// <summary>
+        /// 是否启用热更（AOT 元数据 / HybridCLR 程序集加载 / StartHotfix）。
+        /// 读 AppConfig.EnableHotUpdate；无配置时默认启用（保持既有项目行为不变）。
+        /// 无热更业务程序集的项目须置 false，否则 Step 8 加载热更 DLL 失败会卡在重试循环。
+        /// </summary>
+        private static bool IsHotUpdateEnabled()
+        {
+            var config = AppConfig.Load();
+            return config == null || config.EnableHotUpdate;
         }
 
     }

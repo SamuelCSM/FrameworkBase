@@ -48,6 +48,11 @@ namespace Framework.Core
         [Tooltip("崩溃/未捕获异常记录的上报端点（HTTP POST，body 为 JSON Lines）；留空仅本地缓存 persistentDataPath/crash_reports.jsonl")]
         public string CrashReportUrl = string.Empty;
 
+        [Header("热更总开关")]
+        [Tooltip("关闭后启动流程跳过 AOT 元数据 / HybridCLR 程序集加载 / StartHotfix（LaunchFlow Step 7-9），直接进入登录。" +
+                 "无热更业务程序集的项目（纯框架壳 / 单机项目）须关闭，否则 Step 8 找不到热更 DLL 会启动失败并重试卡死。")]
+        public bool EnableHotUpdate = true;
+
         [Header("热更程序集（新项目在此改表，Framework 不写死项目专属程序集名）")]
         [Tooltip("可热更程序集 bytes 文件名，按「依赖在前、被依赖方在后」的加载顺序排列；" +
                  "留空使用 VersionManager 内置默认（本项目：Blokus.Core → GameProtocol → HotUpdate）")]
