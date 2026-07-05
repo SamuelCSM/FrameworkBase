@@ -42,7 +42,7 @@ message GS2GC_009_001_HeartbeatResponse {
 }
 ```
 
-> **IL2CPP 红线**：`repeated` 只能用**引用类型消息**（`repeated Xxx`），禁 `repeated int64/bool` 等值类型（AOT 崩）。标量列表须包成 1 字段消息。
+> **repeated 说明（Google.Protobuf）**：`repeated 标量`（`int64/int32/bool/string`）与 `repeated 消息`（如 `repeated CommonItem`）**均 AOT/IL2CPP 安全**——Google.Protobuf 生成代码显式实例化 codec，不走反射，故**无需**再把标量列表包成 1 字段消息（那是 protobuf-net 时代的坑，已作古）。结构化数据仍建议用消息类型（可读、可扩展）。待 C2 真机 IL2CPP 冒烟最终确认。
 
 ## 配置：`protogen.json`
 ```json
