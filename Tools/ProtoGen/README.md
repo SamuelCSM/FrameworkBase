@@ -9,7 +9,10 @@
   dotnet build Tools/ProtoGen/ProtoGen.csproj -c Debug
   ```
 
-## 使用（以仓库根为工作目录）
+## 使用
+**最简：双击仓库根的 `gen-proto.bat`**（自动构建 + 生成 + 停留看结果）。
+
+或命令行（以仓库根为工作目录）：
 ```
 dotnet Tools/ProtoGen/bin/Debug/net8.0/ProtoGen.dll
 ```

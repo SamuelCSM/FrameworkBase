@@ -27,6 +27,7 @@ internal static class Program
     {
         try
         {
+            Console.OutputEncoding = Encoding.UTF8; // 保证中文日志在 cmd/bat 双击时不乱码
             string repoRoot = Directory.GetCurrentDirectory();
             string configPath = args.Length > 0 ? args[0] : Path.Combine("Tools", "ProtoGen", "protogen.json");
             configPath = Path.GetFullPath(configPath, repoRoot);
