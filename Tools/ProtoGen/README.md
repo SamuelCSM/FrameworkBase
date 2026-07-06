@@ -62,6 +62,9 @@ message GS2GC_009_001_HeartbeatResponse {
 每个目标目录下（**一个源 `.proto` 各出一对**，避免单文件膨胀与合并冲突）：
 - `<源名>.cs` —— protoc 生成的 Google.Protobuf 消息类（**勿手改**）。
 - `<源名>.Routing.g.cs` —— 路由伴生 partial（**勿手改**）；该 `.proto` 无 `GC2GS_/GS2GC_` 路由消息时不生成（如纯数据 `common.proto`）。
+- `<源名>.cs.meta` —— **Unity 目标自动补齐**（`outDir` 位于 `Assets/` 下时）：每个 `.cs` 配同名 `.meta`，`outDir` 自身补文件夹 `.meta`。
+  已存在的 `.meta` **保持原 GUID 不变**（不重刷，避免 Unity 重导入/引用漂移），仅缺失的按新 GUID 生成；协议删除后其孤儿 `.cs.meta` 会被清理。
+  非 Unity 目标（如服务端输出目录，路径不含 `Assets`）不产 meta。得益于此，「双击生成」后 git 状态即干净，无需手工补 meta。
 
 ## 注意
 - 生成物是产物，改协议改 `.proto` 后重跑本工具，不手改 `.cs`。

@@ -67,8 +67,10 @@ internal static class Program
 
                 RunProtoc(protoc, protoDir, stdImports, protoFiles, outDir);
                 GenerateRouting(messages, outDir, target.RoutingNamespace);
+                int metaCount = EnsureUnityMetas(outDir);
 
-                Console.WriteLine($"[ProtoGen] ✅ 目标 [{target.Name}] → {outDir}（消息 {messages.Count} + 路由 partial）");
+                string metaNote = metaCount >= 0 ? $" + meta {metaCount}" : "";
+                Console.WriteLine($"[ProtoGen] ✅ 目标 [{target.Name}] → {outDir}（消息 {messages.Count} + 路由 partial{metaNote}）");
             }
 
             Console.WriteLine("[ProtoGen] 全部完成。");
@@ -232,6 +234,78 @@ internal static class Program
             File.WriteAllText(Path.Combine(outDir, $"{group.Key.Source}.Routing.g.cs"), sb.ToString(), new UTF8Encoding(false));
         }
     }
+
+    /// <summary>
+    /// 为 Unity 目标（outDir 位于 Assets/ 下）补齐生成 .cs 的同名 .meta：已存在的保持原 GUID（不重刷，避免 Unity 重导入/引用漂移），
+    /// 缺失的按脚本 MonoImporter 模板 + 新 GUID 生成；并清理已无对应 .cs 的孤儿 .cs.meta（协议删除后）；outDir 自身缺文件夹 meta 时补上。
+    /// 非 Unity 目标（如服务端输出目录）返回 -1，不产 meta。
+    /// </summary>
+    /// <returns>本次新建的 .cs.meta 数量；非 Unity 目标返回 -1。</returns>
+    private static int EnsureUnityMetas(string outDir)
+    {
+        // 仅在输出目录位于 Assets 下时产 meta（Unity 专用），避免污染服务端等非 Unity 目标。
+        bool underAssets = outDir.Replace('\\', '/').Split('/').Any(seg => seg == "Assets");
+        if (!underAssets)
+            return -1;
+
+        var csFiles = new HashSet<string>(
+            Directory.GetFiles(outDir, "*.cs", SearchOption.TopDirectoryOnly),
+            StringComparer.OrdinalIgnoreCase);
+
+        // 清理孤儿 .cs.meta（对应 .cs 已不存在）。
+        foreach (string meta in Directory.GetFiles(outDir, "*.cs.meta", SearchOption.TopDirectoryOnly))
+        {
+            string owner = meta[..^".meta".Length];
+            if (!csFiles.Contains(owner))
+                File.Delete(meta);
+        }
+
+        // 缺失的 .cs.meta 按模板补齐（新 GUID）；已存在的不动。
+        int created = 0;
+        foreach (string cs in csFiles)
+        {
+            string meta = cs + ".meta";
+            if (File.Exists(meta))
+                continue;
+            File.WriteAllText(meta, ScriptMeta(NewGuid()), new UTF8Encoding(false));
+            created++;
+        }
+
+        // 输出目录自身的文件夹 meta（Unity 需要；缺则补）。
+        string folderMeta = outDir.TrimEnd('\\', '/') + ".meta";
+        if (!File.Exists(folderMeta))
+            File.WriteAllText(folderMeta, FolderMeta(NewGuid()), new UTF8Encoding(false));
+
+        return created;
+    }
+
+    /// <summary>Unity 风格 GUID：32 位小写十六进制。</summary>
+    private static string NewGuid() => Guid.NewGuid().ToString("N");
+
+    /// <summary>脚本资源 .meta 模板（MonoImporter）。</summary>
+    private static string ScriptMeta(string guid) =>
+        "fileFormatVersion: 2\n"
+        + $"guid: {guid}\n"
+        + "MonoImporter:\n"
+        + "  externalObjects: {}\n"
+        + "  serializedVersion: 2\n"
+        + "  defaultReferences: []\n"
+        + "  executionOrder: 0\n"
+        + "  icon: {instanceID: 0}\n"
+        + "  userData:\n"
+        + "  assetBundleName:\n"
+        + "  assetBundleVariant:\n";
+
+    /// <summary>文件夹资源 .meta 模板。</summary>
+    private static string FolderMeta(string guid) =>
+        "fileFormatVersion: 2\n"
+        + $"guid: {guid}\n"
+        + "folderAsset: yes\n"
+        + "DefaultImporter:\n"
+        + "  externalObjects: {}\n"
+        + "  userData:\n"
+        + "  assetBundleName:\n"
+        + "  assetBundleVariant:\n";
 
     /// <summary>把 proto 文件名转 PascalCase（与 protoc 的 C# 输出文件名一致，如 match_room → MatchRoom）。</summary>
     private static string ToPascalCase(string name)
