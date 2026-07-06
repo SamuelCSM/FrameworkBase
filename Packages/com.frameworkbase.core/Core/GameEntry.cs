@@ -94,6 +94,9 @@ namespace Framework.Core
         /// <summary>输入管理器 — 统一指针采样、手势采样与输入门禁。</summary>
         public static InputManager Input { get; private set; }
 
+        /// <summary>平台 SDK 管理器 — 渠道登录/支付/推送/合规统一访问点（未注册渠道时 Mock 兜底）。</summary>
+        public static Framework.Sdk.SdkManager Sdk { get; private set; }
+
         // ── 生命周期 ─────────────────────────────────────────────────────────
 
         protected override void Awake()
@@ -209,6 +212,10 @@ namespace Framework.Core
             Event     = AddComponent<EventManager>();
             Timer     = AddComponent<TimerManager>();
             Resource  = AddComponent<ResourceManager>();
+
+            // SDK 管理器尽早就位：渠道实现由业务组合根注册（RegisterProvider），
+            // 初始化时机由业务显式驱动（通常在 LaunchFlow 前 / HotfixEntry 内）。
+            Sdk = AddComponent<Framework.Sdk.SdkManager>();
 
             UI = AddComponent<UIManager>();
             UI.SetBootstrap(_uiBootstrap);

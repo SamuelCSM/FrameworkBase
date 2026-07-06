@@ -3,6 +3,18 @@
 本包遵循 [语义化版本](https://semver.org/lang/zh-CN/)。版本策略：
 `0.x` 为孵化期（API 可能调整）；首个商业项目立项时冻结为 `1.0.0`，此后破坏性变更必须升主版本。
 
+## [0.2.0] - 2026-07-06
+
+### 新增
+
+- **Sdk 模块（平台 SDK 抽象层）**：`ISdkProvider` 四能力契约
+  （Account 渠道登录 / Purchase 支付含补单确认流 / Push 推送 / Privacy 合规），
+  `SdkManager` 注册机制（未注册渠道时 Mock 兜底，正式包告警暴露），
+  `MockSdkProvider` 开发期即插即用假实现。主干不含任何渠道厂商代码，
+  渠道实现作为独立扩展包接入，写法见 `Sdk/SDK_GUIDE.md`。
+- `GameEntry.Sdk` 静态访问点。
+- SdkManager EditMode 测试 8 例（注册/兜底/重入规则、Mock 登录与支付全流程往返）。
+
 ## [0.1.0] - 2026-07-06
 
 ### 首个包化版本
