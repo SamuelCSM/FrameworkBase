@@ -1,30 +1,77 @@
 # FrameworkBase
 
-从 **ClientBase（Blokus）** 剥离出的可复用 Unity 底层地基 + 最小可跑壳工程，用于「引地基 + 写业务」快速起新项目。
+可复用的 Unity 纯底层框架 + 最小可跑壳工程，用于「引地基 + 写业务」快速起新商业项目。
+定位：移动端、强联网、热更新、长期运营；框架主干不包含任何业务概念（背包/货币/任务等）。
 
-- **Unity 版本**：2022.3.62f3（须与之一致）
-- **形态**：最小 Unity 壳工程，内含 `Framework` asmdef（运行时地基）+ 复用所需的 package/插件；同时充当新项目模板。
-- **来源**：ClientBase 的 `Assets/Scripts/Framework/` 单向抽取（复制，非 submodule 反向引用）。ClientBase 保持不动，二者从此各自演进。
+- **Unity 版本**：2022.3.62f3（须与之一致，见 `ProjectSettings/ProjectVersion.txt`）
+- **形态**：最小 Unity 壳工程，内含 `Framework` asmdef（运行时地基）+ `Framework.Editor`（工具链）
+  + `GameProtocol`（协议模板程序集）+ 复用所需 package/插件；同时充当新项目模板。
+- **来源**：ClientBase 的 `Assets/Scripts/Framework/` 单向抽取（复制，非 submodule 反向引用）。
 
 ## 目录
 
 ```
-Assets/Scripts/Framework/   地基运行时（Audio/Camera/ConfigData/Core/Event/Input/
-                            Localization/Network/Resource/Save/Scene/Stage/Timer/Tips/UI/Utils/HotUpdate）
-Assets/Packages/            插件 DLL（protobuf-net 2.4.6 / SQLite / ExcelDataReader ...，走 NuGetForUnity）
-Packages/ ProjectSettings/  与 ClientBase 一致的 Unity 版本与包版本
+Assets/Scripts/Framework/    地基运行时（Audio/Camera/ConfigData/Core/Event/Input/
+                             Localization/Network/Resource/Save/Scene/Stage/Timer/Tips/UI/Utils/HotUpdate）
+Assets/Scripts/Framework/Editor/  通用工具链（发布/构建/配置表/协议安装/清单签名/CI 入口）
+Assets/Scripts/Framework/Tests/   EditMode 单元测试（事件/封包/对象池/校时/定时器/热更安全等）
+Assets/Scripts/GameProtocol/ 协议模板程序集（Google.Protobuf 生成物 + 路由伴生 partial）
+Assets/_Sample/              最小冒烟示例（FrameworkSmoke）
+Assets/Packages/             插件 DLL（Google.Protobuf 3.28.3 / SQLite / ExcelDataReader，走 NuGetForUnity，已入库）
+proto/                       协议源（.proto，主号 001 为框架保留段：心跳等系统协议）
+Tools/ProtoGen/              一键双端协议生成器（gen-proto.bat 触发，详见其 README）
+Tools/ci/                    本地 CI 门禁脚本（run-ci.ps1）与 CI 说明
+.github/workflows/ci.yml     GitHub Actions 门禁：编译 + EditMode 测试（GameCI）
 ```
 
-## 现状与路线
+## 核心能力现状
+
+| 能力 | 状态 | 入口 |
+|---|---|---|
+| 启动流程 | ✅ 九步序列 + 重试 + 强更闸门 + 阶段埋点 | `Core/LaunchFlow.cs` |
+| 热更（资源+代码） | ✅ HybridCLR + Addressables 三版本闭环 | `HotUpdate/` |
+| 热更安全 | ✅ prod 强制 HTTPS / 清单 RSA 签名 / 补丁强制 MD5 / 构建期门禁 | `HotUpdate/UpdateSecurity.cs` |
+| 网络 | ✅ TCP + 心跳 + 指数退避重连 + 重连后重鉴权 + TLS 指纹固定选项 | `Network/` |
+| 协议 | ✅ proto-first，Google.Protobuf（AOT 安全二进制路径）+ 路由生成 | `proto/` + `Tools/ProtoGen` |
+| 配置表 | ✅ Excel → SQLite 导出/校验/代码生成，首包/热更库兼容检查 | `Editor/ExcelTool` + `ConfigData/` |
+| 存档 | ✅ AES+HMAC、账号目录隔离、原子写、按文件锁 | `Save/SaveManager.cs` |
+| UI | ✅ 层级/导航栈/对象池/遮罩/动画 + LoopScroll/TabGroup | `UI/` |
+| 遥测 | ⚠️ 崩溃回捞（本地+可选上报）+ 启动耗时（仅本地落盘） | `Core/Telemetry/` |
+| CI/构建 | ✅ 本地与远端双门禁；batchmode Player 构建入口 | `Tools/ci/` + `Editor/BuildEntry.cs` |
+
+## 里程碑
 
 - [x] **A1** Framework 运行时 + 配置照搬入壳（已移除 URP/timeline/visualscripting/2d.sprite）
-- [x] **A2** 通用 Editor 工具移入 `Framework/Editor/` + `Framework.Editor.asmdef`（AddressablesSetup/ProtobufInstaller/HotUpdatePublisher/HybridCLRStreamingAssetsSync/FullPackage*/AppConfigAssetMenu/ExcelTool；ProtoGenerator 等协议绑定工具不迁）
-- [x] **B** 纯框架启动能力（热更总开关 `EnableHotUpdate`）+ 最小冒烟 sample（`Assets/_Sample/`）+ 离线 `Resources/AppConfig.asset`。**已在 Unity 冒烟通过**：9 个 Manager 全启动 + Timer 回调运转（裸场景两条 UI 相关 Error 属预期）。登录/心跳联网冒烟需服务端，另行安排。
-- [ ] **C** 序列化库替换：`protobuf-net` → `Google.Protobuf`（AOT 主因，`.proto` + protoc 双端生成 + 路由伴生 partial）
+- [x] **A2** 通用 Editor 工具移入 `Framework/Editor/` + `Framework.Editor.asmdef`
+- [x] **B** 纯框架启动能力（热更总开关 `EnableHotUpdate`）+ 最小冒烟 sample（`Assets/_Sample/`）
+      + 离线 `Resources/AppConfig.asset`，Unity 冒烟通过
+- [x] **C** 序列化库替换：`protobuf-net` → `Google.Protobuf`（`.proto` + protoc 双端生成 + 路由伴生 partial，
+      仅走二进制路径保 IL2CPP/AOT 安全）
+- [x] **D1** 热更供应链安全闭环（URL 准入 / 清单签名 / 补丁强制哈希 / 构建门禁）
+- [x] **D2** batchmode 构建入口 + 编译/测试双入口门禁（本地脚本 + GitHub Actions）
+- [x] **D3** 主干业务残留清零（演示协议中性化 / 文档去项目专名 / 机器路径出库）
+- [ ] **E** 分发模型：Framework 迁 UPM 本地包（semver + CHANGELOG），壳工程转正为模板工程
+- [ ] **F** 运营能力层：平台 SDK 抽象 / 埋点事件管道 / 远程配置与功能开关（商业项目启动前补齐）
 
-### 约定
-- **日志类名为 `Framework.GameLog`（不叫 `Logger`）**：`UnityEngine` 里有 `Logger` 类型，`Framework` 命名空间外的文件一旦同时 `using Framework;` + `using UnityEngine;` 就会 CS0104 二义。改名 `GameLog` 后任意文件直接 `GameLog.Log/Warning/Error/Exception` 均无冲突，**勿再引入名为 `Logger` 的类型**。API 与原 `Logger` 完全一致。
+## 使用须知（新项目起步）
 
-### 已知「模板卫生」待清理（不阻断编译）
-- `Framework/Event/GameMessage.cs`：含 Blokus 专有事件枚举（20000-20999），新项目应替换为自身业务事件。
-- `Framework/HotUpdate/VersionManager.cs`：默认热更程序集名硬编码为 Blokus.Core/GameProtocol/HotUpdate，新项目经 `AppConfig` 覆盖或改默认。
+1. **热更安全**：正式发布前必须
+   - `AppConfig.AppEnv` 置 `prod`（届时强制 HTTPS，明文 HTTP 会在构建期直接失败）；
+   - 菜单 `Framework → Hot Update Security → Generate Signing Key Pair` 生成密钥对，
+     公钥填入 `AppConfig.UpdateManifestPublicKey`（私钥留在发布机，勿入库）。
+2. **协议**：业务模块主号从 002 起占号（001 为框架保留段）；改 `proto/*.proto` 后跑 `gen-proto.bat`。
+   `proto/sample/sample_list.proto` 是模板示例，起步时删除替换。
+3. **热更程序集组**：经 `AppConfig.HotUpdateAssemblyFiles` 配置（依赖在前），留空默认
+   `GameProtocol → HotUpdate`；无热更程序集的项目关闭 `EnableHotUpdate`。
+4. **提交纪律**：提交前跑 `Tools\ci\run-ci.ps1`（需关闭 Unity 编辑器）；push/PR 由 GitHub Actions
+   复验（首次启用需配置 Unity 许可 Secrets，见 `Tools/ci/README.md`）。
+5. **业务广播消息**：在业务程序集自建枚举从 20000 起占号；`Framework/Event/GameMessage.cs`
+   仅保留框架系统段（9000-9999）与登录段（10000-10999）。
+
+## 约定
+
+- **日志类名为 `Framework.GameLog`（不叫 `Logger`）**：`UnityEngine` 里有 `Logger` 类型，
+  同时 `using Framework;` + `using UnityEngine;` 会 CS0104 二义。**勿再引入名为 `Logger` 的类型**。
+- **框架主干禁止业务概念**：背包/货币/任务/商店/战斗等一律进业务热更程序集；
+  演示代码只允许中性命名（Sample/Echo），并标注"模板示例，起步时删除"。
+- **机器级配置不入库**：部署路径、签名私钥路径等存 EditorPrefs；仓库内不允许出现开发机绝对路径。
