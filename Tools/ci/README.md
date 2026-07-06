@@ -10,6 +10,10 @@ FrameworkBase 的质量门禁只有一条纪律：**主干任何提交必须"编
 
 ## 本地执行
 
+**最简：双击仓库根的 `run-ci.bat`**（自动调用本脚本，结束停留显示结果）。
+
+或 PowerShell：
+
 ```powershell
 # 工程根目录（先关闭 Unity 编辑器，batchmode 需要独占工程）
 .\Tools\ci\run-ci.ps1
