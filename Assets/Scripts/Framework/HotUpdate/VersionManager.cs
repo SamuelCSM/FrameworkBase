@@ -16,22 +16,15 @@ namespace Framework.HotUpdate
         /// <summary>
         /// 可热更程序集的 bytes 文件名列表，按「依赖在前、被依赖方在后」的<b>加载顺序</b>排列。
         /// <para>
-        /// 顺序约束：<c>Blokus.Core</c> 是双端同源的规则内核，<c>GameProtocol</c> 是项目协议目录，
-        /// <c>HotUpdate</c>（业务逻辑层）通过 <c>HotUpdate.asmdef</c> 同时引用二者，因此被依赖的
-        /// <c>Blokus.Core.dll.bytes</c> 与 <c>GameProtocol.dll.bytes</c> 必须先于 <c>HotUpdate.dll.bytes</c>
-        /// 完成 <see cref="System.Reflection.Assembly.Load(byte[])"/>，否则解释域在加载 HotUpdate 时会找不到依赖。
+        /// 顺序约束：被依赖的程序集（如协议目录 <c>GameProtocol</c>、项目自有的规则内核等）必须先于
+        /// 业务逻辑层 <c>HotUpdate.dll.bytes</c> 完成 <see cref="System.Reflection.Assembly.Load(byte[])"/>，
+        /// 否则解释域在加载 HotUpdate 时会找不到依赖。
         /// </para>
         /// <para>
-        /// 该列表与 <c>ProjectSettings/HybridCLRSettings.asset</c> 的 <c>hotUpdateAssemblies</c> 同源
-        /// （二者均为「Blokus.Core + GameProtocol + HotUpdate」这一组可热更程序集）；此处仅按依赖拓扑排定<b>加载次序</b>
-        /// （依赖在前），不要求与设置文件中的书写顺序逐字一致。
-        /// </para>
-        /// <para>
-        /// 同源修复约束：客户端侧 Blokus.Core 规则内核的 BUG 可经热更下发（作为 <c>Blokus.Core.dll.bytes</c>
-        /// 补丁覆盖修复，无需整包）；但服务端的 Blokus.Core 是<b>原生编译</b>（GameServer 项目引用、随服务端 IL2CPP/JIT
-        /// 原生构建），无法热更，必须「重新编译 + 重新部署 + 停服维护重启」。因此修复双端同源规则时，
-        /// 客户端与服务端必须按版本卡死配对（version 锁定 + 匹配时校验协议/数据版本一致，见需求 14.6、24.6），
-        /// 避免出现一端已修、另一端未修导致双端裁定分叉。
+        /// 该列表与 <c>ProjectSettings/HybridCLRSettings.asset</c> 的 <c>hotUpdateAssemblies</c> 同源；
+        /// 此处仅按依赖拓扑排定<b>加载次序</b>，不要求与设置文件中的书写顺序逐字一致。
+        /// 业务项目若有额外可热更程序集（如双端同源规则内核），通过 AppConfig 的
+        /// <c>HotUpdateAssemblyFiles</c> 配置完整清单，无需改框架代码。
         /// </para>
         /// </summary>
         public static string[] HotUpdateAssemblyFileNames
@@ -48,10 +41,9 @@ namespace Framework.HotUpdate
             }
         }
 
-        /// <summary>本项目内置默认程序集组（AppConfig 未配置时的回退，按依赖拓扑排序）。</summary>
+        /// <summary>基础工程内置默认程序集组（AppConfig 未配置时的回退，按依赖拓扑排序）。</summary>
         private static readonly string[] DefaultHotUpdateAssemblyFileNames =
         {
-            "Blokus.Core.dll.bytes", // 依赖：规则内核（双端同源），须先加载
             "GameProtocol.dll.bytes", // 依赖：项目协议目录（DTO/消息枚举），须先于业务逻辑加载
             DefaultCodePatchFileName, // 被依赖方：业务逻辑 + HotfixEntry，后加载
         };
@@ -61,7 +53,7 @@ namespace Framework.HotUpdate
 
         /// <summary>
         /// 由热更 DLL 的 bytes 文件名推导程序集名（去除 <c>.dll.bytes</c> / <c>.bytes</c> / <c>.dll</c> 后缀）。
-        /// 例：<c>Blokus.Core.dll.bytes</c> → <c>Blokus.Core</c>，<c>GameProtocol.dll.bytes</c> → <c>GameProtocol</c>。
+        /// 例：<c>GameProtocol.dll.bytes</c> → <c>GameProtocol</c>。
         /// </summary>
         public static string ToAssemblyName(string bytesFileName)
         {
@@ -179,7 +171,7 @@ namespace Framework.HotUpdate
         /// <summary>
         /// 解析代码热更补丁列表：优先使用服务端 PatchFiles（可包含多个 DLL，逐文件带 Size/MD5 校验）；
         /// CodeVersion 已变更但列表为空时，按 UpdateServerUrl 约定路径补全<b>全部</b>可热更程序集 DLL
-        /// （<see cref="HotUpdateAssemblyFileNames"/>，含 Blokus.Core.dll.bytes、GameProtocol.dll.bytes 与 HotUpdate.dll.bytes）。
+        /// （<see cref="HotUpdateAssemblyFileNames"/>）。
         /// <para>
         /// 多文件支持要点：服务端清单（version.json 的 <c>PatchFiles</c>）可下发多个 DLL；下载侧会对每个
         /// 文件按其 Size 计权进度、按其 MD5 逐个校验（见 HotUpdateManager.DownloadPatchAsync）。约定补全分支
@@ -195,7 +187,7 @@ namespace Framework.HotUpdate
 
             if (serverVersion?.PatchFiles != null && serverVersion.PatchFiles.Count > 0)
             {
-                // 服务端清单可包含多个 DLL（如 Blokus.Core.dll.bytes + GameProtocol.dll.bytes + HotUpdate.dll.bytes），原样透传，
+                // 服务端清单可包含多个 DLL（如 GameProtocol.dll.bytes + HotUpdate.dll.bytes），原样透传，
                 // 由下载侧逐文件按 Size/MD5 校验。
                 patchFiles = serverVersion.PatchFiles;
                 return true;

@@ -36,9 +36,9 @@ HybridCLR已通过Unity Package Manager添加到项目中：
 
 1. 打开菜单：`HybridCLR > Settings`
 2. 在 `Hot Update Assemblies` 中添加：
-   - `Blokus.Core`
    - `GameProtocol`
    - `HotUpdate`
+   -（业务项目如有额外可热更程序集——例如自有规则内核——一并添加，并同步 AppConfig 的 `HotUpdateAssemblyFiles` 清单）
 3. 配置其他选项（可选）：
    - `Enable` - 启用HybridCLR
    - `Use Global Il2cpp` - 使用全局il2cpp
@@ -94,11 +94,10 @@ HybridCLR > Generate > All
 
 将以下文件上传到更新服务器：
 
-- `Blokus.Core.dll.bytes` - 双端同源规则内核
 - `GameProtocol.dll.bytes` - 项目协议目录
 - `HotUpdate.dll.bytes` - 热更新业务代码入口
 - `version.json` - 版本信息
-- 其他资源文件
+- 其他资源文件（业务项目的额外可热更程序集也在此一并上传）
 
 ### 3. 客户端更新流程
 
