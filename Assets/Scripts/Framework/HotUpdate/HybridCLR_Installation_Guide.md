@@ -28,7 +28,7 @@ HybridCLR已通过Unity Package Manager添加到项目中：
 
 - **HotUpdate.asmdef**: 热更新程序集定义文件
   - 位置：`Assets/Scripts/HotUpdate/HotUpdate.asmdef`
-  - 引用：Framework, UniTask, Addressables, protobuf-net
+  - 引用：Framework, UniTask, Addressables, GameProtocol（Google.Protobuf 为自动引用插件）
 
 ### 4. 配置HybridCLR设置
 

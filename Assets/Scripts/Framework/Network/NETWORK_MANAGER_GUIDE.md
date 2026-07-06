@@ -131,9 +131,9 @@ GameEntry.Network.SetGlobalErrorInterceptor(code =>
 
 | 接口 | 用途 | 示例 |
 |------|------|------|
-| `IMessage` | 所有协议消息基接口 | 响应消息、推送消息 |
-| `IResponse` | 带 `ResultCode` 的响应消息 | `PlayerInfoResponse : IResponse` |
-| `IRequest<TResp>` | 请求消息，声明对应响应类型 | `PlayerInfoRequest : IRequest<PlayerInfoResponse>` |
+| `INetMessage` | 所有协议消息基接口（继承 `Google.Protobuf.IMessage`） | 响应消息、推送消息 |
+| `IResponse` | 带 `ResultCode` 的响应消息 | `GS2GC_003_001_PlayerInfoResponse : IResponse` |
+| `IRequest<TResp>` | 请求消息，声明对应响应类型 | `GC2GS_003_001_PlayerInfoRequest : IRequest<GS2GC_003_001_PlayerInfoResponse>` |
 
 `IRequest<TResp>` 和 `IResponse` 由代码生成器自动生成（客户端目标）。请求与响应按约定匹配：同 MainId + SubId 的上行请求与下行响应。
 

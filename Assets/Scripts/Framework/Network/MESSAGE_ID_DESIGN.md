@@ -66,79 +66,43 @@ public static class MessageModule
 
 ## 消息定义示例
 
-### 基础消息定义
+协议消息**不手写 C#**：在仓库根 `proto/` 写 proto3 源，主/子号直接编码进**消息名**（`<方向>_<主号3位>_<子号3位>_<名称>`），
+双击 `gen-proto.bat` 由 protoc 生成消息类，生成器再补路由伴生 partial（`GetMainId/GetSubId` + `IRequest/IResponse`）。
 
-```csharp
-[ProtoContract]
-public class LoginRequest : IMessage
-{
-    [ProtoMember(1)]
-    public string Username { get; set; }
-    
-    [ProtoMember(2)]
-    public string Password { get; set; }
-    
-    // 主ID: 登录模块
-    public byte GetMainId() => MessageModule.Login;
-    
-    // 子ID: 登录请求
-    public byte GetSubId() => 1;
+```proto
+syntax = "proto3";
+option csharp_namespace = "Game.Protocol";
+
+// 主ID=2(登录模块)，子ID=1；请求与其响应同主+子号双向配对
+message GC2GS_002_001_LoginRequest {
+  string Username = 1;
+  string Password = 2;
 }
-
-[ProtoContract]
-public class LoginResponse : IMessage
-{
-    [ProtoMember(1)]
-    public int ResultCode { get; set; }
-    
-    [ProtoMember(2)]
-    public string Token { get; set; }
-    
-    // 主ID: 登录模块
-    public byte GetMainId() => MessageModule.Login;
-    
-    // 子ID: 登录响应
-    public byte GetSubId() => 2;
+message GS2GC_002_001_LoginResponse {
+  int32 ResultCode = 1;   // 含 ResultCode → 生成为 IResponse
+  string Token = 2;
 }
 ```
 
-### 模块内子ID定义
+生成后（**勿手改**）：`GC2GS_002_001_LoginRequest` 自动声明为 `IRequest<GS2GC_002_001_LoginResponse>`，
+`GetMainId()=>2`、`GetSubId()=>1`；响应 `GS2GC_002_001_LoginResponse` 声明为 `IResponse`。
 
-为了更好地管理子ID，推荐为每个模块创建子ID常量类：
-
-```csharp
-// 登录模块的子ID定义
-public static class LoginMessageId
-{
-    public const byte LoginRequest = 1;
-    public const byte LoginResponse = 2;
-    public const byte LogoutRequest = 3;
-    public const byte LogoutResponse = 4;
-    public const byte RegisterRequest = 5;
-    public const byte RegisterResponse = 6;
-}
-
-// 使用示例
-[ProtoContract]
-public class LoginRequest : IMessage
-{
-    // ...
-    
-    public byte GetMainId() => MessageModule.Login;
-    public byte GetSubId() => LoginMessageId.LoginRequest;
-}
-```
+> 主/子号写进消息名（而非常量类）后，编号即协议名的一部分：改号=改类型名，配对由生成器保证，避免手工常量漂移。
+> 号段与配对规约见下文「子ID分配原则」。
 
 ## 消息发送
+
+> 实际业务优先用高层 API：`await GameEntry.Network.RequestAsync(request)`（请求-响应）/ `GameEntry.Network.Subscribe<T>(...)`（推送）。
+> 下面展示其底层用到的 `MessagePacket` 原语，便于理解协议头。
 
 ### 方式1：使用主ID和子ID
 
 ```csharp
-var message = new LoginRequest { Username = "player", Password = "pass" };
+var message = new GC2GS_002_001_LoginRequest { Username = "player", Password = "pass" };
 byte[] payload = ProtobufUtil.Serialize(message);
 byte[] packet = MessagePacket.Pack(
-    MessageModule.Login,      // 主ID
-    LoginMessageId.LoginRequest,  // 子ID
+    2,   // 主ID（登录模块）
+    1,   // 子ID（登录请求）
     payload
 );
 client.Send(packet);
@@ -147,9 +111,9 @@ client.Send(packet);
 ### 方式2：使用消息对象（推荐）
 
 ```csharp
-var message = new LoginRequest { Username = "player", Password = "pass" };
+var message = new GC2GS_002_001_LoginRequest { Username = "player", Password = "pass" };
 byte[] payload = ProtobufUtil.Serialize(message);
-byte[] packet = MessagePacket.Pack(message, payload);  // 自动获取主ID和子ID
+byte[] packet = MessagePacket.Pack(message, payload);  // 从 INetMessage 自动取主ID和子ID
 client.Send(packet);
 ```
 
@@ -162,11 +126,11 @@ private void OnReceive(byte[] packet)
 {
     if (!MessagePacket.Unpack(packet, out byte mainId, out byte subId, out byte[] payload))
     {
-        Logger.Error("消息包解析失败");
+        GameLog.Error("消息包解析失败");
         return;
     }
     
-    Logger.Debug($"收到消息: 主ID={mainId}, 子ID={subId}");
+    GameLog.Debug($"收到消息: 主ID={mainId}, 子ID={subId}");
     
     // 根据主ID和子ID处理消息
     HandleMessage(mainId, subId, payload);
@@ -193,7 +157,7 @@ private void HandleMessage(byte mainId, byte subId, byte[] payload)
             break;
             
         default:
-            Logger.Warning($"未处理的模块ID: {mainId}");
+            GameLog.Warning($"未处理的模块ID: {mainId}");
             break;
     }
 }
@@ -202,17 +166,17 @@ private void HandleLoginMessage(byte subId, byte[] payload)
 {
     switch (subId)
     {
-        case LoginMessageId.LoginResponse:
-            var response = ProtobufUtil.Deserialize<LoginResponse>(payload);
+        case 1: // 登录响应
+            var response = ProtobufUtil.Deserialize<GS2GC_002_001_LoginResponse>(payload);
             OnLoginResponse(response);
             break;
             
-        case LoginMessageId.LogoutResponse:
+        case 3: // 登出响应
             // 处理登出响应
             break;
             
         default:
-            Logger.Warning($"未处理的登录消息: {subId}");
+            GameLog.Warning($"未处理的登录消息: {subId}");
             break;
     }
 }
@@ -227,7 +191,7 @@ private void HandleLoginMessage(byte subId, byte[] payload)
 byte[] Pack(byte mainId, byte subId, byte[] payload)
 
 // 使用消息对象打包（推荐）
-byte[] Pack(IMessage message, byte[] payload)
+byte[] Pack(INetMessage message, byte[] payload)
 ```
 
 ### 解包方法
@@ -327,7 +291,7 @@ public class MessageDispatcher
         }
         else
         {
-            Logger.Warning($"未注册的模块: {mainId}");
+            GameLog.Warning($"未注册的模块: {mainId}");
         }
     }
 }

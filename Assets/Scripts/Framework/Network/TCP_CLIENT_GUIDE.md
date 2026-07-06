@@ -116,7 +116,7 @@ public class NetworkExample
     private void SendLoginMessage()
     {
         // 创建登录请求
-        var request = new LoginRequest 
+        var request = new GC2GS_002_001_LoginRequest 
         { 
             Username = "玩家123", 
             Password = "密码" 
@@ -148,30 +148,15 @@ public class NetworkExample
 ### 完整的消息发送流程
 
 ```csharp
-// 1. 定义消息模块ID
-public static class MessageModule
-{
-    public const byte System = 1;
-    public const byte Login = 2;
-    public const byte Chat = 3;
-}
+// 1. 在 proto/ 定义消息（名字编码主/子号），双击 gen-proto.bat 生成，不手写 C#：
+//    message GC2GS_003_001_ChatMessage { string Content = 1; }   // 主ID=3(聊天), 子ID=1
+//    生成的 GC2GS_003_001_ChatMessage 即实现 INetMessage，GetMainId()=>3、GetSubId()=>1
 
-// 2. 定义消息
-[ProtoContract]
-public class ChatMessage : IMessage
-{
-    [ProtoMember(1)]
-    public string Content { get; set; }
-
-    public byte GetMainId() => MessageModule.Chat;
-    public byte GetSubId() => 1; // 发送聊天消息
-}
-
-// 3. 发送消息
+// 2. 发送消息
 public void SendChatMessage(string content)
 {
     // 创建消息对象
-    var message = new ChatMessage { Content = content };
+    var message = new GC2GS_003_001_ChatMessage { Content = content };
 
     // 序列化
     byte[] payload = ProtobufUtil.Serialize(message);
@@ -199,12 +184,12 @@ private void OnReceive(byte[] packet)
     // 根据主ID和子ID处理
     if (mainId == MessageModule.Chat && subId == 1)
     {
-        var chatMsg = ProtobufUtil.Deserialize<ChatMessage>(payload);
+        var chatMsg = ProtobufUtil.Deserialize<GC2GS_003_001_ChatMessage>(payload);
         Debug.Log($"收到聊天消息: {chatMsg.Content}");
     }
     else if (mainId == MessageModule.Login && subId == 2)
     {
-        var loginResp = ProtobufUtil.Deserialize<LoginResponse>(payload);
+        var loginResp = ProtobufUtil.Deserialize<GS2GC_002_001_LoginResponse>(payload);
         Debug.Log($"登录响应: {loginResp.ResultCode}");
     }
     else
@@ -410,7 +395,7 @@ private async UniTask StartHeartbeat()
 
 private void SendHeartbeat()
 {
-    var heartbeat = new HeartbeatRequest { ClientTime = DateTime.Now.Ticks };
+    var heartbeat = new GC2GS_009_001_HeartbeatRequest { ClientTime = DateTime.Now.Ticks };
     byte[] payload = ProtobufUtil.Serialize(heartbeat);
     byte[] packet = MessagePacket.Pack(heartbeat, payload);
     _client.Send(packet);
@@ -444,7 +429,7 @@ public class NetworkManager : FrameworkComponent
         }
     }
 
-    public void SendMessage<T>(T message) where T : IMessage
+    public void SendMessage<T>(T message) where T : INetMessage
     {
         byte[] payload = ProtobufUtil.Serialize(message);
         byte[] packet = MessagePacket.Pack(message, payload);

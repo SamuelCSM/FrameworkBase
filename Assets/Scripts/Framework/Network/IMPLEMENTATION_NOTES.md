@@ -1,238 +1,81 @@
-# Protobuf集成 - 实现说明
+# Protobuf 集成 —— 实现说明
 
-## 任务完成摘要
+网络层序列化基于官方 **Google.Protobuf**（protoc 生成显式代码，只走二进制路径，IL2CPP/AOT 安全）。
+协议消息由仓库根 `proto/*.proto` 经 `Tools/ProtoGen` 一键生成，不手写。
 
-✓ 任务16：集成Protobuf - **已完成**
+## 核心组件
 
-## 已实现的内容
+### INetMessage 接口（`INetMessage.cs`）
+- 网络消息的路由契约：`GetMainId()` / `GetSubId()`（由生成的路由伴生 partial 实现）。
+- **继承 `Google.Protobuf.IMessage`**，框架可直接在接口上做二进制序列化（`ToByteArray`/`MergeFrom`），无需反射。
+- 派生：`IResponse`（带 `ResultCode`）、`IRequest<TResp>`（声明对应响应类型，供 `RequestAsync` 零泛型参数推断）。
 
-### 1. 核心组件
+### ProtobufUtil 类（`ProtobufUtil.cs`）
+- `Serialize(IMessage message)` → `message.ToByteArray()`。
+- `Deserialize<T>(byte[] data)` → `new T()` + `MergeFrom`；空 payload 返回全默认实例（不抛异常）。
+- `SerializeWithCompression(IMessage)` / `DeserializeWithDecompression<T>(byte[])` + `Compress`/`Decompress`/`GetCompressionRatio` —— GZip 压缩辅助（大消息可选）。
+- 统一异常包装（`ArgumentNullException`/`ArgumentException`/`InvalidOperationException`）。
 
-#### IMessage接口 (`IMessage.cs`)
-- 定义所有网络消息的契约
-- 要求实现 `GetMessageId()` 方法返回唯一的消息标识符
-- 所有Protobuf消息都必须实现此接口
+### NetworkMessageTypeRegistry（`NetworkMessageTypeRegistry.cs`）
+- 协议号 ↔ 类型解析器映射，供错误码拦截与协议日志还原字段。
+- **惰性显式登记**：首次 `Subscribe<T>`/`RequestAsync<TResp>` 以具体类型 `Register<T>()`（`new T()`+`MergeFrom`），无反射扫描/Activator/MakeGenericMethod → AOT 安全。
 
-#### ProtobufUtil类 (`ProtobufUtil.cs`)
-完整的序列化工具，包含以下功能：
+### 生成协议（`Assets/Scripts/GameProtocol/`）
+- `GameProtocol.asmdef`（引用 Framework），生成的 `<源>.cs`（消息类）+ `<源>.Routing.g.cs`（路由 partial）。
+- 样例：System（心跳）、Echo、Inventory（含 `repeated CommonItem`）、Common（纯数据）。
 
-**基础序列化：**
-- `Serialize<T>(T message)` - 将消息对象转换为字节数组
-- `Deserialize<T>(byte[] data)` - 将字节数组转换回消息对象
+### 编辑器助手（`ProtobufInstaller.cs`）
+- 菜单 **Framework > Protobuf Setup**：Google.Protobuf 安装指引（NuGetForUnity）+ ProtoGen 使用指引 + 一键检查是否已加载。
 
-**压缩支持（可选）：**
-- `SerializeWithCompression<T>(T message)` - 序列化 + GZip压缩
-- `DeserializeWithDecompression<T>(byte[] data)` - 解压缩 + 反序列化
-- `Compress(byte[] data)` - 独立压缩功能
-- `Decompress(byte[] data)` - 独立解压缩功能
-- `GetCompressionRatio(int, int)` - 计算压缩效率
-
-**错误处理：**
-- 全面的异常处理，提供有意义的错误消息
-- 验证输入参数（空值检查、空数组检查）
-- 用上下文信息包装序列化错误
-
-### 2. 示例消息 (`SampleMessage.cs`)
-
-提供了示例消息定义：
-- `SampleMessage` - 通用示例
-- `HeartbeatRequest` - 客户端心跳消息
-- `HeartbeatResponse` - 服务器心跳响应
-
-这些作为开发者创建自己消息的模板。
-
-### 3. 文档
-
-#### PROTOBUF_SETUP.md
-全面的设置指南，包含：
-- 安装方法（NuGet、手动安装、包管理器）
-- 带代码片段的使用示例
-- 功能描述
-- 性能建议
-- 故障排除指南
-
-#### README.md
-快速参考指南，包含：
-- 快速入门说明
-- 代码示例
-- 最佳实践
-- 消息ID命名规范
-- 网络实现的后续步骤
-
-### 4. 安装助手 (`ProtobufInstaller.cs`)
-
-Unity编辑器窗口，通过 **Framework > Install Protobuf-net** 访问：
-- 显示所有方法的安装说明
-- 提供可点击的下载页面链接
-- 包含安装验证工具
-- 检查protobuf-net是否正确安装
-
-## 需要安装
-
-⚠️ **重要**：需要单独安装实际的protobuf-net包。
-
-框架提供三种安装方法：
-
-1. **NuGet for Unity**（推荐）
-   - 安装NuGet for Unity插件
-   - 搜索并安装"protobuf-net"包
-
-2. **手动安装**
-   - 从GitHub releases下载DLL
-   - 放置在 `Assets/Plugins/protobuf-net/`
-
-3. **包管理器**（高级）
-   - 通过Unity包管理器添加git URL
-
-使用 **Framework > Install Protobuf-net** 菜单访问安装指南。
-
-## 验证步骤
-
-安装protobuf-net后：
-
-1. 打开Unity编辑器
-2. 检查控制台是否有编译错误（应该没有）
-3. 进入 **Framework > Install Protobuf-net**
-4. 点击"检查安装状态"
-5. 应该显示"✓ protobuf-net已安装！"
-
-## 使用示例
+## 定义 → 生成 → 收发
 
 ```csharp
-// 1. 定义消息
-[ProtoContract]
-public class PlayerDataRequest : IMessage
-{
-    [ProtoMember(1)]
-    public long PlayerId { get; set; }
-    
-    public ushort GetMessageId() => 2001;
-}
+// 1) proto/ 里写（名字编码主/子号），双击 gen-proto.bat 生成：
+//    message GC2GS_003_001_PlayerDataRequest { int64 PlayerId = 1; }
 
-// 2. 序列化
-var request = new PlayerDataRequest { PlayerId = 12345 };
+// 2) 序列化 / 反序列化
+var request = new GC2GS_003_001_PlayerDataRequest { PlayerId = 12345 };
 byte[] data = ProtobufUtil.Serialize(request);
+var back = ProtobufUtil.Deserialize<GC2GS_003_001_PlayerDataRequest>(data);
 
-// 3. 反序列化
-var received = ProtobufUtil.Deserialize<PlayerDataRequest>(data);
-
-// 4. 使用压缩（适用于大消息）
-byte[] compressed = ProtobufUtil.SerializeWithCompression(request);
-var decompressed = ProtobufUtil.DeserializeWithDecompression<PlayerDataRequest>(compressed);
+// 3) 走网络层（推荐）
+var resp = await GameEntry.Network.RequestAsync(request);   // 请求实现 IRequest<TResp>
 ```
 
 ## 与网络模块集成
 
-此Protobuf集成设计用于配合：
-- **TcpClient**（任务17）- 底层TCP连接
-- **MessageDispatcher**（任务18）- 消息路由
-- **NetworkManager**（任务19）- 高级网络API
+```
+消息对象 → ProtobufUtil.Serialize() → MessagePacket.Pack() → TcpClient.Send()
+TcpClient 收 → MessagePacket.Unpack() → MessageDispatcher 分发/RequestAsync 兑现 → ProtobufUtil.Deserialize()
+```
+- `MessagePacket`：8 字节头（Length+MainId+SubId+SeqId），序列化库无关。
+- `MessageDispatcher`：主线程队列 + 类型化订阅分发；`NetworkManager`：连接/请求-响应/心跳/拦截统一入口。
 
-序列化流程：
-```
-消息对象 → ProtobufUtil.Serialize() → byte[] → TcpClient.Send()
-TcpClient.Receive() → byte[] → ProtobufUtil.Deserialize() → 消息对象
-```
+## AOT / IL2CPP 注意
+- **禁**运行时访问 `.Descriptor`/`JsonFormatter`/`ToString()`（反射会崩），只走二进制。
+- `repeated 标量` 与 `repeated 消息`均 AOT 安全（生成代码显式实例化 codec）。
 
 ## 性能考虑
+- 二进制紧凑、无运行时反射开销；序列化产生临时 byte[]（GC 压力），频发消息可复用对象。
+- 压缩：文本密集数据省 50-80% 带宽但增 CPU，用 `GetCompressionRatio()` 评估后再启用。
 
-### 序列化性能
-- Protobuf比JSON快得多
-- 二进制格式更紧凑（比JSON小30-50%）
-- 没有反射开销（使用编译的序列化器）
-
-### 压缩权衡
-- **优点**：减少网络带宽（文本密集型数据减少50-80%）
-- **缺点**：增加CPU开销（压缩/解压缩时间）
-- **建议**：先分析，只在有益时压缩
-
-### 内存管理
-- 序列化创建临时字节数组（GC压力）
-- 考虑对频繁发送的消息使用对象池
-- 尽可能重用消息对象
-
-## 后续步骤
-
-1. **安装protobuf-net** 使用提供的安装指南
-2. **定义游戏消息** 在 `HotUpdate/Proto/` 目录中
-3. **实现TcpClient**（任务17）用于网络连接
-4. **实现MessageDispatcher**（任务18）用于消息路由
-5. **测试序列化** 使用示例消息
-
-## 创建的文件
-
-```
-Assets/Scripts/Framework/Network/
-├── IMessage.cs                    # 消息接口
-├── ProtobufUtil.cs                # 序列化工具
-├── SampleMessage.cs               # 示例消息
-├── PROTOBUF_SETUP.md              # 详细设置指南
-├── README.md                      # 快速参考
-└── IMPLEMENTATION_NOTES.md        # 本文件
-
-Assets/Editor/
-└── ProtobufInstaller.cs           # 安装助手工具
-```
-
-## 满足的需求
-
-✓ **需求 2.3.5**：Protobuf集成
-  - ✓ 集成protobuf-net或Google.Protobuf（选择了protobuf-net）
-  - ✓ 提供proto文件生成脚本（提供了安装指南）
-  - ✓ 实现Protobuf序列化工具类（ProtobufUtil）
-  - ✓ 支持消息压缩（可选）（实现了GZip压缩）
-
-## 测试建议
-
-安装protobuf-net后，使用以下测试：
-
+## 往返测试建议（EditMode）
 ```csharp
 [Test]
-public void ProtobufUtil_序列化反序列化_往返测试()
+public void ProtobufUtil_往返()
 {
-    var original = new SampleMessage 
-    { 
-        Id = 123, 
-        Content = "测试", 
-        Timestamp = 1234567890 
-    };
-    
-    byte[] data = ProtobufUtil.Serialize(original);
-    var deserialized = ProtobufUtil.Deserialize<SampleMessage>(data);
-    
-    Assert.AreEqual(original.Id, deserialized.Id);
-    Assert.AreEqual(original.Content, deserialized.Content);
-    Assert.AreEqual(original.Timestamp, deserialized.Timestamp);
-}
+    var msg = new GS2GC_010_001_GetInventoryResponse { ResultCode = 0 };
+    msg.Items.Add(new CommonItem { Id = 1, Name = "gold", Count = 99 });
 
-[Test]
-public void ProtobufUtil_压缩_往返测试()
-{
-    var original = new SampleMessage 
-    { 
-        Id = 456, 
-        Content = "应该压缩得很好的长内容...", 
-        Timestamp = 9876543210 
-    };
-    
-    byte[] compressed = ProtobufUtil.SerializeWithCompression(original);
-    var decompressed = ProtobufUtil.DeserializeWithDecompression<SampleMessage>(compressed);
-    
-    Assert.AreEqual(original.Id, decompressed.Id);
-    Assert.AreEqual(original.Content, decompressed.Content);
+    byte[] data = ProtobufUtil.Serialize(msg);
+    var back = ProtobufUtil.Deserialize<GS2GC_010_001_GetInventoryResponse>(data);
+
+    Assert.AreEqual(1, back.Items.Count);
+    Assert.AreEqual("gold", back.Items[0].Name);
 }
 ```
 
-## 注意事项
-
-- 安装protobuf-net后实现即可使用
-- 所有代码遵循Unity和C#最佳实践
-- 包含全面的错误处理和验证
-- 文档详尽且对开发者友好
-- 与未来网络组件的集成简单明了
-
----
-
-**状态**：✓ 实现完成  
-**日期**：任务16已完成  
-**下一个任务**：任务17 - 实现TCP客户端
+## 相关文档
+- [PROTOBUF_SETUP.md](PROTOBUF_SETUP.md) —— 安装与 API。
+- [MESSAGE_ID_DESIGN.md](MESSAGE_ID_DESIGN.md) —— 主/子号与 SeqId 规约。
+- 仓库根 `Tools/ProtoGen/README.md` —— 生成器使用说明。

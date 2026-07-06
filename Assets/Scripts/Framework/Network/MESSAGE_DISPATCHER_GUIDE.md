@@ -20,7 +20,7 @@
 
 ## 核心接口
 
-- `Subscribe<T>(handler, priority)`：订阅类型化消息，协议号从 `T : IMessage` 中读取，内部自动反序列化。
+- `Subscribe<T>(handler, priority)`：订阅类型化消息，协议号从 `T : INetMessage` 中读取，内部自动反序列化。
 - `MessageSubscription.Unsubscribe()`：释放当前订阅。
 - `ClearAllHandlers()`：框架关闭时清除全部订阅。
 - `EnqueueMessage(mainId, subId, payload)`：从网络线程加入主线程队列。
