@@ -72,7 +72,7 @@ namespace Framework.Core
             metric.Detail = detail;
         }
 
-        /// <summary>写入启动最终结果并持久化到 persistentDataPath。</summary>
+        /// <summary>写入启动最终结果：本地落盘（离线可查）+ 埋点管道上报（线上漏斗分析）。</summary>
         public static void FinalizeRunMetric(LaunchRunMetric run, bool success, string endReason)
         {
             run.Success = success;
@@ -89,6 +89,44 @@ namespace Framework.Core
             catch (Exception ex)
             {
                 Debug.LogWarning($"[LaunchTelemetry] 写入 launch_metrics_last.json 失败: {ex.Message}");
+            }
+
+            TrackRunMetric(run);
+        }
+
+        /// <summary>
+        /// 启动指标接入埋点管道：一条 launch_run 汇总事件 + 每阶段一条 launch_phase。
+        /// 埋点管理器未就绪（纯单测环境）时静默跳过。
+        /// </summary>
+        private static void TrackRunMetric(LaunchRunMetric run)
+        {
+            var analytics = GameEntry.Analytics;
+            if (analytics == null)
+                return;
+
+            long totalMs = 0;
+            foreach (LaunchPhaseMetric phase in run.Phases)
+                totalMs += phase.DurationMs;
+
+            analytics.Track("launch_run", new Dictionary<string, object>
+            {
+                { "run_id", run.RunId },
+                { "success", run.Success },
+                { "end_reason", run.EndReason },
+                { "total_ms", totalMs },
+                { "phase_count", run.Phases.Count }
+            });
+
+            foreach (LaunchPhaseMetric phase in run.Phases)
+            {
+                analytics.Track("launch_phase", new Dictionary<string, object>
+                {
+                    { "run_id", run.RunId },
+                    { "phase", phase.Phase },
+                    { "success", phase.Success },
+                    { "duration_ms", phase.DurationMs },
+                    { "detail", phase.Detail ?? string.Empty }
+                });
             }
         }
     }

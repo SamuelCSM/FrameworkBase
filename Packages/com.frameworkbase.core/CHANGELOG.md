@@ -3,6 +3,21 @@
 本包遵循 [语义化版本](https://semver.org/lang/zh-CN/)。版本策略：
 `0.x` 为孵化期（API 可能调整）；首个商业项目立项时冻结为 `1.0.0`，此后破坏性变更必须升主版本。
 
+## [0.3.0] - 2026-07-06
+
+### 新增
+
+- **Analytics 模块（埋点事件管道）**：`AnalyticsManager` 负责公共维度封装
+  （session/device/user/version/channel）、内存缓冲（上限 500，溢出补报
+  `analytics_dropped`）、批量上报（≤50/批，15s 定时 + 阈值触发）、失败退避重试、
+  切后台/退出落盘防丢与启动补报；`IAnalyticsBackend` 后端抽象 +
+  内置 HTTP JSON / 日志两个后端，三方平台作扩展包注入。用法见 `Analytics/ANALYTICS_GUIDE.md`。
+- `AppConfig.AnalyticsUrl`（自建采集端点；留空走日志后端）。
+- `GameEntry.Analytics` 静态访问点。
+- 启动指标接轨：LaunchFlow 收口时自动上报 `launch_run` + 逐阶段 `launch_phase` 事件
+  （原本地落盘保留）。
+- Analytics EditMode 测试 7 例（信封序列化/批量/失败重试/用户维度/溢出补报）。
+
 ## [0.2.0] - 2026-07-06
 
 ### 新增

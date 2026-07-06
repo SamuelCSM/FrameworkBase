@@ -54,6 +54,11 @@ namespace Framework.Core
         [Tooltip("崩溃/未捕获异常记录的上报端点（HTTP POST，body 为 JSON Lines）；留空仅本地缓存 persistentDataPath/crash_reports.jsonl")]
         public string CrashReportUrl = string.Empty;
 
+        [Header("埋点")]
+        [Tooltip("埋点采集端点（HTTP POST，body 为事件 JSON 数组）；留空走日志后端（事件不出设备，开发期看 Console）。" +
+                 "对接三方平台时忽略此项，经 AnalyticsManager.SetBackend 注入扩展包实现")]
+        public string AnalyticsUrl = string.Empty;
+
         [Header("热更总开关")]
         [Tooltip("关闭后启动流程跳过 AOT 元数据 / HybridCLR 程序集加载 / StartHotfix（LaunchFlow Step 7-9），直接进入登录。" +
                  "无热更业务程序集的项目（纯框架壳 / 单机项目）须关闭，否则 Step 8 找不到热更 DLL 会启动失败并重试卡死。")]

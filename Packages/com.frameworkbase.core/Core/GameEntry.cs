@@ -97,6 +97,9 @@ namespace Framework.Core
         /// <summary>平台 SDK 管理器 — 渠道登录/支付/推送/合规统一访问点（未注册渠道时 Mock 兜底）。</summary>
         public static Framework.Sdk.SdkManager Sdk { get; private set; }
 
+        /// <summary>埋点管理器 — 事件缓冲/批量上报/断电落盘（后端可注入，默认按 AppConfig.AnalyticsUrl）。</summary>
+        public static Framework.Analytics.AnalyticsManager Analytics { get; private set; }
+
         // ── 生命周期 ─────────────────────────────────────────────────────────
 
         protected override void Awake()
@@ -216,6 +219,9 @@ namespace Framework.Core
             // SDK 管理器尽早就位：渠道实现由业务组合根注册（RegisterProvider），
             // 初始化时机由业务显式驱动（通常在 LaunchFlow 前 / HotfixEntry 内）。
             Sdk = AddComponent<Framework.Sdk.SdkManager>();
+
+            // 埋点管道紧随其后：LaunchFlow 的启动阶段指标依赖它上报。
+            Analytics = AddComponent<Framework.Analytics.AnalyticsManager>();
 
             UI = AddComponent<UIManager>();
             UI.SetBootstrap(_uiBootstrap);

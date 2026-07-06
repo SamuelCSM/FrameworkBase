@@ -1,0 +1,304 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using Cysharp.Threading.Tasks;
+using Framework.Core;
+using UnityEngine;
+
+namespace Framework.Analytics
+{
+    /// <summary>
+    /// 埋点事件管道：业务只管 Track，管道负责公共维度封装、缓冲、批量上报、
+    /// 失败退避与切后台/退出时落盘防丢。
+    ///
+    /// 事件信封（序列化时冻结，用户维度以事件发生时刻为准）：
+    /// <c>{ event, ts, session_id, device_id, user_id, app_version, channel, props{...} }</c>
+    ///
+    /// 后端选择：默认按 AppConfig.AnalyticsUrl——非空用 <see cref="HttpJsonAnalyticsBackend"/>，
+    /// 留空用 <see cref="LogAnalyticsBackend"/>（开发期看日志）；
+    /// 对接三方平台经 <see cref="SetBackend"/> 注入扩展包实现。
+    /// </summary>
+    public class AnalyticsManager : FrameworkComponent
+    {
+        // ── 管道参数（经验默认值，够用且不吃内存）─────────────────────────────
+        /// <summary>内存队列上限：超限丢最旧事件（丢弃计数随下批事件补报）。</summary>
+        private const int MaxQueuedEvents = 500;
+
+        /// <summary>单批最大事件数。</summary>
+        private const int BatchSize = 50;
+
+        /// <summary>定时冲刷间隔（秒）。</summary>
+        private const float FlushIntervalSeconds = 15f;
+
+        /// <summary>连续失败的退避上限（秒）。</summary>
+        private const float MaxBackoffSeconds = 120f;
+
+        /// <summary>断电落盘文件名（JSON Lines）。</summary>
+        private const string PendingFileName = "analytics_pending.jsonl";
+
+        /// <summary>落盘文件体积上限：超限截断丢弃（埋点丢比撑爆存储可接受）。</summary>
+        private const long MaxPendingFileBytes = 512 * 1024;
+
+        // ── 状态 ─────────────────────────────────────────────────────────────
+        private readonly List<string> _queue = new List<string>();
+        private IAnalyticsBackend _backend;
+        private bool _isFlushing;
+        private float _flushTimer;
+        private int _consecutiveFailures;
+        private float _backoffRemaining;
+        private int _droppedSinceLastReport;
+
+        private string _sessionId;
+        private string _deviceId;
+        private string _appVersion;
+        private string _userId = string.Empty;
+        private string _pendingFilePath;
+
+        /// <summary>当前会话 ID（每次启动一个）。</summary>
+        public string SessionId => _sessionId;
+
+        /// <summary>当前队列长度（监控/测试用）。</summary>
+        public int QueuedCount => _queue.Count;
+
+        public override void OnInit()
+        {
+            _sessionId = Guid.NewGuid().ToString("N");
+            _deviceId = SystemInfo.deviceUniqueIdentifier;
+            _appVersion = Application.version;
+            _pendingFilePath = Path.Combine(Application.persistentDataPath, PendingFileName);
+
+            LoadPendingFromDisk();
+            GameLog.Log($"[AnalyticsManager] 初始化 session={_sessionId} 待补报={_queue.Count}");
+        }
+
+        // ── 对外 API ─────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// 注入自定义后端（三方平台扩展包）。应在首次 Track 前调用；
+        /// 运行中切换不丢队列（已序列化事件与后端无关）。
+        /// </summary>
+        public void SetBackend(IAnalyticsBackend backend)
+        {
+            if (backend == null)
+            {
+                GameLog.Error("[AnalyticsManager] SetBackend 传入 null，忽略");
+                return;
+            }
+            _backend = backend;
+            GameLog.Log($"[AnalyticsManager] 埋点后端: {backend.Name}");
+        }
+
+        /// <summary>登录成功后设置用户维度；登出传空。</summary>
+        public void SetUserId(string userId)
+        {
+            _userId = userId ?? string.Empty;
+        }
+
+        /// <summary>
+        /// 记录一条事件。属性只支持扁平键值（string/bool/整数/浮点，其余 ToString）。
+        /// 线程约束：仅主线程调用（与 Manager 生命周期一致）。
+        /// </summary>
+        public void Track(string eventName, IReadOnlyDictionary<string, object> properties = null)
+        {
+            if (string.IsNullOrEmpty(eventName))
+            {
+                GameLog.Warning("[AnalyticsManager] Track 事件名为空，忽略");
+                return;
+            }
+
+            // 丢弃补报：队列曾溢出时，把丢弃数作为质量信号随后续事件带出
+            if (_droppedSinceLastReport > 0)
+            {
+                int dropped = _droppedSinceLastReport;
+                _droppedSinceLastReport = 0;
+                EnqueueSerialized(AnalyticsJson.SerializeEvent(
+                    "analytics_dropped", NowMs(), _sessionId, _deviceId, _userId, _appVersion, ChannelName(),
+                    new Dictionary<string, object> { { "count", dropped } }));
+            }
+
+            EnqueueSerialized(AnalyticsJson.SerializeEvent(
+                eventName, NowMs(), _sessionId, _deviceId, _userId, _appVersion, ChannelName(), properties));
+
+            if (_queue.Count >= BatchSize)
+                FlushAsync().Forget();
+        }
+
+        /// <summary>
+        /// 立即冲刷一批（切后台/测试用）。返回本批是否发送成功（空队列视为成功）。
+        /// </summary>
+        public async UniTask<bool> FlushAsync()
+        {
+            if (_isFlushing || _queue.Count == 0)
+                return true;
+
+            _isFlushing = true;
+            try
+            {
+                int count = Math.Min(BatchSize, _queue.Count);
+                var batch = new List<string>(count);
+                for (int i = 0; i < count; i++)
+                    batch.Add(_queue[i]);
+
+                bool ok = await Backend().SendAsync(batch);
+                if (ok)
+                {
+                    _queue.RemoveRange(0, count);
+                    _consecutiveFailures = 0;
+                    _backoffRemaining = 0f;
+                }
+                else
+                {
+                    _consecutiveFailures++;
+                    _backoffRemaining = Math.Min(
+                        FlushIntervalSeconds * _consecutiveFailures, MaxBackoffSeconds);
+                    GameLog.Warning($"[AnalyticsManager] 上报失败（连续 {_consecutiveFailures} 次），退避 {_backoffRemaining:F0}s，队列 {_queue.Count}");
+                }
+                return ok;
+            }
+            finally
+            {
+                _isFlushing = false;
+            }
+        }
+
+        /// <summary>清空队列（测试隔离 / 合规抹除用）。</summary>
+        public void ClearQueue()
+        {
+            _queue.Clear();
+            _droppedSinceLastReport = 0;
+            TryDeletePendingFile();
+        }
+
+        // ── 生命周期 ─────────────────────────────────────────────────────────
+
+        public override void OnUpdate(float deltaTime)
+        {
+            if (_backoffRemaining > 0f)
+            {
+                _backoffRemaining -= deltaTime;
+                return;
+            }
+
+            _flushTimer += deltaTime;
+            if (_flushTimer >= FlushIntervalSeconds)
+            {
+                _flushTimer = 0f;
+                FlushAsync().Forget();
+            }
+        }
+
+        public override void OnApplicationPause(bool isPaused)
+        {
+            if (!isPaused)
+                return;
+
+            // 切后台：先落盘保命（进程可能随时被杀），再尽力发一批
+            PersistQueueToDisk();
+            FlushAsync().Forget();
+        }
+
+        public override void OnShutdown()
+        {
+            PersistQueueToDisk();
+            _queue.Clear();
+        }
+
+        // ── 内部 ─────────────────────────────────────────────────────────────
+
+        private void EnqueueSerialized(string eventJson)
+        {
+            if (_queue.Count >= MaxQueuedEvents)
+            {
+                _queue.RemoveAt(0);
+                _droppedSinceLastReport++;
+            }
+            _queue.Add(eventJson);
+        }
+
+        /// <summary>取当前后端；未注入时按 AppConfig 惰性选择默认实现。</summary>
+        private IAnalyticsBackend Backend()
+        {
+            if (_backend != null)
+                return _backend;
+
+            string url = AppConfig.Load()?.AnalyticsUrl;
+            _backend = string.IsNullOrEmpty(url)
+                ? (IAnalyticsBackend)new LogAnalyticsBackend()
+                : new HttpJsonAnalyticsBackend(url);
+            GameLog.Log($"[AnalyticsManager] 默认埋点后端: {_backend.Name}");
+            return _backend;
+        }
+
+        private string ChannelName()
+        {
+            // GameEntry 未接线（纯单测环境）时渠道维度留空
+            return Core.GameEntry.Sdk != null ? Core.GameEntry.Sdk.ChannelName : string.Empty;
+        }
+
+        private static long NowMs() => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+
+        /// <summary>队列落盘（JSON Lines 覆盖写）。切后台/退出时调用，崩溃防丢。</summary>
+        private void PersistQueueToDisk()
+        {
+            try
+            {
+                if (_queue.Count == 0)
+                {
+                    TryDeletePendingFile();
+                    return;
+                }
+
+                long total = 0;
+                var lines = new List<string>(_queue.Count);
+                foreach (string line in _queue)
+                {
+                    total += line.Length + 1;
+                    if (total > MaxPendingFileBytes)
+                        break;
+                    lines.Add(line);
+                }
+
+                File.WriteAllLines(_pendingFilePath, lines);
+            }
+            catch (Exception ex)
+            {
+                GameLog.Warning($"[AnalyticsManager] 落盘失败（放弃本次持久化）: {ex.Message}");
+            }
+        }
+
+        /// <summary>启动时回捞上次未发出的事件（读完即删，避免重复补报）。</summary>
+        private void LoadPendingFromDisk()
+        {
+            try
+            {
+                if (!File.Exists(_pendingFilePath))
+                    return;
+
+                foreach (string line in File.ReadAllLines(_pendingFilePath))
+                {
+                    if (!string.IsNullOrWhiteSpace(line))
+                        EnqueueSerialized(line);
+                }
+                TryDeletePendingFile();
+            }
+            catch (Exception ex)
+            {
+                GameLog.Warning($"[AnalyticsManager] 读取待补报事件失败: {ex.Message}");
+                TryDeletePendingFile();
+            }
+        }
+
+        private void TryDeletePendingFile()
+        {
+            try
+            {
+                if (File.Exists(_pendingFilePath))
+                    File.Delete(_pendingFilePath);
+            }
+            catch
+            {
+                // 删除失败无碍：下次启动会重读一遍（事件重复优于丢失）
+            }
+        }
+    }
+}
