@@ -1,0 +1,48 @@
+# FrameworkBase 质量门禁：编译 + EditMode 测试。
+# 与 Tools/ci/run-ci.ps1 等价，push / PR 自动执行。
+#
+# 首次启用需要在仓库 Settings → Secrets and variables → Actions 配置 Unity 授权：
+#   UNITY_LICENSE  个人版 .ulf 许可文件内容（获取方式见 Tools/ci/README.md）
+#   UNITY_EMAIL    Unity 账号邮箱
+#   UNITY_PASSWORD Unity 账号密码
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  editmode-tests:
+    name: 编译 + EditMode 测试
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Cache Library
+        uses: actions/cache@v4
+        with:
+          path: Library
+          key: Library-${{ hashFiles('Packages/manifest.json', 'Packages/packages-lock.json') }}
+          restore-keys: |
+            Library-
+
+      # unityVersion 默认从 ProjectSettings/ProjectVersion.txt 读取（2022.3.62f3）。
+      # 编译错误会导致本步骤失败，天然充当编译门禁。
+      - name: Run EditMode tests
+        uses: game-ci/unity-test-runner@v4
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+        with:
+          testMode: editmode
+          checkName: EditMode Test Results
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results
+          path: artifacts
