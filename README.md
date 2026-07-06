@@ -4,18 +4,22 @@
 定位：移动端、强联网、热更新、长期运营；框架主干不包含任何业务概念（背包/货币/任务等）。
 
 - **Unity 版本**：2022.3.62f3（须与之一致，见 `ProjectSettings/ProjectVersion.txt`）
-- **形态**：最小 Unity 壳工程，内含 `Framework` asmdef（运行时地基）+ `Framework.Editor`（工具链）
-  + `GameProtocol`（协议模板程序集）+ 复用所需 package/插件；同时充当新项目模板。
+- **形态**：**嵌入式 UPM 包**（`Packages/com.frameworkbase.core`，semver + CHANGELOG）
+  + 最小壳工程（协议模板程序集 / 冒烟示例 / 工程配置），壳工程同时充当新项目模板。
+- **分发**：本仓库内框架以 embedded package 形式演进；新项目经 git URL /
+  本地路径引用 `com.frameworkbase.core` 获得只读版本化依赖，修复经版本发布回流，不再源码分叉。
 - **来源**：ClientBase 的 `Assets/Scripts/Framework/` 单向抽取（复制，非 submodule 反向引用）。
 
 ## 目录
 
 ```
-Assets/Scripts/Framework/    地基运行时（Audio/Camera/ConfigData/Core/Event/Input/
-                             Localization/Network/Resource/Save/Scene/Stage/Timer/Tips/UI/Utils/HotUpdate）
-Assets/Scripts/Framework/Editor/  通用工具链（发布/构建/配置表/协议安装/清单签名/CI 入口）
-Assets/Scripts/Framework/Tests/   EditMode 单元测试（事件/封包/对象池/校时/定时器/热更安全等）
-Assets/Scripts/GameProtocol/ 协议模板程序集（Google.Protobuf 生成物 + 路由伴生 partial）
+Packages/com.frameworkbase.core/  框架包（版本见 package.json，变更记录见 CHANGELOG.md）
+├── (运行时)                 Audio/Camera/ConfigData/Core/Event/Input/Localization/
+│                            Network/Resource/Save/Scene/Stage/Timer/Tips/UI/Utils/HotUpdate
+├── Editor/                  通用工具链（发布/构建/配置表/协议安装/清单签名/CI 入口）
+└── Tests/EditMode/          单元测试（事件/封包/对象池/校时/定时器/热更安全等，
+                             经 manifest.json 的 testables 接入 Test Runner）
+Assets/Scripts/GameProtocol/ 协议模板程序集（Google.Protobuf 生成物 + 路由伴生 partial，随项目走）
 Assets/_Sample/              最小冒烟示例（FrameworkSmoke）
 Assets/Packages/             插件 DLL（Google.Protobuf 3.28.3 / SQLite / ExcelDataReader，走 NuGetForUnity，已入库）
 proto/                       协议源（.proto，主号 001 为框架保留段：心跳等系统协议）
@@ -50,7 +54,8 @@ Tools/ci/                    本地 CI 门禁脚本（run-ci.ps1）与 CI 说明
 - [x] **D1** 热更供应链安全闭环（URL 准入 / 清单签名 / 补丁强制哈希 / 构建门禁）
 - [x] **D2** batchmode 构建入口 + 编译/测试双入口门禁（本地脚本 + GitHub Actions）
 - [x] **D3** 主干业务残留清零（演示协议中性化 / 文档去项目专名 / 机器路径出库）
-- [ ] **E** 分发模型：Framework 迁 UPM 本地包（semver + CHANGELOG），壳工程转正为模板工程
+- [x] **E** 分发模型：Framework 迁嵌入式 UPM 包 `com.frameworkbase.core`（semver + CHANGELOG），
+      壳工程转正为模板工程
 - [ ] **F** 运营能力层：平台 SDK 抽象 / 埋点事件管道 / 远程配置与功能开关（商业项目启动前补齐）
 
 ## 使用须知（新项目起步）

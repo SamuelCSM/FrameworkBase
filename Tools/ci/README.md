@@ -34,7 +34,7 @@ FrameworkBase 的质量门禁只有一条纪律：**主干任何提交必须"编
 
 ## 构建机出包（batchmode）
 
-Player 构建入口见 `Framework.Editor.BuildEntry`（[BuildEntry.cs](../../Assets/Scripts/Framework/Editor/BuildEntry.cs)）：
+Player 构建入口见 `Framework.Editor.BuildEntry`（[BuildEntry.cs](../../Packages/com.frameworkbase.core/Editor/BuildEntry.cs)）：
 
 ```bat
 Unity.exe -batchmode -nographics -projectPath <工程根> -buildTarget StandaloneWindows64 ^

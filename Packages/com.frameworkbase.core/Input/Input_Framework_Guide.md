@@ -222,7 +222,7 @@ using (InputBlockScope.Begin("DownloadContent"))
 ## 目录结构
 
 ```
-Assets/Scripts/Framework/Input/
+Packages/com.frameworkbase.core/Input/
 ├── InputManager.cs              # 全局管理器
 ├── InputGate.cs                 # 输入门禁
 ├── InputBlockStack.cs           # 屏蔽栈
