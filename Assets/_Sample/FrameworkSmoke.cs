@@ -53,7 +53,7 @@ public sealed class FrameworkSmoke : MonoBehaviour
     /// </summary>
     private void ProtobufRoundTrip()
     {
-        var request = new GC2GS_009_001_HeartbeatRequest { ClientTime = 1234567890123, SequenceId = 7 };
+        var request = new GC2GS_001_001_HeartbeatRequest { ClientTime = 1234567890123, SequenceId = 7 };
 
         byte[] payload = ProtobufUtil.Serialize(request);
         byte[] packet = MessagePacket.Pack(request, payload, seqId: 42);
@@ -64,7 +64,7 @@ public sealed class FrameworkSmoke : MonoBehaviour
             return;
         }
 
-        var back = ProtobufUtil.Deserialize<GC2GS_009_001_HeartbeatRequest>(body);
+        var back = ProtobufUtil.Deserialize<GC2GS_001_001_HeartbeatRequest>(body);
         bool ok = mainId == request.GetMainId()
                   && subId == request.GetSubId()
                   && seqId == 42

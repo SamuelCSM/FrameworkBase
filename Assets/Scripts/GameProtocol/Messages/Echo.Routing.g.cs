@@ -2,15 +2,15 @@
 #pragma warning disable
 namespace Game.Protocol
 {
-    public sealed partial class GC2GS_001_001_EchoRequest : Framework.Network.IRequest<GS2GC_001_001_EchoResponse>
+    public sealed partial class GC2GS_002_001_EchoRequest : Framework.Network.IRequest<GS2GC_002_001_EchoResponse>
     {
-        public byte GetMainId() => 1;
+        public byte GetMainId() => 2;
         public byte GetSubId() => 1;
     }
 
-    public sealed partial class GS2GC_001_001_EchoResponse : Framework.Network.IResponse
+    public sealed partial class GS2GC_002_001_EchoResponse : Framework.Network.IResponse
     {
-        public byte GetMainId() => 1;
+        public byte GetMainId() => 2;
         public byte GetSubId() => 1;
     }
 

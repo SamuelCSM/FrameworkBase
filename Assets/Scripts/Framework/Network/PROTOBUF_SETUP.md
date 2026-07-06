@@ -26,16 +26,16 @@
 using Framework;            // ProtobufUtil
 using Game.Protocol;        // 生成的协议命名空间（由 .proto 的 csharp_namespace 决定）
 
-var request = new GC2GS_009_001_HeartbeatRequest { ClientTime = 123, SequenceId = 7 };
+var request = new GC2GS_001_001_HeartbeatRequest { ClientTime = 123, SequenceId = 7 };
 
 byte[] data = ProtobufUtil.Serialize(request);                 // = request.ToByteArray()
-var back = ProtobufUtil.Deserialize<GC2GS_009_001_HeartbeatRequest>(data); // new + MergeFrom
+var back = ProtobufUtil.Deserialize<GC2GS_001_001_HeartbeatRequest>(data); // new + MergeFrom
 ```
 
 ### 通过网络层收发（推荐）
 ```csharp
 // 请求-响应（请求实现 IRequest<TResp>，零泛型参数）
-var resp = await GameEntry.Network.RequestAsync(new GC2GS_009_001_HeartbeatRequest { ClientTime = now });
+var resp = await GameEntry.Network.RequestAsync(new GC2GS_001_001_HeartbeatRequest { ClientTime = now });
 
 // 订阅服务端推送
 var sub = GameEntry.Network.Subscribe<GS2GC_010_101_SomePush>(msg => { /* ... */ });

@@ -24,15 +24,15 @@ namespace Game.Protocol {
     static EchoReflection() {
       byte[] descriptorData = global::System.Convert.FromBase64String(
           string.Concat(
-            "CgplY2hvLnByb3RvIikKGUdDMkdTXzAwMV8wMDFfRWNob1JlcXVlc3QSDAoE",
-            "VGV4dBgBIAEoCSI+ChpHUzJHQ18wMDFfMDAxX0VjaG9SZXNwb25zZRISCgpS",
+            "CgplY2hvLnByb3RvIikKGUdDMkdTXzAwMl8wMDFfRWNob1JlcXVlc3QSDAoE",
+            "VGV4dBgBIAEoCSI+ChpHUzJHQ18wMDJfMDAxX0VjaG9SZXNwb25zZRISCgpS",
             "ZXN1bHRDb2RlGAEgASgFEgwKBFRleHQYAiABKAlCEKoCDUdhbWUuUHJvdG9j",
             "b2xiBnByb3RvMw=="));
       descriptor = pbr::FileDescriptor.FromGeneratedCode(descriptorData,
           new pbr::FileDescriptor[] { },
           new pbr::GeneratedClrTypeInfo(null, null, new pbr::GeneratedClrTypeInfo[] {
-            new pbr::GeneratedClrTypeInfo(typeof(global::Game.Protocol.GC2GS_001_001_EchoRequest), global::Game.Protocol.GC2GS_001_001_EchoRequest.Parser, new[]{ "Text" }, null, null, null, null),
-            new pbr::GeneratedClrTypeInfo(typeof(global::Game.Protocol.GS2GC_001_001_EchoResponse), global::Game.Protocol.GS2GC_001_001_EchoResponse.Parser, new[]{ "ResultCode", "Text" }, null, null, null, null)
+            new pbr::GeneratedClrTypeInfo(typeof(global::Game.Protocol.GC2GS_002_001_EchoRequest), global::Game.Protocol.GC2GS_002_001_EchoRequest.Parser, new[]{ "Text" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::Game.Protocol.GS2GC_002_001_EchoResponse), global::Game.Protocol.GS2GC_002_001_EchoResponse.Parser, new[]{ "ResultCode", "Text" }, null, null, null, null)
           }));
     }
     #endregion
@@ -40,20 +40,20 @@ namespace Game.Protocol {
   }
   #region Messages
   /// <summary>
-  /// ── 示例业务模块（主号 001）Echo ─────────────────────
+  /// ── 示例业务模块（主号 002）Echo —— 主号 001 为框架保留，业务从 002 起占号 ─────────────────────
   /// 演示带 ResultCode 的响应（生成器会让它实现 IResponse）
   /// </summary>
   [global::System.Diagnostics.DebuggerDisplayAttribute("{ToString(),nq}")]
-  public sealed partial class GC2GS_001_001_EchoRequest : pb::IMessage<GC2GS_001_001_EchoRequest>
+  public sealed partial class GC2GS_002_001_EchoRequest : pb::IMessage<GC2GS_002_001_EchoRequest>
   #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
       , pb::IBufferMessage
   #endif
   {
-    private static readonly pb::MessageParser<GC2GS_001_001_EchoRequest> _parser = new pb::MessageParser<GC2GS_001_001_EchoRequest>(() => new GC2GS_001_001_EchoRequest());
+    private static readonly pb::MessageParser<GC2GS_002_001_EchoRequest> _parser = new pb::MessageParser<GC2GS_002_001_EchoRequest>(() => new GC2GS_002_001_EchoRequest());
     private pb::UnknownFieldSet _unknownFields;
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public static pb::MessageParser<GC2GS_001_001_EchoRequest> Parser { get { return _parser; } }
+    public static pb::MessageParser<GC2GS_002_001_EchoRequest> Parser { get { return _parser; } }
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
@@ -69,7 +69,7 @@ namespace Game.Protocol {
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public GC2GS_001_001_EchoRequest() {
+    public GC2GS_002_001_EchoRequest() {
       OnConstruction();
     }
 
@@ -77,15 +77,15 @@ namespace Game.Protocol {
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public GC2GS_001_001_EchoRequest(GC2GS_001_001_EchoRequest other) : this() {
+    public GC2GS_002_001_EchoRequest(GC2GS_002_001_EchoRequest other) : this() {
       text_ = other.text_;
       _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
     }
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public GC2GS_001_001_EchoRequest Clone() {
-      return new GC2GS_001_001_EchoRequest(this);
+    public GC2GS_002_001_EchoRequest Clone() {
+      return new GC2GS_002_001_EchoRequest(this);
     }
 
     /// <summary>Field number for the "Text" field.</summary>
@@ -106,12 +106,12 @@ namespace Game.Protocol {
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public override bool Equals(object other) {
-      return Equals(other as GC2GS_001_001_EchoRequest);
+      return Equals(other as GC2GS_002_001_EchoRequest);
     }
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public bool Equals(GC2GS_001_001_EchoRequest other) {
+    public bool Equals(GC2GS_002_001_EchoRequest other) {
       if (ReferenceEquals(other, null)) {
         return false;
       }
@@ -184,7 +184,7 @@ namespace Game.Protocol {
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public void MergeFrom(GC2GS_001_001_EchoRequest other) {
+    public void MergeFrom(GC2GS_002_001_EchoRequest other) {
       if (other == null) {
         return;
       }
@@ -245,16 +245,16 @@ namespace Game.Protocol {
   }
 
   [global::System.Diagnostics.DebuggerDisplayAttribute("{ToString(),nq}")]
-  public sealed partial class GS2GC_001_001_EchoResponse : pb::IMessage<GS2GC_001_001_EchoResponse>
+  public sealed partial class GS2GC_002_001_EchoResponse : pb::IMessage<GS2GC_002_001_EchoResponse>
   #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
       , pb::IBufferMessage
   #endif
   {
-    private static readonly pb::MessageParser<GS2GC_001_001_EchoResponse> _parser = new pb::MessageParser<GS2GC_001_001_EchoResponse>(() => new GS2GC_001_001_EchoResponse());
+    private static readonly pb::MessageParser<GS2GC_002_001_EchoResponse> _parser = new pb::MessageParser<GS2GC_002_001_EchoResponse>(() => new GS2GC_002_001_EchoResponse());
     private pb::UnknownFieldSet _unknownFields;
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public static pb::MessageParser<GS2GC_001_001_EchoResponse> Parser { get { return _parser; } }
+    public static pb::MessageParser<GS2GC_002_001_EchoResponse> Parser { get { return _parser; } }
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
@@ -270,7 +270,7 @@ namespace Game.Protocol {
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public GS2GC_001_001_EchoResponse() {
+    public GS2GC_002_001_EchoResponse() {
       OnConstruction();
     }
 
@@ -278,7 +278,7 @@ namespace Game.Protocol {
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public GS2GC_001_001_EchoResponse(GS2GC_001_001_EchoResponse other) : this() {
+    public GS2GC_002_001_EchoResponse(GS2GC_002_001_EchoResponse other) : this() {
       resultCode_ = other.resultCode_;
       text_ = other.text_;
       _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
@@ -286,8 +286,8 @@ namespace Game.Protocol {
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public GS2GC_001_001_EchoResponse Clone() {
-      return new GS2GC_001_001_EchoResponse(this);
+    public GS2GC_002_001_EchoResponse Clone() {
+      return new GS2GC_002_001_EchoResponse(this);
     }
 
     /// <summary>Field number for the "ResultCode" field.</summary>
@@ -323,12 +323,12 @@ namespace Game.Protocol {
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public override bool Equals(object other) {
-      return Equals(other as GS2GC_001_001_EchoResponse);
+      return Equals(other as GS2GC_002_001_EchoResponse);
     }
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public bool Equals(GS2GC_001_001_EchoResponse other) {
+    public bool Equals(GS2GC_002_001_EchoResponse other) {
       if (ReferenceEquals(other, null)) {
         return false;
       }
@@ -414,7 +414,7 @@ namespace Game.Protocol {
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public void MergeFrom(GS2GC_001_001_EchoResponse other) {
+    public void MergeFrom(GS2GC_002_001_EchoResponse other) {
       if (other == null) {
         return;
       }

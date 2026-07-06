@@ -2,15 +2,15 @@
 #pragma warning disable
 namespace Game.Protocol
 {
-    public sealed partial class GC2GS_009_001_HeartbeatRequest : Framework.Network.IRequest<GS2GC_009_001_HeartbeatResponse>
+    public sealed partial class GC2GS_001_001_HeartbeatRequest : Framework.Network.IRequest<GS2GC_001_001_HeartbeatResponse>
     {
-        public byte GetMainId() => 9;
+        public byte GetMainId() => 1;
         public byte GetSubId() => 1;
     }
 
-    public sealed partial class GS2GC_009_001_HeartbeatResponse : Framework.Network.INetMessage
+    public sealed partial class GS2GC_001_001_HeartbeatResponse : Framework.Network.INetMessage
     {
-        public byte GetMainId() => 9;
+        public byte GetMainId() => 1;
         public byte GetSubId() => 1;
     }
 

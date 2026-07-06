@@ -140,19 +140,20 @@ private void OnReceive(byte[] packet)
 ### 模块化处理
 
 ```csharp
+// 业务主号从 002 起，在业务层自建常量表登记（主号 001 为框架保留，见 MessageModule.System）
 private void HandleMessage(byte mainId, byte subId, byte[] payload)
 {
     switch (mainId)
     {
-        case MessageModule.Login:
+        case GameModule.Login:   // = 2，业务自定义常量
             HandleLoginMessage(subId, payload);
             break;
             
-        case MessageModule.Player:
+        case GameModule.Player:  // = 3
             HandlePlayerMessage(subId, payload);
             break;
             
-        case MessageModule.Battle:
+        case GameModule.Battle:  // = 5
             HandleBattleMessage(subId, payload);
             break;
             

@@ -24,16 +24,16 @@ namespace Game.Protocol {
     static SystemReflection() {
       byte[] descriptorData = global::System.Convert.FromBase64String(
           string.Concat(
-            "CgxzeXN0ZW0ucHJvdG8iSAoeR0MyR1NfMDA5XzAwMV9IZWFydGJlYXRSZXF1",
+            "CgxzeXN0ZW0ucHJvdG8iSAoeR0MyR1NfMDAxXzAwMV9IZWFydGJlYXRSZXF1",
             "ZXN0EhIKCkNsaWVudFRpbWUYASABKAMSEgoKU2VxdWVuY2VJZBgCIAEoBSJJ",
-            "Ch9HUzJHQ18wMDlfMDAxX0hlYXJ0YmVhdFJlc3BvbnNlEhIKClNlcnZlclRp",
+            "Ch9HUzJHQ18wMDFfMDAxX0hlYXJ0YmVhdFJlc3BvbnNlEhIKClNlcnZlclRp",
             "bWUYASABKAMSEgoKU2VxdWVuY2VJZBgCIAEoBUIQqgINR2FtZS5Qcm90b2Nv",
             "bGIGcHJvdG8z"));
       descriptor = pbr::FileDescriptor.FromGeneratedCode(descriptorData,
           new pbr::FileDescriptor[] { },
           new pbr::GeneratedClrTypeInfo(null, null, new pbr::GeneratedClrTypeInfo[] {
-            new pbr::GeneratedClrTypeInfo(typeof(global::Game.Protocol.GC2GS_009_001_HeartbeatRequest), global::Game.Protocol.GC2GS_009_001_HeartbeatRequest.Parser, new[]{ "ClientTime", "SequenceId" }, null, null, null, null),
-            new pbr::GeneratedClrTypeInfo(typeof(global::Game.Protocol.GS2GC_009_001_HeartbeatResponse), global::Game.Protocol.GS2GC_009_001_HeartbeatResponse.Parser, new[]{ "ServerTime", "SequenceId" }, null, null, null, null)
+            new pbr::GeneratedClrTypeInfo(typeof(global::Game.Protocol.GC2GS_001_001_HeartbeatRequest), global::Game.Protocol.GC2GS_001_001_HeartbeatRequest.Parser, new[]{ "ClientTime", "SequenceId" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::Game.Protocol.GS2GC_001_001_HeartbeatResponse), global::Game.Protocol.GS2GC_001_001_HeartbeatResponse.Parser, new[]{ "ServerTime", "SequenceId" }, null, null, null, null)
           }));
     }
     #endregion
@@ -41,20 +41,20 @@ namespace Game.Protocol {
   }
   #region Messages
   /// <summary>
-  /// ── 系统模块（主号 009）──────────────────────────────
-  /// 心跳请求（GC2GS_009_001）↔ 心跳响应（GS2GC_009_001，同主/子号配对）
+  /// ── 框架系统模块（主号 001，框架保留）──────────────────────────────
+  /// 心跳请求（GC2GS_001_001）↔ 心跳响应（GS2GC_001_001，同主/子号配对）
   /// </summary>
   [global::System.Diagnostics.DebuggerDisplayAttribute("{ToString(),nq}")]
-  public sealed partial class GC2GS_009_001_HeartbeatRequest : pb::IMessage<GC2GS_009_001_HeartbeatRequest>
+  public sealed partial class GC2GS_001_001_HeartbeatRequest : pb::IMessage<GC2GS_001_001_HeartbeatRequest>
   #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
       , pb::IBufferMessage
   #endif
   {
-    private static readonly pb::MessageParser<GC2GS_009_001_HeartbeatRequest> _parser = new pb::MessageParser<GC2GS_009_001_HeartbeatRequest>(() => new GC2GS_009_001_HeartbeatRequest());
+    private static readonly pb::MessageParser<GC2GS_001_001_HeartbeatRequest> _parser = new pb::MessageParser<GC2GS_001_001_HeartbeatRequest>(() => new GC2GS_001_001_HeartbeatRequest());
     private pb::UnknownFieldSet _unknownFields;
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public static pb::MessageParser<GC2GS_009_001_HeartbeatRequest> Parser { get { return _parser; } }
+    public static pb::MessageParser<GC2GS_001_001_HeartbeatRequest> Parser { get { return _parser; } }
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
@@ -70,7 +70,7 @@ namespace Game.Protocol {
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public GC2GS_009_001_HeartbeatRequest() {
+    public GC2GS_001_001_HeartbeatRequest() {
       OnConstruction();
     }
 
@@ -78,7 +78,7 @@ namespace Game.Protocol {
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public GC2GS_009_001_HeartbeatRequest(GC2GS_009_001_HeartbeatRequest other) : this() {
+    public GC2GS_001_001_HeartbeatRequest(GC2GS_001_001_HeartbeatRequest other) : this() {
       clientTime_ = other.clientTime_;
       sequenceId_ = other.sequenceId_;
       _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
@@ -86,8 +86,8 @@ namespace Game.Protocol {
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public GC2GS_009_001_HeartbeatRequest Clone() {
-      return new GC2GS_009_001_HeartbeatRequest(this);
+    public GC2GS_001_001_HeartbeatRequest Clone() {
+      return new GC2GS_001_001_HeartbeatRequest(this);
     }
 
     /// <summary>Field number for the "ClientTime" field.</summary>
@@ -123,12 +123,12 @@ namespace Game.Protocol {
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public override bool Equals(object other) {
-      return Equals(other as GC2GS_009_001_HeartbeatRequest);
+      return Equals(other as GC2GS_001_001_HeartbeatRequest);
     }
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public bool Equals(GC2GS_009_001_HeartbeatRequest other) {
+    public bool Equals(GC2GS_001_001_HeartbeatRequest other) {
       if (ReferenceEquals(other, null)) {
         return false;
       }
@@ -214,7 +214,7 @@ namespace Game.Protocol {
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public void MergeFrom(GC2GS_009_001_HeartbeatRequest other) {
+    public void MergeFrom(GC2GS_001_001_HeartbeatRequest other) {
       if (other == null) {
         return;
       }
@@ -286,16 +286,16 @@ namespace Game.Protocol {
   }
 
   [global::System.Diagnostics.DebuggerDisplayAttribute("{ToString(),nq}")]
-  public sealed partial class GS2GC_009_001_HeartbeatResponse : pb::IMessage<GS2GC_009_001_HeartbeatResponse>
+  public sealed partial class GS2GC_001_001_HeartbeatResponse : pb::IMessage<GS2GC_001_001_HeartbeatResponse>
   #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
       , pb::IBufferMessage
   #endif
   {
-    private static readonly pb::MessageParser<GS2GC_009_001_HeartbeatResponse> _parser = new pb::MessageParser<GS2GC_009_001_HeartbeatResponse>(() => new GS2GC_009_001_HeartbeatResponse());
+    private static readonly pb::MessageParser<GS2GC_001_001_HeartbeatResponse> _parser = new pb::MessageParser<GS2GC_001_001_HeartbeatResponse>(() => new GS2GC_001_001_HeartbeatResponse());
     private pb::UnknownFieldSet _unknownFields;
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public static pb::MessageParser<GS2GC_009_001_HeartbeatResponse> Parser { get { return _parser; } }
+    public static pb::MessageParser<GS2GC_001_001_HeartbeatResponse> Parser { get { return _parser; } }
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
@@ -311,7 +311,7 @@ namespace Game.Protocol {
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public GS2GC_009_001_HeartbeatResponse() {
+    public GS2GC_001_001_HeartbeatResponse() {
       OnConstruction();
     }
 
@@ -319,7 +319,7 @@ namespace Game.Protocol {
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public GS2GC_009_001_HeartbeatResponse(GS2GC_009_001_HeartbeatResponse other) : this() {
+    public GS2GC_001_001_HeartbeatResponse(GS2GC_001_001_HeartbeatResponse other) : this() {
       serverTime_ = other.serverTime_;
       sequenceId_ = other.sequenceId_;
       _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
@@ -327,8 +327,8 @@ namespace Game.Protocol {
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public GS2GC_009_001_HeartbeatResponse Clone() {
-      return new GS2GC_009_001_HeartbeatResponse(this);
+    public GS2GC_001_001_HeartbeatResponse Clone() {
+      return new GS2GC_001_001_HeartbeatResponse(this);
     }
 
     /// <summary>Field number for the "ServerTime" field.</summary>
@@ -364,12 +364,12 @@ namespace Game.Protocol {
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public override bool Equals(object other) {
-      return Equals(other as GS2GC_009_001_HeartbeatResponse);
+      return Equals(other as GS2GC_001_001_HeartbeatResponse);
     }
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public bool Equals(GS2GC_009_001_HeartbeatResponse other) {
+    public bool Equals(GS2GC_001_001_HeartbeatResponse other) {
       if (ReferenceEquals(other, null)) {
         return false;
       }
@@ -455,7 +455,7 @@ namespace Game.Protocol {
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public void MergeFrom(GS2GC_009_001_HeartbeatResponse other) {
+    public void MergeFrom(GS2GC_001_001_HeartbeatResponse other) {
       if (other == null) {
         return;
       }

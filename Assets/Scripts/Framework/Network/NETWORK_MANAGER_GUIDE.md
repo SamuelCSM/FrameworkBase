@@ -144,9 +144,9 @@ GameEntry.Network.SetGlobalErrorInterceptor(code =>
 ```csharp
 // 组合根启动时注入（与 SetHeartbeatProvider 对称）
 GameEntry.Network.SetHeartbeatProvider((clientTime, seq) =>
-    new GC2GS_009_001_HeartbeatRequest { ClientTime = clientTime, SequenceId = seq });
+    new GC2GS_001_001_HeartbeatRequest { ClientTime = clientTime, SequenceId = seq });
 GameEntry.Network.SetHeartbeatResponseParser(payload =>
-    ProtobufUtil.Deserialize<GS2GC_009_001_HeartbeatResponse>(payload).ServerTime);
+    ProtobufUtil.Deserialize<GS2GC_001_001_HeartbeatResponse>(payload).ServerTime);
 
 // 之后任意处读取服务端时间（倒计时、每日重置等一律用它，不用本地时间）
 long nowMs = ServerTime.NowMs;          // 未同步时回退本地 UTC

@@ -2,13 +2,13 @@ syntax = "proto3";
 
 option csharp_namespace = "Game.Protocol";
 
-// ── 示例业务模块（主号 001）Echo ─────────────────────
+// ── 示例业务模块（主号 002）Echo —— 主号 001 为框架保留，业务从 002 起占号 ─────────────────────
 // 演示带 ResultCode 的响应（生成器会让它实现 IResponse）
-message GC2GS_001_001_EchoRequest {
+message GC2GS_002_001_EchoRequest {
   string Text = 1;        // 回显文本
 }
 
-message GS2GC_001_001_EchoResponse {
+message GS2GC_002_001_EchoResponse {
   int32 ResultCode = 1;   // 结果码（0=成功）
   string Text = 2;        // 回显文本
 }

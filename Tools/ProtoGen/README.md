@@ -32,11 +32,11 @@ dotnet Tools/ProtoGen/bin/Debug/net8.0/ProtoGen.dll
 syntax = "proto3";
 option csharp_namespace = "Game.Protocol";   // 双端共用同一命名空间
 
-message GC2GS_009_001_HeartbeatRequest {
+message GC2GS_001_001_HeartbeatRequest {
   int64 ClientTime = 1;
   int32 SequenceId = 2;
 }
-message GS2GC_009_001_HeartbeatResponse {
+message GS2GC_001_001_HeartbeatResponse {
   int64 ServerTime = 1;
   int32 SequenceId = 2;
 }

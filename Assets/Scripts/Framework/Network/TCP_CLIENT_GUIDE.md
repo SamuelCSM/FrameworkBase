@@ -181,13 +181,13 @@ private void OnReceive(byte[] packet)
         return;
     }
 
-    // 根据主ID和子ID处理
-    if (mainId == MessageModule.Chat && subId == 1)
+    // 根据主ID和子ID处理（业务主号从 002 起，在业务层自建常量表登记，如 GameModule.Chat = 3、GameModule.Login = 2）
+    if (mainId == 3 && subId == 1)
     {
         var chatMsg = ProtobufUtil.Deserialize<GC2GS_003_001_ChatMessage>(payload);
         Debug.Log($"收到聊天消息: {chatMsg.Content}");
     }
-    else if (mainId == MessageModule.Login && subId == 2)
+    else if (mainId == 2 && subId == 1)
     {
         var loginResp = ProtobufUtil.Deserialize<GS2GC_002_001_LoginResponse>(payload);
         Debug.Log($"登录响应: {loginResp.ResultCode}");
@@ -395,7 +395,7 @@ private async UniTask StartHeartbeat()
 
 private void SendHeartbeat()
 {
-    var heartbeat = new GC2GS_009_001_HeartbeatRequest { ClientTime = DateTime.Now.Ticks };
+    var heartbeat = new GC2GS_001_001_HeartbeatRequest { ClientTime = DateTime.Now.Ticks };
     byte[] payload = ProtobufUtil.Serialize(heartbeat);
     byte[] packet = MessagePacket.Pack(heartbeat, payload);
     _client.Send(packet);
