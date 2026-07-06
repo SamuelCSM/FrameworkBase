@@ -110,7 +110,7 @@ finally
 | 移动端 | 双指捏合 | 双指中点拖动 |
 | PC | 滚轮 | 中键拖拽 |
 
-消费示例（Blokus 对局相机见 `BattleCameraGestureController`）：
+消费示例（业务项目的场景相机手势控制器按此模式消费）：
 
 ```csharp
 PinchPanFrame frame = GameEntry.Input.PinchPan;
@@ -130,7 +130,7 @@ if (frame.PanDelta.sqrMagnitude > 0.01f)
 }
 ```
 
-双指手势期间，`IsMultiPointerGestureActive == true`，场景单指交互应让路（Blokus `InputController` 已处理）。
+双指手势期间，`IsMultiPointerGestureActive == true`，场景单指交互应让路（业务侧单指输入控制器须判断此标记并 early return）。
 
 ## 已接入的业务场景
 
@@ -138,9 +138,9 @@ if (frame.PanDelta.sqrMagnitude > 0.01f)
 |------|----------|----------|
 | 启动 Loading | `LaunchLoading` | `LaunchFlow.RunStepsAsync` |
 | 登录鉴权 | `LoginAuthenticating` / `LoginRequest` | `LoginFlow` |
-| 落子提交 | `BattleCommitting` | `BlokusBattlePresentation` |
-| 对局 3D 输入 | 走 `PrimaryPointer` + `Gate` | `InputController` |
-| 对局相机手势 | 走 `PinchPan` | `BattleCameraGestureController` |
+| 业务关键提交（示例） | 自定义屏蔽层（如 `XxxCommitting`） | 业务表现层 |
+| 场景 3D 输入（示例） | 走 `PrimaryPointer` + `Gate` | 业务输入控制器 |
+| 场景相机手势（示例） | 走 `PinchPan` | 业务相机手势控制器 |
 
 ## 新业务接入指南
 
@@ -185,12 +185,11 @@ using (InputBlockScope.Begin("DownloadContent"))
 }
 ```
 
-## Blokus 对局专用说明
+## 业务侧常见可调参数（模式参考）
 
-- `InputView.dragThresholdPixels`：PC 拖拽触发阈值（默认 30px）。
-- `InputView.mobileDragThresholdPixels`：移动端拖拽阈值（默认 44px）。
-- `BattleCameraLayoutSettings.gestureMinZoomScale` / `gestureMaxZoomScale`：手势缩放范围。
-- `BattleCameraRig.ResetUserManipulation()`：重置玩家缩放/平移，恢复基准取景。
+- 拖拽触发阈值：PC 与移动端应分开配置（业务输入 View 上暴露，参考值 30px / 44px）。
+- 手势缩放范围：业务相机配置上暴露 min/max 缩放。
+- 相机复位：业务相机 Rig 提供重置玩家缩放/平移、恢复基准取景的方法。
 
 ## 注意事项
 
@@ -247,5 +246,5 @@ A: 检查 `UIBootstrap` 是否显式配置了全局唯一 `EventSystem`；`Input
 **Q: 双指缩放时误触选块？**  
 A: 单指逻辑需判断 `GameEntry.Input.IsMultiPointerGestureActive` 并 early return。
 
-**Q: 落子提交期间还能拖动棋子？**  
-A: `BlokusBattlePresentation` 在 `BattlePhase.Committing` 时会 Push `BattleCommitting` 屏蔽层；若仍有输入，检查是否绕过了 `InputGate`。
+**Q: 业务关键提交期间仍有输入？**  
+A: 业务表现层应在提交阶段 Push 自己的屏蔽层（如 `XxxCommitting`）；若仍有输入，检查是否绕过了 `InputGate`。

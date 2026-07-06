@@ -61,7 +61,7 @@ namespace Framework.Core
 
         [Header("热更程序集（新项目在此改表，Framework 不写死项目专属程序集名）")]
         [Tooltip("可热更程序集 bytes 文件名，按「依赖在前、被依赖方在后」的加载顺序排列；" +
-                 "留空使用 VersionManager 内置默认（本项目：Blokus.Core → GameProtocol → HotUpdate）")]
+                 "留空使用 VersionManager 内置默认（GameProtocol → HotUpdate）")]
         public string[] HotUpdateAssemblyFiles = System.Array.Empty<string>();
 
         /// <summary>供将来 LS 扩展：若不为空则优先于 GameServerHost（当前未使用）。</summary>

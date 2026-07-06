@@ -327,15 +327,15 @@ namespace Framework.HotUpdate
         /// 加载热更新程序集（IL2CPP 真机由 HybridCLR 接管 Assembly.Load）。
         /// <para>
         /// 多程序集按依赖顺序下发：本方法依次加载 <see cref="VersionManager.HotUpdateAssemblyFileNames"/>
-        /// 列出的每个程序集——先 <c>Blokus.Core.dll.bytes</c>（双端同源规则内核），
-        /// 再 <c>GameProtocol.dll.bytes</c>（项目协议目录），最后 <c>HotUpdate.dll.bytes</c>
-        /// （业务逻辑 + HotfixEntry）。依赖程序集必须先于被依赖方完成 <see cref="Assembly.Load(byte[])"/>，
+        /// 列出的每个程序集——被依赖方在前（如协议目录 <c>GameProtocol.dll.bytes</c>、项目自有的
+        /// 双端同源规则内核等），业务逻辑层 <c>HotUpdate.dll.bytes</c>（含 HotfixEntry）最后。
+        /// 依赖程序集必须先于被依赖方完成 <see cref="Assembly.Load(byte[])"/>，
         /// 否则解释域加载 HotUpdate 时会因找不到依赖而失败。
         /// </para>
         /// <para>
-        /// 同源修复约束：客户端的 Blokus.Core BUG 可经此处下发的 <c>Blokus.Core.dll.bytes</c> 热更补丁修复；
-        /// 但服务端的 Blokus.Core 为<b>原生编译</b>（GameServer 项目引用），无法热更，须「重新编译 + 重新部署 +
-        /// 停服维护重启」。修复后两端必须按版本卡死配对（匹配时校验协议/数据版本一致，见需求 14.6、24.6），
+        /// 双端同源程序集的修复约束：客户端侧 BUG 可经热更补丁下发修复；服务端侧同一程序集通常为
+        /// <b>原生编译</b>（服务器工程直接引用），无法热更，须「重新编译 + 重新部署 + 停服维护重启」。
+        /// 修复后两端必须按版本卡死配对（匹配时校验协议/数据版本一致），
         /// 避免一端已修、另一端未修导致双端裁定分叉。
         /// </para>
         /// </summary>
@@ -373,7 +373,7 @@ namespace Framework.HotUpdate
                 }
 #else
                 // 真机（IL2CPP）：HybridCLR 解释域通过 Assembly.Load 加载热更 DLL，须先完成 LoadMetadataAsync。
-                // 按依赖顺序逐个加载，确保 Blokus.Core 与 GameProtocol 先于引用它们的 HotUpdate 就绪。
+                // 按依赖顺序逐个加载，确保被依赖程序集（协议目录等）先于引用它们的 HotUpdate 就绪。
                 foreach (string bytesFileName in VersionManager.HotUpdateAssemblyFileNames)
                 {
                     string assemblyName = VersionManager.ToAssemblyName(bytesFileName);

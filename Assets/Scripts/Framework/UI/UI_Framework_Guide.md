@@ -824,26 +824,26 @@ Assets/Scripts/HotUpdate/Scene/{模块名}/
     └── {Zzz}Coordinator.cs   ← 阶段辅助类
 ```
 
-示例（Blokus 模块当前结构）：
+示例（以某业务模块 Sample 为例的落位结构）：
 
 ```
-HotUpdate/UI/Blokus/
-├── BattleView.cs, MainHomeView.cs, ... (13 个 View)
-├── BlokusView.cs (View 基类)
-├── BlokusRuntimeData.cs
-├── BlokusUIRegistry.cs
+HotUpdate/UI/Sample/
+├── MainHomeView.cs, SettingsView.cs, ... (业务 View)
+├── SampleView.cs (View 基类)
+├── SampleRuntimeData.cs
+├── SampleUIRegistry.cs
 └── Windows/
-    ├── BlokusWindowBase.cs
-    ├── BattleWindow.cs, MainHomeWindow.cs, ... (16 个窗口)
+    ├── SampleWindowBase.cs
+    ├── MainHomeWindow.cs, SettingsWindow.cs, ... (业务窗口)
 
-HotUpdate/Scene/Blokus/
-├── BlokusBattleSceneContext.cs
-├── Presentation/ (14 个表现层组件)
+HotUpdate/Scene/Sample/
+├── SampleSceneContext.cs
+├── Presentation/ (表现层组件)
 └── Stages/
     ├── MatchingStage.cs
-    ├── BattleStage.cs
+    ├── PlayingStage.cs
     ├── SettlementStage.cs
-    └── BattleReconnectCoordinator.cs
+    └── ReconnectCoordinator.cs
 ```
 
 ## 验证

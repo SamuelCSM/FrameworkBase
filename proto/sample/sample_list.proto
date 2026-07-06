@@ -1,0 +1,13 @@
+syntax = "proto3";
+import "common/common.proto";          // 跨子文件夹引用
+option csharp_namespace = "Game.Protocol";
+
+// 示例模块（主号 010）—— 演示 repeated 消息字段 + 跨文件夹 import。
+// 纯模板示例，业务项目起步时删除本文件并替换为自己的模块协议。
+message GC2GS_010_001_GetSampleItemsRequest {
+  int64 UserId = 1;
+}
+message GS2GC_010_001_GetSampleItemsResponse {
+  int32 ResultCode = 1;
+  repeated CommonItem Items = 2;        // repeated 引用类型消息 —— IL2CPP 安全
+}

@@ -39,10 +39,26 @@ namespace Framework.Editor
         private bool _forceUpdate     = false;  // 是否强制整包更新
 
         // ─── 输出路径 ──────────────────────────────────────────
-        // version.json 写入目录（可在窗口里修改）
-        private string _versionOutputDir = @"D:\IIS\Updates";
-        // bundle 同步到 IIS 的目录（留空则只写 ServerData）
-        private string _bundleOutputDir  = @"D:\IIS\StandaloneWindows64";
+        // 部署目录属机器级配置：默认留空（只写工程内 ServerData），路径存 EditorPrefs 不进仓库。
+        private const string VersionOutputDirPrefsKey = "FrameworkBase.HotUpdatePublisher.VersionOutputDir";
+        private const string BundleOutputDirPrefsKey  = "FrameworkBase.HotUpdatePublisher.BundleOutputDir";
+
+        // version.json 写入目录（可在窗口里修改；留空则只写 ServerData）
+        private string _versionOutputDir = string.Empty;
+        // bundle 同步目录（留空则只写 ServerData）
+        private string _bundleOutputDir  = string.Empty;
+
+        private void OnEnable()
+        {
+            _versionOutputDir = EditorPrefs.GetString(VersionOutputDirPrefsKey, _versionOutputDir);
+            _bundleOutputDir  = EditorPrefs.GetString(BundleOutputDirPrefsKey,  _bundleOutputDir);
+        }
+
+        private void OnDisable()
+        {
+            EditorPrefs.SetString(VersionOutputDirPrefsKey, _versionOutputDir ?? string.Empty);
+            EditorPrefs.SetString(BundleOutputDirPrefsKey,  _bundleOutputDir ?? string.Empty);
+        }
 
         // ─── 内部状态 ──────────────────────────────────────────
         private string _log = "";

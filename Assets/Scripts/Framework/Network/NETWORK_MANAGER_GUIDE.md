@@ -87,7 +87,7 @@ sub.Unsubscribe();
 #### UI 窗口中推荐用 ListenMessage（自动释放）
 
 ```csharp
-public class BattleWindow : BlokusWindowBase<BattleView>
+public class BattleWindow : UIBase<BattleView>
 {
     protected override void OnOpen(object userData)
     {

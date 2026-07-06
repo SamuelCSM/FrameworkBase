@@ -2,13 +2,13 @@
 #pragma warning disable
 namespace Game.Protocol
 {
-    public sealed partial class GC2GS_010_001_GetInventoryRequest : Framework.Network.IRequest<GS2GC_010_001_GetInventoryResponse>
+    public sealed partial class GC2GS_010_001_GetSampleItemsRequest : Framework.Network.IRequest<GS2GC_010_001_GetSampleItemsResponse>
     {
         public byte GetMainId() => 10;
         public byte GetSubId() => 1;
     }
 
-    public sealed partial class GS2GC_010_001_GetInventoryResponse : Framework.Network.IResponse
+    public sealed partial class GS2GC_010_001_GetSampleItemsResponse : Framework.Network.IResponse
     {
         public byte GetMainId() => 10;
         public byte GetSubId() => 1;
