@@ -306,8 +306,12 @@ namespace Framework.Editor
 
             string json = BuildVersionJson(snapshot);
 
+            // ServerData 侧清单会被部署到更新服务器，签名伴生下发；
+            // StreamingAssets 侧仅作为出厂版本随包内置，客户端不对其验签，无需签名。
             Directory.CreateDirectory(ServerDataDir);
-            File.WriteAllText(Path.Combine(ServerDataDir, "version.json"), json, Encoding.UTF8);
+            string serverDataManifest = Path.Combine(ServerDataDir, "version.json");
+            File.WriteAllText(serverDataManifest, json, Encoding.UTF8);
+            UpdateManifestSigner.SignManifestForPublish(serverDataManifest, AppendLog);
 
             string streamingDir = Path.Combine(Application.dataPath, "StreamingAssets");
             Directory.CreateDirectory(streamingDir);

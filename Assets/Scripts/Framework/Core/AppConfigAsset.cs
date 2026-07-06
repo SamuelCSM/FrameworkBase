@@ -16,8 +16,14 @@ namespace Framework.Core
         public string AppEnv = "dev";
 
         [Header("热更 HTTP")]
-        [Tooltip("version.json 与热更程序集组根 URL；留空跳过热更检查")]
+        [Tooltip("version.json 与热更程序集组根 URL；留空跳过热更检查。AppEnv=prod 时必须为 HTTPS，否则运行时拒绝热更")]
         public string UpdateServerUrl = "http://127.0.0.1:80/Updates";
+
+        [Tooltip("热更清单（version.json）验签公钥，.NET RSA XML 格式（<RSAKeyValue>…）。" +
+                 "非空时强制校验 version.json.sig 签名，验签失败拒绝本次热更；留空跳过验签（仅限开发期）。" +
+                 "密钥对经菜单 Framework → Hot Update Security → Generate Signing Key Pair 生成，私钥保存在工程外供发布工具使用")]
+        [TextArea(3, 8)]
+        public string UpdateManifestPublicKey = string.Empty;
 
         [Header("游戏服 TCP（当前 GS 一体登录）")]
         [Tooltip("勾选后 Login 走 NetworkAuthBackend；未勾选则使用 MockAuthBackend")]

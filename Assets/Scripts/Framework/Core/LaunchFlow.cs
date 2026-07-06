@@ -258,19 +258,37 @@ namespace Framework.Core
         // ── 工具方法 ──────────────────────────────────────────────────────────
 
         /// <summary>
-        /// 获取热更服务器根 URL。
+        /// 获取热更服务器根 URL（经 <see cref="HotUpdate.UpdateSecurity"/> 准入校验）。
         /// 读取顺序：
         ///   1. Resources/AppConfig.asset → UpdateServerUrl 字段
-        ///   2. PlayerPrefs "UpdateServerUrl"（方便运行时覆盖，用于测试）
+        ///   2. PlayerPrefs "UpdateServerUrl" —— 仅 Editor / Development Build 生效。
+        ///      正式包封死该覆盖口：热更 DLL 是远程代码执行通道，release 包若允许 PlayerPrefs
+        ///      重定向更新服务器，等于把补丁来源交给任何能改本地存储的攻击者。
         ///   3. 返回空字符串（跳过热更检查）
+        /// 准入规则：prod 环境强制 HTTPS，违规 URL 拒绝使用（记 Error 并跳过热更，
+        /// 避免"配置错误 → 明文拉 DLL"静默发生；配置错误应在发布前被构建校验拦截）。
         /// </summary>
         private static string GetUpdateServerUrl()
         {
             var config = AppConfig.Load();
-            if (config != null && !string.IsNullOrEmpty(config.UpdateServerUrl))
-                return config.UpdateServerUrl;
+            string url = config != null ? config.UpdateServerUrl : string.Empty;
 
-            return PlayerPrefs.GetString("UpdateServerUrl", string.Empty);
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+            if (string.IsNullOrEmpty(url))
+                url = PlayerPrefs.GetString("UpdateServerUrl", string.Empty);
+#endif
+
+            if (string.IsNullOrEmpty(url))
+                return string.Empty;
+
+            string appEnv = config != null ? config.AppEnv : string.Empty;
+            if (!HotUpdate.UpdateSecurity.ValidateUpdateServerUrl(url, appEnv, out string reason))
+            {
+                Debug.LogError($"[LaunchFlow] 更新服务器 URL 未通过安全准入，本次跳过热更: {reason}");
+                return string.Empty;
+            }
+
+            return url;
         }
 
         /// <summary>

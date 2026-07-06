@@ -86,7 +86,16 @@ namespace Framework.HotUpdate
                     OnUpdateError?.Invoke("下载版本文件失败");
                     return null;
                 }
-                
+
+                // 清单验签：AppConfig 配置了公钥即强制校验 version.json.sig。
+                // 验签失败按"清单不可信"处理——本次不做任何热更（宁可停更，不执行可疑补丁）。
+                if (!await VerifyManifestSignatureAsync(updateUrl, tempPath))
+                {
+                    _state = UpdateState.Error;
+                    OnUpdateError?.Invoke("版本清单签名校验失败");
+                    return null;
+                }
+
                 // 解析版本信息
                 string json = File.ReadAllText(tempPath);
                 UpdateInfo serverVersion = JsonUtility.FromJson<UpdateInfo>(json);
@@ -134,7 +143,50 @@ namespace Framework.HotUpdate
         }
         
         /// <summary>
-        /// 按 CodeVersion 下载代码热更补丁（支持 PatchFiles 为空时按约定 URL 补全）。
+        /// 校验已下载清单的 RSA 签名。
+        /// AppConfig.UpdateManifestPublicKey 为空时跳过（开发期）；非空时下载伴生 version.json.sig
+        /// 并对清单原始字节验签，签名缺失或不匹配一律判失败。
+        /// </summary>
+        /// <param name="updateUrl">更新服务器根 URL。</param>
+        /// <param name="manifestPath">已下载到本地的 version.json 路径。</param>
+        /// <returns>验签通过（或未启用验签）返回 true。</returns>
+        private async UniTask<bool> VerifyManifestSignatureAsync(string updateUrl, string manifestPath)
+        {
+            string publicKeyPem = AppConfig.Load()?.UpdateManifestPublicKey;
+            if (string.IsNullOrWhiteSpace(publicKeyPem))
+            {
+                if (UpdateSecurity.IsProductionEnv(AppConfig.Load()?.AppEnv))
+                    GameLog.Warning("[HotUpdateManager] 生产环境未配置清单验签公钥（UpdateManifestPublicKey），" +
+                                    "热更清单处于无签名保护状态，正式发布前必须补齐");
+                return true;
+            }
+
+            string signatureUrl = $"{updateUrl}/version.json{UpdateSecurity.ManifestSignatureSuffix}";
+            string signaturePath = Path.Combine(Application.temporaryCachePath, "version_temp.json.sig");
+
+            bool signatureDownloaded = await _patchDownloader.DownloadFileAsync(
+                signatureUrl, signaturePath, forceRefresh: true);
+            if (!signatureDownloaded)
+            {
+                GameLog.Error("[HotUpdateManager] 已启用清单验签但下载 version.json.sig 失败，按验签失败处理");
+                return false;
+            }
+
+            byte[] manifestBytes = File.ReadAllBytes(manifestPath);
+            string signatureBase64 = File.ReadAllText(signaturePath);
+
+            if (!UpdateSecurity.VerifyManifestSignature(manifestBytes, signatureBase64, publicKeyPem))
+            {
+                GameLog.Error("[HotUpdateManager] version.json 签名校验失败，清单不可信，本次热更中止");
+                return false;
+            }
+
+            GameLog.Log("[HotUpdateManager] version.json 签名校验通过");
+            return true;
+        }
+
+        /// <summary>
+        /// 按 CodeVersion 下载代码热更补丁（PatchFiles 必须由服务端清单提供且逐项带 MD5）。
         /// </summary>
         public async UniTask<bool> DownloadCodePatchAsync(
             UpdateInfo serverVersion,
@@ -209,21 +261,31 @@ namespace Framework.HotUpdate
                         return false;
                     }
 
-                    // 服务端未提供 MD5 时跳过校验（约定 URL 补全场景）。
-                    if (!string.IsNullOrEmpty(patchFile.MD5))
+                    // 补丁哈希为强制项：清单缺 MD5 在 TryResolveCodePatchFiles 已被拒绝，
+                    // 此处兜底再拦一次（其它调用方直接传入清单时同样不允许旁路校验）。
+                    if (string.IsNullOrWhiteSpace(patchFile.MD5))
                     {
-                        bool verified = await _fileVerifier.VerifyFileAsync(savePath, patchFile.MD5);
-                        if (!verified)
-                        {
-                            GameLog.Error($"[HotUpdateManager] 文件校验失败: {patchFile.FileName}");
+                        GameLog.Error($"[HotUpdateManager] 补丁 {patchFile.FileName} 未携带 MD5，拒绝安装（代码补丁禁止无校验下发）");
 
-                            if (File.Exists(savePath))
-                                File.Delete(savePath);
+                        if (File.Exists(savePath))
+                            File.Delete(savePath);
 
-                            _state = UpdateState.Error;
-                            OnUpdateError?.Invoke($"文件校验失败: {patchFile.FileName}");
-                            return false;
-                        }
+                        _state = UpdateState.Error;
+                        OnUpdateError?.Invoke($"补丁缺少校验哈希: {patchFile.FileName}");
+                        return false;
+                    }
+
+                    bool verified = await _fileVerifier.VerifyFileAsync(savePath, patchFile.MD5);
+                    if (!verified)
+                    {
+                        GameLog.Error($"[HotUpdateManager] 文件校验失败: {patchFile.FileName}");
+
+                        if (File.Exists(savePath))
+                            File.Delete(savePath);
+
+                        _state = UpdateState.Error;
+                        OnUpdateError?.Invoke($"文件校验失败: {patchFile.FileName}");
+                        return false;
                     }
 
                     downloadedSize += patchFile.Size > 0 ? patchFile.Size : 0;

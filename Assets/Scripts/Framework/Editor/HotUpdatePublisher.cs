@@ -315,19 +315,20 @@ namespace Framework.Editor
                 string json = BuildVersionJson(
                     newResource, newCode, dllArtifacts);
 
-                // 写入 ServerData/Updates
+                // 写入 ServerData/Updates（并生成伴生签名 version.json.sig）
                 Directory.CreateDirectory(ServerDataDir);
-                File.WriteAllText(Path.Combine(ServerDataDir, "version.json"),
-                    json, System.Text.Encoding.UTF8);
+                string serverDataManifest = Path.Combine(ServerDataDir, "version.json");
+                File.WriteAllText(serverDataManifest, json, System.Text.Encoding.UTF8);
+                UpdateManifestSigner.SignManifestForPublish(serverDataManifest, AppendLog);
                 AppendLog($"      写入 → {ServerDataDir}");
 
                 // 写入 IIS 输出目录
                 if (!string.IsNullOrEmpty(_versionOutputDir))
                 {
                     Directory.CreateDirectory(_versionOutputDir);
-                    File.WriteAllText(
-                        Path.Combine(_versionOutputDir, "version.json"),
-                        json, System.Text.Encoding.UTF8);
+                    string outputManifest = Path.Combine(_versionOutputDir, "version.json");
+                    File.WriteAllText(outputManifest, json, System.Text.Encoding.UTF8);
+                    UpdateManifestSigner.SignManifestForPublish(outputManifest, AppendLog);
                     AppendLog($"      写入 → {_versionOutputDir}");
                 }
 

@@ -169,13 +169,13 @@ namespace Framework.HotUpdate
         }
 
         /// <summary>
-        /// 解析代码热更补丁列表：优先使用服务端 PatchFiles（可包含多个 DLL，逐文件带 Size/MD5 校验）；
-        /// CodeVersion 已变更但列表为空时，按 UpdateServerUrl 约定路径补全<b>全部</b>可热更程序集 DLL
-        /// （<see cref="HotUpdateAssemblyFileNames"/>）。
+        /// 解析代码热更补丁列表：只接受服务端清单 PatchFiles（可包含多个 DLL），且逐项必须携带
+        /// FileName / Url / 非空 MD5（<see cref="UpdateSecurity.ValidateCodePatchFile"/>）。
         /// <para>
-        /// 多文件支持要点：服务端清单（version.json 的 <c>PatchFiles</c>）可下发多个 DLL；下载侧会对每个
-        /// 文件按其 Size 计权进度、按其 MD5 逐个校验（见 HotUpdateManager.DownloadPatchAsync）。约定补全分支
-        /// 不带 MD5（留空表示跳过校验），仅用于服务端未提供清单时的兜底。
+        /// 安全约束：代码补丁（DLL）是远程代码执行通道，其完整性锚点是（已验签的）清单里的 MD5。
+        /// 因此 CodeVersion 已变更但清单为空 / 补丁缺 MD5 时<b>拒绝更新</b>，不再按约定 URL 补全
+        /// 无校验补丁——发布工具（HotUpdatePublisher）生成的 version.json 天然带全量哈希，
+        /// 手写清单必须补齐 PatchFiles 才能下发代码热更。
         /// </para>
         /// </summary>
         public static bool TryResolveCodePatchFiles(
@@ -185,35 +185,23 @@ namespace Framework.HotUpdate
         {
             patchFiles = null;
 
-            if (serverVersion?.PatchFiles != null && serverVersion.PatchFiles.Count > 0)
+            if (serverVersion?.PatchFiles == null || serverVersion.PatchFiles.Count == 0)
             {
-                // 服务端清单可包含多个 DLL（如 GameProtocol.dll.bytes + HotUpdate.dll.bytes），原样透传，
-                // 由下载侧逐文件按 Size/MD5 校验。
-                patchFiles = serverVersion.PatchFiles;
-                return true;
-            }
-
-            if (string.IsNullOrEmpty(updateServerUrl))
-            {
-                GameLog.Warning("[VersionManager] CodeVersion 已变更但 UpdateServerUrl 为空，无法补全补丁 URL");
+                GameLog.Error("[VersionManager] CodeVersion 已变更但服务端清单未提供 PatchFiles，" +
+                              "拒绝代码热更（禁止按约定 URL 下发无校验 DLL，请用发布工具生成带 MD5 的 version.json）");
                 return false;
             }
 
-            string baseUrl = updateServerUrl.TrimEnd('/');
-            patchFiles = new List<PatchFile>(HotUpdateAssemblyFileNames.Length);
-            foreach (string fileName in HotUpdateAssemblyFileNames)
+            foreach (PatchFile patch in serverVersion.PatchFiles)
             {
-                patchFiles.Add(new PatchFile
+                if (!UpdateSecurity.ValidateCodePatchFile(patch, out string reason))
                 {
-                    FileName = fileName,
-                    Url      = $"{baseUrl}/{fileName}",
-                    Size     = 0,
-                    MD5      = string.Empty
-                });
+                    GameLog.Error($"[VersionManager] 补丁清单未通过安全准入，拒绝代码热更: {reason}");
+                    return false;
+                }
             }
 
-            GameLog.Log($"[VersionManager] PatchFiles 为空，已按约定补全 {patchFiles.Count} 个热更程序集: " +
-                       $"{string.Join(", ", patchFiles.ConvertAll(p => p.FileName))}");
+            patchFiles = serverVersion.PatchFiles;
             return true;
         }
         
