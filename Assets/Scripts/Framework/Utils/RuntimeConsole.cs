@@ -39,6 +39,12 @@ namespace Framework
 
         private int _logCount, _warnCount, _errorCount;
 
+        // ── FPS / 内存采样（每 0.5s 刷新一次显示，避免数字抖动）──
+        private float _fpsTimer;
+        private int _fpsFrames;
+        private float _fps;
+        private long _managedMemoryMb;
+
         private struct LogEntry
         {
             public string Message;
@@ -90,6 +96,17 @@ namespace Framework
             // PC：Tab 键切换显示/隐藏
             if (UnityEngine.Input.GetKeyDown(KeyCode.Tab))
                 _visible = !_visible;
+
+            // FPS 采样（unscaled，暂停/慢动作时仍反映真实渲染帧率）
+            _fpsTimer += Time.unscaledDeltaTime;
+            _fpsFrames++;
+            if (_fpsTimer >= 0.5f)
+            {
+                _fps = _fpsFrames / _fpsTimer;
+                _managedMemoryMb = System.GC.GetTotalMemory(false) / (1024 * 1024);
+                _fpsTimer = 0f;
+                _fpsFrames = 0;
+            }
         }
 
         private void BuildStyles()
@@ -139,8 +156,8 @@ namespace Framework
         private void DrawToggleButton()
         {
             string label = _errorCount > 0
-                ? $"<color=#ff5555>E:{_errorCount}</color> W:{_warnCount} L:{_logCount}"
-                : $"W:{_warnCount} L:{_logCount}";
+                ? $"{_fps:0}fps <color=#ff5555>E:{_errorCount}</color> W:{_warnCount} L:{_logCount}"
+                : $"{_fps:0}fps W:{_warnCount} L:{_logCount}";
 
             GUIStyle btnStyle = new GUIStyle(GUI.skin.button)
             {
@@ -149,7 +166,7 @@ namespace Framework
                 alignment = TextAnchor.MiddleCenter
             };
 
-            float bw = 160, bh = 36;
+            float bw = 220, bh = 36; // 加入 FPS 显示后加宽，避免文字截断
             if (GUI.Button(new Rect(Screen.width - bw - 6, 6, bw, bh), label, btnStyle))
                 _visible = !_visible;
         }
@@ -159,7 +176,7 @@ namespace Framework
             // 标题行：统计 + 清除按钮
             GUILayout.BeginHorizontal();
             GUILayout.Label(
-                $"<b>RuntimeConsole</b>  Log:{_logCount}  Warn:{_warnCount}  Error:{_errorCount}  [Tab 显/隐]",
+                $"<b>RuntimeConsole</b>  FPS:{_fps:0}  Mem:{_managedMemoryMb}MB  Log:{_logCount}  Warn:{_warnCount}  Error:{_errorCount}  [Tab 显/隐]",
                 new GUIStyle(GUI.skin.label) { fontSize = fontSize - 2, richText = true, normal = { textColor = Color.cyan } });
             GUILayout.FlexibleSpace();
             if (GUILayout.Button("Clear", GUILayout.Width(60), GUILayout.Height(28)))

@@ -123,6 +123,15 @@ namespace Framework
         /// <summary>心跳工厂缺失告警去重标记，避免每个心跳周期刷屏。</summary>
         private bool _heartbeatFactoryMissingWarned;
 
+        /// <summary>
+        /// 心跳响应解析器（由业务层组合根注入）：入参为响应 payload，返回其中的服务端毫秒时间戳。
+        /// 注入后框架自动把每次心跳往返喂给 <see cref="ServerTime"/> 完成服务器校时；未注入时跳过校时。
+        /// </summary>
+        private Func<byte[], long> _heartbeatResponseParser;
+
+        /// <summary>最近一次心跳请求发出时的本地毫秒时间戳；0 表示当前没有等待配对的心跳（防迟到/重复响应污染采样）。</summary>
+        private long _lastHeartbeatSentLocalMs;
+
         // ── 属性 ─────────────────────────────────────────────────────────────
         public bool IsConnected    => _client != null && _client.IsConnected;
         public bool IsReconnecting => _isReconnecting;
@@ -464,6 +473,16 @@ namespace Framework
             _heartbeatMessageFactory = factory;
         }
 
+        /// <summary>
+        /// 注入心跳响应解析器，开启服务器校时。入参为心跳响应的 payload 字节，返回其中携带的
+        /// 服务端毫秒时间戳（无效时返回 0）。注入后框架在每次心跳往返时自动更新 <see cref="ServerTime"/>。
+        /// </summary>
+        /// <param name="parser">心跳响应解析器；传 null 关闭校时。</param>
+        public void SetHeartbeatResponseParser(Func<byte[], long> parser)
+        {
+            _heartbeatResponseParser = parser;
+        }
+
         public void SetMaxReconnectAttempts(int max)
         {
             if (max >= 0) _maxReconnectAttempts = max;
@@ -703,6 +722,8 @@ namespace Framework
         {
             if (IsHeartbeatMessage(mainId, subId))
             {
+                // 收方向的心跳一定是响应（请求只有上行）：先取服务端时间做校时采样，再消费掉不下发业务
+                HandleHeartbeatTimeSample(payload);
                 return true;
             }
 
@@ -715,6 +736,35 @@ namespace Framework
             }
 
             return TryInterceptNetworkError(mainId, subId, seqId, payload);
+        }
+
+        /// <summary>
+        /// 用一次心跳往返更新服务器校时。解析器未注入或当前没有等待配对的心跳时跳过；
+        /// 解析器是业务注入代码，任何异常都记录后跳过本次采样，不影响心跳保活本身。
+        /// </summary>
+        /// <param name="payload">心跳响应的消息体字节。</param>
+        private void HandleHeartbeatTimeSample(byte[] payload)
+        {
+            if (_heartbeatResponseParser == null || _lastHeartbeatSentLocalMs <= 0)
+            {
+                return;
+            }
+
+            long sentLocalMs = _lastHeartbeatSentLocalMs;
+            _lastHeartbeatSentLocalMs = 0; // 一次发送只配对一次采样，迟到/重复响应不再计入
+
+            try
+            {
+                long serverTimeMs = _heartbeatResponseParser(payload);
+                if (serverTimeMs > 0)
+                {
+                    ServerTime.AddSample(serverTimeMs, sentLocalMs, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+                }
+            }
+            catch (Exception ex)
+            {
+                GameLog.Warning($"[NetworkManager] 心跳响应解析失败，跳过本次校时采样: {ex.Message}");
+            }
         }
 
         /// <summary>
@@ -835,6 +885,7 @@ namespace Framework
 
                 long clientTime = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
                 INetMessage request = _heartbeatMessageFactory(clientTime, ++_heartbeatSequenceId);
+                _lastHeartbeatSentLocalMs = clientTime; // 供响应到达时做服务器校时采样配对
 
                 byte[] payload = ProtobufUtil.Serialize(request);
                 byte[] packet = MessagePacket.Pack(request, payload);

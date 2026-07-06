@@ -8,6 +8,9 @@ namespace Framework
     {
         // ==================== Framework 系统消息：9000-9999 ====================
 
+        /// <summary>系统低内存警告（Application.lowMemory），无参数；订阅方应清空可重建缓存。</summary>
+        LowMemoryWarning = 9004,
+
         /// <summary>语言切换，参数：string language。</summary>
         LanguageChanged = 9005,
 
@@ -22,25 +25,8 @@ namespace Framework
         /// <summary>玩家登出。</summary>
         PlayerLogout = 10003,
 
-        /// <summary>玩家档案刷新，参数：PlayerProfileData profile。</summary>
-        PlayerProfileChanged = 10004,
-
-        // ==================== Blokus 消息：20000-20999 ====================
-        // 后续 Blokus 业务广播从这里开始追加，例如 RoomUpdated、MatchStateChanged。
-
-        /// <summary>好友列表数据变化（全量刷新或在线态变更），无参数；订阅方从 BlokusRuntime.Social.Friends 读取最新缓存。</summary>
-        FriendListChanged = 20001,
-
-        /// <summary>待处理好友申请变化（收到新申请或处理完毕），无参数；订阅方从 BlokusRuntime.Social.FriendRequests 读取最新缓存。</summary>
-        FriendRequestsChanged = 20002,
-
-        /// <summary>好友房间状态变化（建房/加入/席位/就绪/模式/房主变更），无参数；订阅方从 BlokusRuntime.Room.State 读取最新快照。</summary>
-        RoomStateChanged = 20003,
-
-        /// <summary>个人对局积分结算到达（服务端 002_007 推送），无参数；订阅方从 BlokusRuntime.Player.LatestRatingSettlement 读取最新结果。</summary>
-        BattleRatingSettled = 20004,
-
-        /// <summary>私聊会话列表变化（会话新增/最后一条更新/未读增减），无参数；订阅方从 BlokusRuntime.Chat.Conversations 读取最新缓存（会话列表与红点）。</summary>
-        ChatConversationsChanged = 20005,
+        // ==================== 业务消息：20000 起 ====================
+        // 业务项目在此从 20000 开始追加自己的广播消息占号（建议按模块划分号段），
+        // 框架层不使用该区间，占号统一登记在本枚举避免模块间冲突。
     }
 }

@@ -63,5 +63,14 @@ namespace Framework.Core
         public virtual void OnApplicationFocus(bool hasFocus)
         {
         }
+
+        /// <summary>
+        /// 系统低内存警告（在GameEntry挂接的 Application.lowMemory 中调用）
+        /// 场景：移动端内存吃紧，系统即将开始杀进程
+        /// 典型用途：清空对象池、丢弃可重建缓存（图集/配置缓存等）
+        /// </summary>
+        public virtual void OnLowMemory()
+        {
+        }
     }
 }

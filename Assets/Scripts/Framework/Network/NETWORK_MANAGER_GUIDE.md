@@ -137,6 +137,24 @@ GameEntry.Network.SetGlobalErrorInterceptor(code =>
 
 `IRequest<TResp>` 和 `IResponse` 由代码生成器自动生成（客户端目标）。请求与响应按约定匹配：同 MainId + SubId 的上行请求与下行响应。
 
+## 服务器校时（ServerTime）
+
+心跳响应携带服务端时间戳时，注入解析器即可开启自动校时（RTT/2 补偿 + 劣化样本过滤）：
+
+```csharp
+// 组合根启动时注入（与 SetHeartbeatProvider 对称）
+GameEntry.Network.SetHeartbeatProvider((clientTime, seq) =>
+    new GC2GS_009_001_HeartbeatRequest { ClientTime = clientTime, SequenceId = seq });
+GameEntry.Network.SetHeartbeatResponseParser(payload =>
+    ProtobufUtil.Deserialize<GS2GC_009_001_HeartbeatResponse>(payload).ServerTime);
+
+// 之后任意处读取服务端时间（倒计时、每日重置等一律用它，不用本地时间）
+long nowMs = ServerTime.NowMs;          // 未同步时回退本地 UTC
+bool synced = ServerTime.IsSynchronized;
+```
+
+断线不清除偏移；切换服务器/环境时调用 `ServerTime.Reset()`。
+
 ## 配置
 
 ```csharp

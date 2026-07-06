@@ -44,6 +44,13 @@ namespace Framework.Core
         /// <summary>控制心跳协议是否参与协议日志打印，默认关闭以避免控制台刷屏。</summary>
         [SerializeField] private bool _enableHeartbeatProtocolLog = false;
 
+        /// <summary>目标帧率。移动端 Unity 默认 30fps，必须显式设置；0 或负值表示不干预（保持平台默认）。</summary>
+        [Header("应用性能")]
+        [SerializeField] private int _targetFrameRate = 60;
+
+        /// <summary>是否禁止屏幕自动休眠。联机对局中等待对手时通常无输入，不设会锁屏断线。</summary>
+        [SerializeField] private bool _neverSleep = true;
+
         // ── Manager 静态访问点 ────────────────────────────────────────────────
 
         /// <summary>资源管理器 — Addressables 加载、实例化、释放</summary>
@@ -100,8 +107,46 @@ namespace Framework.Core
 #endif
 
             Debug.Log("[GameEntry] 开始初始化框架...");
+            ApplyPerformanceSettings();
             InitializeManagers();
+            Application.lowMemory += HandleLowMemory;
             Debug.Log("[GameEntry] 框架初始化完成");
+        }
+
+        /// <summary>
+        /// 应用 Inspector 配置的帧率与休眠策略。vSync 开启时 targetFrameRate 不生效，
+        /// 因此设置帧率前显式关闭 vSync（移动端本就忽略 vSync，PC 上以配置帧率为准）。
+        /// </summary>
+        private void ApplyPerformanceSettings()
+        {
+            if (_targetFrameRate > 0)
+            {
+                QualitySettings.vSyncCount = 0;
+                Application.targetFrameRate = _targetFrameRate;
+            }
+
+            if (_neverSleep)
+            {
+                Screen.sleepTimeout = SleepTimeout.NeverSleep;
+            }
+        }
+
+        /// <summary>
+        /// 系统低内存回调：先让各框架组件清理自持缓存（对象池等），再广播事件让业务层跟进，
+        /// 最后卸载未引用资产。异步卸载可能引起短暂卡顿，但低内存时避免被系统杀进程优先。
+        /// </summary>
+        private void HandleLowMemory()
+        {
+            Debug.LogWarning("[GameEntry] 收到系统低内存警告，开始释放可重建缓存");
+
+            for (int i = 0; i < _components.Count; i++)
+            {
+                try { _components[i].OnLowMemory(); }
+                catch (Exception ex) { LogComponentError("OnLowMemory", _components[i], ex); }
+            }
+
+            Event?.Publish(GameMessage.LowMemoryWarning);
+            Resources.UnloadUnusedAssets();
         }
 
         /// <summary>
@@ -285,6 +330,8 @@ namespace Framework.Core
         protected override void OnApplicationQuit()
         {
             Debug.Log("[GameEntry] 开始清理框架...");
+
+            Application.lowMemory -= HandleLowMemory;
 
             // 反向顺序关闭所有组件；逐个 try/catch 隔离，确保某组件清理异常不影响其余组件关闭
             for (int i = _components.Count - 1; i >= 0; i--)
