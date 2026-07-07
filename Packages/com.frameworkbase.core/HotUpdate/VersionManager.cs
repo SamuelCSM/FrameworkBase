@@ -156,6 +156,25 @@ namespace Framework.HotUpdate
             return UpdateType.None;
         }
 
+        /// <summary>
+        /// 灰度放量判定：服务端 version.json 携带 GrayPercent（1~99）时，仅命中分桶的设备
+        /// 应用本次更新，其余设备视为无更新（服务端上调百分比后自动纳入）。
+        /// 分桶盐含目标版本号：每次新发布重新洗牌，避免同一批设备永远当小白鼠；
+        /// 同一发布内放量从 5% 上调到 50% 时，前 5% 的设备保持命中（桶号 &lt; 百分比单调扩大）。
+        /// </summary>
+        public static bool IsDeviceInGrayRollout(UpdateInfo serverVersion, string deviceId)
+        {
+            if (serverVersion == null)
+                return true;
+
+            int percent = serverVersion.GrayPercent;
+            if (percent <= 0 || percent >= 100)
+                return true;
+
+            string salt = $"{deviceId}:{serverVersion.AppVersion}:{serverVersion.ResourceVersion}:{serverVersion.CodeVersion}:gray";
+            return StableHash.Bucket(salt) < percent;
+        }
+
         /// <summary>是否需要下载代码热更（以 CodeVersion 为准，不依赖 PatchFiles 是否为空）。</summary>
         public static bool ShouldUpdateCode(UpdateInfo serverVersion, UpdateInfo localVersion)
         {

@@ -53,6 +53,13 @@ namespace Framework.HotUpdate
         /// 整包更新下载链接（仅 FullUpdate 时有效，指向应用商店或安装包地址）
         /// </summary>
         public string UpdateUrl;
+
+        /// <summary>
+        /// 灰度放量百分比：0（缺省）与 ≥100 表示全量下发；1~99 表示仅命中分桶的设备
+        /// 应用本次更新，其余设备按"无更新"继续（放量上调后自动纳入）。
+        /// 命中判定见 <see cref="VersionManager.IsDeviceInGrayRollout"/>。
+        /// </summary>
+        public int GrayPercent;
     }
     
     /// <summary>

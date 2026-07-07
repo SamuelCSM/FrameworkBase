@@ -87,6 +87,11 @@ namespace Framework.Core
             Debug.Log("[LaunchFlow] ========== 游戏启动流程开始 ==========");
             var runMetric = LaunchTelemetryHelper.BeginRunMetric();
 
+            // 远程配置与启动序列并行拉取：不阻塞启动、失败静默沿用磁盘缓存/代码默认值
+            // （FetchAndActivateAsync 自带重入保护，重试循环再次进入本方法不会重复拉取）。
+            // 需要硬门控的业务（开关决定登录后流程）自行 await GameEntry.RemoteConfig.FetchAndActivateAsync()。
+            GameEntry.RemoteConfig?.FetchAndActivateAsync().Forget();
+
             using (InputBlockScope.Begin("LaunchLoading"))
             {
             try
@@ -135,7 +140,20 @@ namespace Framework.Core
                         Debug.Log($"[LaunchFlow] Step 3  Server: App={serverVersion.AppVersion} " +
                                   $"Resource={serverVersion.ResourceVersion} Type={serverVersion.Type}");
                 }
-                LaunchTelemetryHelper.EndPhaseMetric(step3, true, serverVersion == null ? "server_version=null" : $"server_app={serverVersion.AppVersion},server_res={serverVersion.ResourceVersion},type={serverVersion.Type}");
+                // 灰度放量闸门：version.json 携带 GrayPercent 且本机未命中分桶时，按"无更新"继续
+                // （version.json 已经过验签，灰度字段可信；放量上调后本机自动纳入）。
+                bool grayMiss = false;
+                if (serverVersion != null &&
+                    !HotUpdate.VersionManager.IsDeviceInGrayRollout(serverVersion, SystemInfo.deviceUniqueIdentifier))
+                {
+                    Debug.Log($"[LaunchFlow] Step 3  灰度放量 {serverVersion.GrayPercent}% 未命中本机，按无更新继续");
+                    grayMiss = true;
+                    serverVersion = null;
+                }
+
+                LaunchTelemetryHelper.EndPhaseMetric(step3, true, serverVersion == null
+                    ? (grayMiss ? "gray_miss=true" : "server_version=null")
+                    : $"server_app={serverVersion.AppVersion},server_res={serverVersion.ResourceVersion},type={serverVersion.Type},gray={serverVersion.GrayPercent}");
 
                 // ── Step 4: 资源热更 ──────────────────────────────
                 var step4 = LaunchTelemetryHelper.BeginPhaseMetric(runMetric, LaunchPhase.ResourceUpdate, "step04_resource_update");

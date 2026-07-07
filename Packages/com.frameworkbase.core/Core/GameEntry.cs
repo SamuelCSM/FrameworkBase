@@ -100,6 +100,9 @@ namespace Framework.Core
         /// <summary>埋点管理器 — 事件缓冲/批量上报/断电落盘（后端可注入，默认按 AppConfig.AnalyticsUrl）。</summary>
         public static Framework.Analytics.AnalyticsManager Analytics { get; private set; }
 
+        /// <summary>远程配置管理器 — 键值配置/功能开关/灰度放量（磁盘缓存 last-known-good，后端可注入）。</summary>
+        public static Framework.RemoteConfig.RemoteConfigManager RemoteConfig { get; private set; }
+
         // ── 生命周期 ─────────────────────────────────────────────────────────
 
         protected override void Awake()
@@ -222,6 +225,9 @@ namespace Framework.Core
 
             // 埋点管道紧随其后：LaunchFlow 的启动阶段指标依赖它上报。
             Analytics = AddComponent<Framework.Analytics.AnalyticsManager>();
+
+            // 远程配置紧随埋点：磁盘缓存值启动早期即可读，拉取由 LaunchFlow 并行发起。
+            RemoteConfig = AddComponent<Framework.RemoteConfig.RemoteConfigManager>();
 
             UI = AddComponent<UIManager>();
             UI.SetBootstrap(_uiBootstrap);

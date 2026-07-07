@@ -3,6 +3,27 @@
 本包遵循 [语义化版本](https://semver.org/lang/zh-CN/)。版本策略：
 `0.x` 为孵化期（API 可能调整）；首个商业项目立项时冻结为 `1.0.0`，此后破坏性变更必须升主版本。
 
+## [0.4.0] - 2026-07-07
+
+### 新增
+
+- **RemoteConfig 模块（远程配置 / 功能开关）**：`RemoteConfigManager` 负责
+  三层取值回退（拉取值 → 代码默认值 → 兜底参数）、磁盘缓存 last-known-good
+  （断网首装也有一致行为）、类型化取值与功能开关判定；开关支持条件对象写法
+  （`enabled` / `rollout` 设备稳定分桶灰度 / `min_version` 版本门控）。
+  `IRemoteConfigBackend` 后端抽象 + 内置 HTTP GET 后端（附带
+  device/version/channel/env 查询参数供服务端定向），三方平台作扩展包注入。
+  用法见 `RemoteConfig/REMOTECONFIG_GUIDE.md`。
+- **热更灰度放量**：`version.json` 新增 `GrayPercent` 字段（0/缺省=全量，1~99=灰度），
+  未命中分桶的设备按"无更新"继续；分桶盐含目标版本号（每次发布重新洗牌），
+  同一发布内放量上调时已命中设备保持命中。判定 `VersionManager.IsDeviceInGrayRollout`，
+  闸门接在 LaunchFlow Step 3（version.json 验签之后，字段可信）。
+- `StableHash`（FNV-1a）：跨平台稳定分桶工具（string.GetHashCode 结果不稳定，禁止用于分桶）。
+- `AppConfig.RemoteConfigUrl`、`GameEntry.RemoteConfig` 静态访问点；
+  LaunchFlow 启动时并行拉取（不阻塞、失败静默沿用缓存/默认值）。
+- RemoteConfig EditMode 测试 14 例（JSON 解析/取值回退/失败保留现值/磁盘缓存/
+  开关判定/灰度边界与单调性/稳定哈希）。
+
 ## [0.3.1] - 2026-07-07
 
 ### 修复 / 改进（埋点管道，对齐大厂 at-least-once + 服务端去重范式）

@@ -59,6 +59,11 @@ namespace Framework.Core
                  "对接三方平台时忽略此项，经 AnalyticsManager.SetBackend 注入扩展包实现")]
         public string AnalyticsUrl = string.Empty;
 
+        [Header("远程配置")]
+        [Tooltip("远程配置端点（HTTP GET 返回扁平 JSON 对象，可为 CDN 静态文件；请求附带 device_id/app_version/channel/env 查询参数供服务端定向）。" +
+                 "留空不拉取，仅用磁盘缓存与代码默认值。对接三方平台经 RemoteConfigManager.SetBackend 注入")]
+        public string RemoteConfigUrl = string.Empty;
+
         [Header("热更总开关")]
         [Tooltip("关闭后启动流程跳过 AOT 元数据 / HybridCLR 程序集加载 / StartHotfix（LaunchFlow Step 7-9），直接进入登录。" +
                  "无热更业务程序集的项目（纯框架壳 / 单机项目）须关闭，否则 Step 8 找不到热更 DLL 会启动失败并重试卡死。")]
