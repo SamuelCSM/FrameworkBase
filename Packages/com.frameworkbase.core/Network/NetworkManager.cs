@@ -30,6 +30,10 @@ namespace Framework
         private TcpClient _client;
         private MessageDispatcher _dispatcher;
         private NetworkRequestTracker _requestTracker;
+
+        /// <summary>断线待发队列（opt-in 幂等请求重连后补发）+ 其时钟（累计秒）。</summary>
+        private readonly OfflineRequestQueue _offlineQueue = new OfflineRequestQueue();
+        private double _offlineQueueClock;
         private NetworkMessageTypeRegistry _messageTypeRegistry;
 
         // ── 连接状态事件跨线程编组 ────────────────────────────────────────────
@@ -194,6 +198,10 @@ namespace Framework
             _dispatcher?.ProcessMessageQueue(_messageInterceptHandler, _seqResponseHandler, _protocolReceiveLogHandler);
             _requestTracker?.Update(deltaTime);
 
+            // 断线待发队列 TTL 驱动：等太久没能补发的请求按失败收尾
+            _offlineQueueClock += deltaTime;
+            _offlineQueue.Update(_offlineQueueClock);
+
             if (!IsConnected) return;
 
             // ── 接收数据 flag 消费（由接收线程写入，主线程消费）──────────
@@ -287,12 +295,13 @@ namespace Framework
             await TryReconnectAsync();
         }
 
-        /// <summary>主动断开（关闭自动重连）</summary>
+        /// <summary>主动断开（关闭自动重连）。断线待发队列一并按失败收尾——不会再有重连补发它们。</summary>
         public void Disconnect()
         {
             _enableAutoReconnect     = false;
             _isReconnecting          = false;
             _currentReconnectAttempt = 0;
+            _offlineQueue.FailAll();
             _client?.Disconnect();
         }
 
@@ -309,18 +318,35 @@ namespace Framework
 
         /// <summary>
         /// 发送请求并等待对应类型的响应。通过包头 SeqId 精确匹配请求与响应。
+        /// <para>
+        /// 未连接时的行为：默认直接返回 null；config 开启
+        /// <see cref="NetworkRequestConfig.QueueWhileDisconnected"/>（仅限幂等请求）则挂入
+        /// 断线待发队列，重连 + 重鉴权成功后按 FIFO 补发，超过 QueueTtlMs 未发出按失败收尾。
+        /// </para>
         /// </summary>
         public UniTask<TResp> RequestAsync<TReq, TResp>(TReq request, NetworkRequestConfig config = null)
             where TReq : class, INetMessage
             where TResp : class, INetMessage, new()
         {
+            if (config == null) config = NetworkRequestConfig.Default;
+
             if (!IsConnected)
             {
+                if (config.QueueWhileDisconnected)
+                    return EnqueueOfflineRequest<TReq, TResp>(request, config);
+
                 GameLog.Error("[NetworkManager] 未连接，无法发送请求");
                 return UniTask.FromResult<TResp>(null);
             }
-            if (config == null) config = NetworkRequestConfig.Default;
 
+            return RequestConnectedAsync<TReq, TResp>(request, config);
+        }
+
+        /// <summary>已连接状态下的请求-响应核心流程（注册 pending → 发送 → 等待配对）。</summary>
+        private UniTask<TResp> RequestConnectedAsync<TReq, TResp>(TReq request, NetworkRequestConfig config)
+            where TReq : class, INetMessage
+            where TResp : class, INetMessage, new()
+        {
             var tcs = new UniTaskCompletionSource<TResp>();
             _messageTypeRegistry?.Register<TResp>();
 
@@ -358,6 +384,48 @@ namespace Framework
             }
 
             return tcs.Task;
+        }
+
+        /// <summary>
+        /// 把断线期间的 opt-in 请求挂入待发队列，返回其完成器任务。
+        /// 补发只给一次机会：重连补发瞬间又断线时直接按失败收尾，不二次入队（避免无限徘徊）。
+        /// </summary>
+        private UniTask<TResp> EnqueueOfflineRequest<TReq, TResp>(TReq request, NetworkRequestConfig config)
+            where TReq : class, INetMessage
+            where TResp : class, INetMessage, new()
+        {
+            var tcs = new UniTaskCompletionSource<TResp>();
+
+            bool queued = _offlineQueue.TryEnqueue(
+                send: () => ForwardQueuedRequestAsync(request, config, tcs).Forget(),
+                fail: () => tcs.TrySetResult(null),
+                ttlSeconds: config.QueueTtlMs / 1000.0,
+                now: _offlineQueueClock);
+
+            if (!queued)
+            {
+                GameLog.Warning($"[NetworkManager] 断线待发队列已满（{_offlineQueue.MaxItems}），请求直接失败: {typeof(TReq).Name}");
+                return UniTask.FromResult<TResp>(null);
+            }
+
+            GameLog.Log($"[NetworkManager] 未连接，请求已入队等待重连补发: {typeof(TReq).Name}（队列 {_offlineQueue.Count} 条）");
+            return tcs.Task;
+        }
+
+        /// <summary>补发一条排队请求并把结果转交给原调用方的完成器。</summary>
+        private async UniTaskVoid ForwardQueuedRequestAsync<TReq, TResp>(
+            TReq request, NetworkRequestConfig config, UniTaskCompletionSource<TResp> tcs)
+            where TReq : class, INetMessage
+            where TResp : class, INetMessage, new()
+        {
+            if (!IsConnected)
+            {
+                tcs.TrySetResult(null); // 补发窗口又断线：只给一次机会
+                return;
+            }
+
+            TResp response = await RequestConnectedAsync<TReq, TResp>(request, config);
+            tcs.TrySetResult(response);
         }
 
         /// <summary>
@@ -941,6 +1009,9 @@ namespace Framework
                     // 连接 + 鉴权均成功
                     GameLog.Log("[NetworkManager] 重连成功");
                     _isReconnecting = false;
+
+                    // 会话已恢复：先补发断线期间排队的 opt-in 请求，再对外宣告重连成功
+                    _offlineQueue.FlushAll();
                     OnReconnectSucceeded?.Invoke();
                     return;
                 }
@@ -950,8 +1021,9 @@ namespace Framework
                 }
             }
 
-            // 全部次数用尽
+            // 全部次数用尽：连接不再恢复，排队请求全部按失败收尾
             _isReconnecting = false;
+            _offlineQueue.FailAll();
             GameLog.Error($"[NetworkManager] 达到最大重连次数 ({_maxReconnectAttempts})，放弃重连");
             OnReconnectFailed?.Invoke();
             OnError?.Invoke("网络连接失败，请检查网络后手动重连");

@@ -21,6 +21,20 @@ namespace Framework.Network
         /// <summary>超时提示文案，为 null 时使用默认文案。</summary>
         public string TimeoutMessage { get; set; }
 
+        /// <summary>
+        /// 断线/重连期间是否入队等待补发（默认 false：未连接直接失败返回 null）。
+        /// <para>
+        /// 只对<b>幂等</b>请求开启（查询、拉取列表、上报确认等重发无副作用的消息）；
+        /// 扣费、下单类非幂等请求禁止开启——断线窗口里服务端可能已处理过第一次，
+        /// 重发的一致性只有业务层能判断。入队项在重连+重鉴权成功后按 FIFO 补发，
+        /// 超过 <see cref="QueueTtlMs"/> 仍未能发出则按失败收尾（返回 null）。
+        /// </para>
+        /// </summary>
+        public bool QueueWhileDisconnected { get; set; } = false;
+
+        /// <summary>入队等待补发的最长时间（毫秒），到期未发出按失败收尾。默认 30000。</summary>
+        public int QueueTtlMs { get; set; } = 30000;
+
         /// <summary>默认配置实例。</summary>
         public static NetworkRequestConfig Default { get; } = new NetworkRequestConfig();
 

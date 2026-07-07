@@ -64,6 +64,28 @@ await GameEntry.Network.RequestAsync(request, new NetworkRequestConfig
 });
 ```
 
+#### 断线待发队列（重连补发）
+
+默认行为：未连接时 `RequestAsync` 直接返回 null。**幂等**请求（查询、拉取列表、
+上报确认等重发无副作用的消息）可以 opt-in 断线补发：
+
+```csharp
+var resp = await GameEntry.Network.RequestAsync(request, new NetworkRequestConfig
+{
+    QueueWhileDisconnected = true, // 断线期间入队，重连+重鉴权成功后按 FIFO 补发
+    QueueTtlMs = 30000,            // 等 30 秒还没能发出去就按失败收尾（返回 null）
+});
+```
+
+语义与边界：
+
+- **只对幂等请求开启**。扣费、下单类非幂等请求禁止——断线窗口里服务端可能已处理过
+  第一次，重发的一致性只有业务层能判断。
+- 补发时机在**重鉴权成功之后**（会话已恢复，服务端不会静默丢弃）。
+- 队列上限 64 条，超限入队直接失败；TTL 到期、放弃重连、主动 `Disconnect()` 都按
+  失败收尾（调用方拿到 null，和普通失败一个处理路径）。
+- 补发只给一次机会：补发瞬间又断线不二次入队，直接失败。
+
 ### 2. Notify — 通知/单向消息
 
 发送后不等回包。适用于投降、聊天、操作确认等场景。
