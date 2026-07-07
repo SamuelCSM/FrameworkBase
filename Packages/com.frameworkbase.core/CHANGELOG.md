@@ -3,6 +3,19 @@
 本包遵循 [语义化版本](https://semver.org/lang/zh-CN/)。版本策略：
 `0.x` 为孵化期（API 可能调整）；首个商业项目立项时冻结为 `1.0.0`，此后破坏性变更必须升主版本。
 
+## [0.6.5] - 2026-07-07
+
+### 新增
+
+- **伪本地化 PseudoLocalizer**（P2B-9）：开启后所有经 Language 取出的文案变形为
+  `⟦Ẃéĺćóḿé·~⟧` 风格——重音替换暴露字体缺字、+30% 填充提前暴露 UI 截断、
+  ⟦⟧ 界标一眼识别写死没走本地化的文本；`{0}`/`{1:N0}` 格式占位符原样保留。
+  仅 Editor / Development Build 生效（Language 出口条件编译），单测 6 例。
+- **字体缺字检测**：菜单 Framework → Localization → Check Font Coverage——
+  扫描 language 表全部语言列的全部字符，逐个检查选中 TMP 字体（含 fallback
+  回退链递归、防环）是否覆盖，输出缺字清单（字符 + Unicode 码点），
+  上线前跑一遍避免真机豆腐块。Framework.Editor 新增 Unity.TextMeshPro 引用。
+
 ## [0.6.4] - 2026-07-07
 
 ### 新增

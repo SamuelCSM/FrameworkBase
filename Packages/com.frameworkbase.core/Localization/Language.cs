@@ -122,6 +122,13 @@ namespace Framework
                 if (string.IsNullOrEmpty(localized))
                     return false;
 
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+                // 伪本地化（开发期）：变形所有经 Language 取出的文案，
+                // 没被 ⟦⟧ 界标包住的屏幕文本 = 写死没走本地化，一眼识别
+                if (PseudoLocalizer.Enabled)
+                    localized = PseudoLocalizer.Transform(localized);
+#endif
+
                 value = localized;
                 return true;
             }

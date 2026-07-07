@@ -4,6 +4,7 @@
     "references": [
         "Framework",
         "Unity.Addressables.Editor",
+        "Unity.TextMeshPro",
         "HybridCLR.Editor"
     ],
     "includePlatforms": [
