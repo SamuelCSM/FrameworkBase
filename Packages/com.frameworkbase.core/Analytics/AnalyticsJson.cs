@@ -13,10 +13,16 @@ namespace Framework.Analytics
     {
         /// <summary>
         /// 序列化单条事件为 JSON 对象文本。
-        /// 固定字段在前（event/ts/session_id/device_id/user_id/app_version/channel），
+        /// 固定字段在前（event_id/event/ts/session_id/device_id/user_id/app_version/channel），
         /// 自定义属性平铺进 props 子对象。
+        /// <para>
+        /// event_id 是每条事件的唯一幂等键，序列化时冻结。埋点管道做 at-least-once
+        /// 投递（切后台落盘 + 启动补报，宁重复不丢失），采集端须按 event_id 去重才能得到
+        /// 精确计数——这是幂等的锚点，客户端单方面无法保证 exactly-once。
+        /// </para>
         /// </summary>
         public static string SerializeEvent(
+            string eventId,
             string eventName,
             long timestampMs,
             string sessionId,
@@ -28,6 +34,8 @@ namespace Framework.Analytics
         {
             var sb = new StringBuilder(256);
             sb.Append('{');
+            AppendString(sb, "event_id", eventId);
+            sb.Append(',');
             AppendString(sb, "event", eventName);
             sb.Append(',');
             AppendNumber(sb, "ts", timestampMs);

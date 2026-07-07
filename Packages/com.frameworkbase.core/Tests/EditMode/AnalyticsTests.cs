@@ -37,13 +37,24 @@ namespace Framework.Tests
 
         private static T Wait<T>(UniTask<T> task) => task.GetAwaiter().GetResult();
 
+        /// <summary>从事件 JSON 中取出 "field":"value" 的 value（测试用，仅支持字符串字段）。</summary>
+        private static string ExtractField(string json, string field)
+        {
+            string token = $"\"{field}\":\"";
+            int start = json.IndexOf(token, System.StringComparison.Ordinal);
+            if (start < 0) return null;
+            start += token.Length;
+            int end = json.IndexOf('"', start);
+            return end < 0 ? null : json.Substring(start, end - start);
+        }
+
         // ── JSON 信封 ────────────────────────────────────────────────────────
 
         [Test]
         public void 信封序列化_固定字段与属性齐全()
         {
             string json = AnalyticsJson.SerializeEvent(
-                "login", 1720000000000, "s1", "d1", "u1", "1.0", "mock",
+                "evt_abc", "login", 1720000000000, "s1", "d1", "u1", "1.0", "mock",
                 new Dictionary<string, object>
                 {
                     { "attempt", 3 },
@@ -52,6 +63,7 @@ namespace Framework.Tests
                     { "note", "he said \"hi\"\nline2" }
                 });
 
+            StringAssert.Contains("\"event_id\":\"evt_abc\"", json);
             StringAssert.Contains("\"event\":\"login\"", json);
             StringAssert.Contains("\"ts\":1720000000000", json);
             StringAssert.Contains("\"session_id\":\"s1\"", json);
@@ -68,8 +80,23 @@ namespace Framework.Tests
         public void 信封序列化_无属性时不输出props()
         {
             string json = AnalyticsJson.SerializeEvent(
-                "boot", 1, "s", "d", "", "1.0", "", null);
+                "evt_x", "boot", 1, "s", "d", "", "1.0", "", null);
             StringAssert.DoesNotContain("props", json);
+        }
+
+        [Test]
+        public void 每条事件_event_id唯一()
+        {
+            for (int i = 0; i < 200; i++)
+                _analytics.Track($"e{i}");
+            Wait(_analytics.FlushAsync());
+
+            var ids = new HashSet<string>();
+            foreach (var batch in _backend.Batches)
+                foreach (string json in batch)
+                    ids.Add(ExtractField(json, "event_id"));
+
+            Assert.AreEqual(200, ids.Count, "每条事件的 event_id 必须唯一（去重锚点）");
         }
 
         // ── 管道行为 ─────────────────────────────────────────────────────────
@@ -115,7 +142,7 @@ namespace Framework.Tests
         }
 
         [Test]
-        public void 单批上限50_大队列分批出()
+        public void 排水式冲刷_一次发完积压且单批不超50()
         {
             _backend.AlwaysFail = true; // 阻止自动冲刷，累积队列
             for (int i = 0; i < 120; i++)
@@ -126,8 +153,40 @@ namespace Framework.Tests
             _backend.Batches.Clear();
             Wait(_analytics.FlushAsync());
 
+            Assert.AreEqual(3, _backend.Batches.Count, "120 条应分 50+50+20 三批");
             Assert.AreEqual(50, _backend.Batches[0].Count, "单批不超过 50");
-            Assert.AreEqual(70, _analytics.QueuedCount);
+            Assert.AreEqual(20, _backend.Batches[2].Count);
+            Assert.AreEqual(0, _analytics.QueuedCount, "排水循环应一次触发发完整个队列");
+        }
+
+        [Test]
+        public void 单次排水有上限_不会无限连发()
+        {
+            _backend.AlwaysFail = true;
+            // 21 批 = 1050 条，但队列上限 500，实际约 10 批即可排空——
+            // 用远超上限的量确认循环有 MaxBatchesPerFlush 保护（不因巨量积压卡死一次调用）。
+            for (int i = 0; i < 1050; i++)
+                _analytics.Track($"e{i}");
+
+            _backend.AlwaysFail = false;
+            _backend.Batches.Clear();
+            Wait(_analytics.FlushAsync());
+
+            Assert.LessOrEqual(_backend.Batches.Count, 20, "单次冲刷批次数不得超过 MaxBatchesPerFlush");
+        }
+
+        [Test]
+        public void 队列排空后_删除落盘快照()
+        {
+            // 造一次落盘（模拟切后台），确认发完后文件被清掉，避免重启重复补报
+            _analytics.Track("e1");
+            _analytics.OnApplicationPause(true); // 内部先落盘再尽力发一批
+            Wait(_analytics.FlushAsync());        // 排空队列 → 应删除 pending 文件
+
+            string pendingPath = System.IO.Path.Combine(
+                UnityEngine.Application.persistentDataPath, "analytics_pending.jsonl");
+            Assert.AreEqual(0, _analytics.QueuedCount);
+            Assert.IsFalse(System.IO.File.Exists(pendingPath), "队列排空后落盘快照应被删除");
         }
 
         [Test]

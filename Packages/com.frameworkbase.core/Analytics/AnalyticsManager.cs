@@ -33,6 +33,9 @@ namespace Framework.Analytics
         /// <summary>连续失败的退避上限（秒）。</summary>
         private const float MaxBackoffSeconds = 120f;
 
+        /// <summary>单次冲刷的排水批次上限：一次触发最多连发这么多批，避免积压过大时长时间连续打网络。</summary>
+        private const int MaxBatchesPerFlush = 20;
+
         /// <summary>断电落盘文件名（JSON Lines）。</summary>
         private const string PendingFileName = "analytics_pending.jsonl";
 
@@ -112,19 +115,21 @@ namespace Framework.Analytics
                 int dropped = _droppedSinceLastReport;
                 _droppedSinceLastReport = 0;
                 EnqueueSerialized(AnalyticsJson.SerializeEvent(
-                    "analytics_dropped", NowMs(), _sessionId, _deviceId, _userId, _appVersion, ChannelName(),
+                    NewEventId(), "analytics_dropped", NowMs(), _sessionId, _deviceId, _userId, _appVersion, ChannelName(),
                     new Dictionary<string, object> { { "count", dropped } }));
             }
 
             EnqueueSerialized(AnalyticsJson.SerializeEvent(
-                eventName, NowMs(), _sessionId, _deviceId, _userId, _appVersion, ChannelName(), properties));
+                NewEventId(), eventName, NowMs(), _sessionId, _deviceId, _userId, _appVersion, ChannelName(), properties));
 
             if (_queue.Count >= BatchSize)
                 FlushAsync().Forget();
         }
 
         /// <summary>
-        /// 立即冲刷一批（切后台/测试用）。返回本批是否发送成功（空队列视为成功）。
+        /// 冲刷队列：排水式连发多批（每批 ≤<see cref="BatchSize"/>），直到队列空、遇到失败、
+        /// 或达到单次上限 <see cref="MaxBatchesPerFlush"/>。空闲期积压不必再等下个定时周期慢慢发。
+        /// 返回本次是否全部成功（空队列视为成功；中途失败即返回 false 并退避）。
         /// </summary>
         public async UniTask<bool> FlushAsync()
         {
@@ -134,26 +139,36 @@ namespace Framework.Analytics
             _isFlushing = true;
             try
             {
-                int count = Math.Min(BatchSize, _queue.Count);
-                var batch = new List<string>(count);
-                for (int i = 0; i < count; i++)
-                    batch.Add(_queue[i]);
-
-                bool ok = await Backend().SendAsync(batch);
-                if (ok)
+                int batchesThisRound = 0;
+                while (_queue.Count > 0 && batchesThisRound < MaxBatchesPerFlush)
                 {
+                    int count = Math.Min(BatchSize, _queue.Count);
+                    var batch = new List<string>(count);
+                    for (int i = 0; i < count; i++)
+                        batch.Add(_queue[i]);
+
+                    bool ok = await Backend().SendAsync(batch);
+                    if (!ok)
+                    {
+                        _consecutiveFailures++;
+                        _backoffRemaining = Math.Min(
+                            FlushIntervalSeconds * _consecutiveFailures, MaxBackoffSeconds);
+                        GameLog.Warning($"[AnalyticsManager] 上报失败（连续 {_consecutiveFailures} 次），退避 {_backoffRemaining:F0}s，队列 {_queue.Count}");
+                        return false;
+                    }
+
                     _queue.RemoveRange(0, count);
                     _consecutiveFailures = 0;
                     _backoffRemaining = 0f;
+                    batchesThisRound++;
                 }
-                else
-                {
-                    _consecutiveFailures++;
-                    _backoffRemaining = Math.Min(
-                        FlushIntervalSeconds * _consecutiveFailures, MaxBackoffSeconds);
-                    GameLog.Warning($"[AnalyticsManager] 上报失败（连续 {_consecutiveFailures} 次），退避 {_backoffRemaining:F0}s，队列 {_queue.Count}");
-                }
-                return ok;
+
+                // 队列已排空：删除落盘快照，避免"回前台发完 → 进程被杀 → 重启重读旧文件"造成的重复补报。
+                // （仍可能有"发到一半被杀"的窄窗口重复，靠采集端按 event_id 去重兜底。）
+                if (_queue.Count == 0)
+                    TryDeletePendingFile();
+
+                return true;
             }
             finally
             {
@@ -236,6 +251,9 @@ namespace Framework.Analytics
         }
 
         private static long NowMs() => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+
+        /// <summary>生成事件唯一幂等键（采集端去重锚点）。</summary>
+        private static string NewEventId() => Guid.NewGuid().ToString("N");
 
         /// <summary>队列落盘（JSON Lines 覆盖写）。切后台/退出时调用，崩溃防丢。</summary>
         private void PersistQueueToDisk()

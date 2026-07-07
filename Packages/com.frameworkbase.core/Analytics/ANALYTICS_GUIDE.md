@@ -28,10 +28,15 @@ await GameEntry.Analytics.FlushAsync();
 事件信封（管道自动封装）：
 
 ```json
-{ "event":"stage_enter", "ts":1720000000000, "session_id":"…", "device_id":"…",
-  "user_id":"10001", "app_version":"1.0", "channel":"taptap",
+{ "event_id":"a1b2c3…", "event":"stage_enter", "ts":1720000000000,
+  "session_id":"…", "device_id":"…", "user_id":"10001",
+  "app_version":"1.0", "channel":"taptap",
   "props": { "stage":"main_home", "from":"login" } }
 ```
+
+`event_id` 是每条事件的唯一幂等键。管道做 **at-least-once** 投递（切后台落盘 +
+启动补报，宁重复不丢失），因此**采集端必须按 `event_id` 去重**才能得到精确计数——
+客户端无法单方面保证 exactly-once（"发到一半进程被杀"的窄窗口重复不可避免）。
 
 ## 后端选择
 
@@ -45,9 +50,11 @@ await GameEntry.Analytics.FlushAsync();
 
 - 内存队列上限 500 条，溢出丢最旧并以 `analytics_dropped` 事件补报丢弃数；
 - 单批 ≤50 条；每 15s 定时冲刷，队列达 50 立即冲刷；
+- **排水式冲刷**：一次触发连发多批直到队列空（单次上限 20 批），空闲期积压不必等下个周期慢慢发；
 - 失败退避：15s × 连续失败次数，上限 120s；
 - 切后台 / 退出：先落盘 `analytics_pending.jsonl`（≤512KB）再尽力发一批，
-  下次启动自动回捞补报（至多重复、不会丢失）。
+  下次启动自动回捞补报；队列排空后删除落盘快照，缩小重启重复窗口，
+  残余重复（发到一半被杀）靠采集端按 `event_id` 去重兜底。
 
 ## 框架内置事件
 
