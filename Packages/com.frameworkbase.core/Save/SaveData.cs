@@ -43,15 +43,29 @@ namespace Framework.Save
         public int dataVersion = 1;
 
         /// <summary>
-        /// 版本迁移回调。当磁盘上的版本号低于当前 dataVersion 时自动触发。
-        /// fromVersion = 磁盘中存的版本号（旧版），this.dataVersion = 当前最新版本号。
+        /// 版本迁移回调。当磁盘封包里的旧版本号低于代码当前版本号时自动触发。
+        /// fromVersion = 磁盘中存的版本号（旧版）；迁移完成后 dataVersion 归位到代码当前版本。
         /// </summary>
         protected virtual void OnMigrate(int fromVersion) { }
 
-        internal void TryMigrate(int savedVersion)
+        /// <summary>
+        /// 执行版本迁移。<paramref name="savedVersion"/> 是磁盘封包记录的旧版本（envelope.v），
+        /// <paramref name="currentVersion"/> 是"代码里的当前版本"——由 SaveManager 用一个全新实例
+        /// （<c>new T().dataVersion</c>，字段初始值不会被反序列化覆盖）取得。
+        /// 磁盘版本更旧才回调 <see cref="OnMigrate"/>，随后把内存版本号归位到当前版本，使后续写档以当前版本落盘。
+        /// <para>
+        /// 之所以不直接用反序列化后的 <c>this.dataVersion</c> 做判断：dataVersion 是可序列化字段，
+        /// <c>FromJson</c> 读档时会把它覆盖回磁盘旧值，导致 “savedVersion &lt; this.dataVersion” 恒不成立、
+        /// OnMigrate 永不触发。这里以外部传入的当前版本为准，避开该陷阱。
+        /// </para>
+        /// </summary>
+        internal void RunMigrationFrom(int savedVersion, int currentVersion)
         {
-            if (savedVersion < dataVersion)
+            if (savedVersion < currentVersion)
                 OnMigrate(savedVersion);
+
+            // 归位：无论是否迁移，内存里的版本号都应是代码当前版本，而非磁盘旧值
+            dataVersion = currentVersion;
         }
     }
 }

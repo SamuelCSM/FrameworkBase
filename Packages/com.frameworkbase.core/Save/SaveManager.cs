@@ -223,7 +223,10 @@ namespace Framework.Save
                     var json   = AesHelper.Decrypt(encrypted);
                     var result = JsonSerializers.Shared.FromJson<T>(json);
 
-                    result.TryMigrate(envelope.v);
+                    // 代码当前版本取自全新实例的字段初始值（不会被上面的反序列化覆盖），
+                    // 与磁盘封包版本 envelope.v 比较决定是否迁移；迁移后 result.dataVersion 归位到当前版本。
+                    int currentVersion = new T().dataVersion;
+                    result.RunMigrationFrom(envelope.v, currentVersion);
 
                     GameLog.Log($"[SaveManager] 读档成功 user={userId} type={typeof(T).Name} slot={slot} v{envelope.v}→{result.dataVersion}");
                     return result;

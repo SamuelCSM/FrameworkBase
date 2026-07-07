@@ -24,6 +24,16 @@ namespace Framework.Tests
             public int coins;
         }
 
+        /// <summary>当前代码版本=2 的存档：旧档（v1）读入时应触发 OnMigrate(1)。</summary>
+        [Serializable]
+        private class MigratableSave : SaveData
+        {
+            public int payload;
+            public int migratedFrom = -1;
+            public MigratableSave() { dataVersion = 2; }
+            protected override void OnMigrate(int fromVersion) { migratedFrom = fromVersion; }
+        }
+
         private sealed class FixedKeyProvider : ISaveKeyProvider
         {
             public string GetMasterSecret() => "save-manager-test-secret";
@@ -111,6 +121,35 @@ namespace Framework.Tests
             var loaded = await SaveManager.Instance.LoadAsync<ProfileSave>();
             Assert.AreEqual("v1", loaded.nickname, "主档损坏应回退到备份档");
             Assert.AreEqual(1, loaded.coins);
+        });
+
+        [UnityTest]
+        public IEnumerator 旧档读入_触发版本迁移() => UniTask.ToCoroutine(async () =>
+        {
+            // 造一个 v1 旧档：把 dataVersion 显式降到 1 再写盘（模拟老版本存的档）
+            var old = new MigratableSave { payload = 7 };
+            old.dataVersion = 1;
+            await SaveManager.Instance.SaveAsync(old);
+
+            // 以当前代码（dataVersion=2）读入：应回调 OnMigrate(1) 并把版本归位到 2
+            var loaded = await SaveManager.Instance.LoadAsync<MigratableSave>();
+
+            Assert.AreEqual(7, loaded.payload, "业务字段应原样还原");
+            Assert.AreEqual(1, loaded.migratedFrom, "OnMigrate 应以磁盘旧版本号触发");
+            Assert.AreEqual(2, loaded.dataVersion, "迁移后版本号应归位到代码当前版本");
+        });
+
+        [UnityTest]
+        public IEnumerator 同版本读入_不触发迁移() => UniTask.ToCoroutine(async () =>
+        {
+            // dataVersion 保持当前=2 写盘，读入时不应触发 OnMigrate
+            await SaveManager.Instance.SaveAsync(new MigratableSave { payload = 3 });
+
+            var loaded = await SaveManager.Instance.LoadAsync<MigratableSave>();
+
+            Assert.AreEqual(3, loaded.payload);
+            Assert.AreEqual(-1, loaded.migratedFrom, "版本一致不应触发迁移");
+            Assert.AreEqual(2, loaded.dataVersion);
         });
 
         [UnityTest]
