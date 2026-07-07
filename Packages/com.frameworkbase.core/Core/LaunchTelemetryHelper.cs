@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using Framework.Serialization;
+using Framework.Storage;
 using UnityEngine;
 
 namespace Framework.Core
@@ -85,7 +86,7 @@ namespace Framework.Core
             try
             {
                 string outputPath = Path.Combine(Application.persistentDataPath, "launch_metrics_last.json");
-                File.WriteAllText(outputPath, json);
+                FileStorages.Shared.WriteText(outputPath, json);
             }
             catch (Exception ex)
             {

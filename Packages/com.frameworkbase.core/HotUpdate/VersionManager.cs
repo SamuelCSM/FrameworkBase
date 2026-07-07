@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using Framework.Serialization;
+using Framework.Storage;
 using UnityEngine;
 
 namespace Framework.HotUpdate
@@ -262,11 +263,11 @@ namespace Framework.HotUpdate
         {
             // 优先读取 persistentDataPath（热更后保存的最新版本）
             string persistentPath = System.IO.Path.Combine(Application.persistentDataPath, "version.json");
-            if (System.IO.File.Exists(persistentPath))
+            if (FileStorages.Shared.FileExists(persistentPath))
             {
                 try
                 {
-                    string json = System.IO.File.ReadAllText(persistentPath);
+                    string json = FileStorages.Shared.ReadText(persistentPath);
                     UpdateInfo versionInfo = JsonSerializers.Shared.FromJson<UpdateInfo>(json);
                     if (versionInfo != null && !string.IsNullOrEmpty(versionInfo.AppVersion))
                     {
@@ -292,11 +293,11 @@ namespace Framework.HotUpdate
 
             // 其次读取 StreamingAssets（打包时同步进去的出厂版本）
             string streamingPath = System.IO.Path.Combine(Application.streamingAssetsPath, "version.json");
-            if (System.IO.File.Exists(streamingPath))
+            if (FileStorages.Shared.FileExists(streamingPath))
             {
                 try
                 {
-                    string json = System.IO.File.ReadAllText(streamingPath);
+                    string json = FileStorages.Shared.ReadText(streamingPath);
                     UpdateInfo versionInfo = JsonSerializers.Shared.FromJson<UpdateInfo>(json);
                     GameLog.Log($"[VersionManager] 读取出厂版本（StreamingAssets）: " +
                                $"Resource={versionInfo.ResourceVersion} Code={versionInfo.CodeVersion}");
@@ -395,7 +396,7 @@ namespace Framework.HotUpdate
             {
                 string versionFilePath = System.IO.Path.Combine(Application.persistentDataPath, "version.json");
                 string json = JsonSerializers.Shared.ToJson(versionInfo, true);
-                System.IO.File.WriteAllText(versionFilePath, json);
+                FileStorages.Shared.WriteText(versionFilePath, json);
                 GameLog.Log($"[VersionManager] 保存本地版本: {versionInfo.AppVersion}");
             }
             catch (Exception ex)

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using Cysharp.Threading.Tasks;
+using Framework.Storage;
 
 namespace Framework.HotUpdate
 {
@@ -21,7 +22,7 @@ namespace Framework.HotUpdate
         {
             try
             {
-                if (!File.Exists(filePath))
+                if (!FileStorages.Shared.FileExists(filePath))
                 {
                     GameLog.Error($"[FileVerifier] 文件不存在: {filePath}");
                     return false;

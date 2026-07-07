@@ -8,6 +8,7 @@ using Cysharp.Threading.Tasks;
 using UnityEngine;
 using Framework.Core;
 using Framework.Serialization;
+using Framework.Storage;
 
 namespace Framework.Save
 {
@@ -146,19 +147,8 @@ namespace Framework.Save
             {
                 await UniTask.RunOnThreadPool(() =>
                 {
-                    Directory.CreateDirectory(userDir);
-
-                    var tmp = savePath + ".tmp";
-
-                    // 先写临时文件，防止写到一半崩溃损坏主档
-                    File.WriteAllText(tmp, envelopeJson);
-
-                    // 备份旧档
-                    if (File.Exists(savePath))
-                        File.Copy(savePath, backupPath, overwrite: true);
-
-                    if (File.Exists(savePath)) File.Delete(savePath);
-                    File.Move(tmp, savePath);
+                    FileStorages.Shared.EnsureDirectory(userDir);
+                    FileStorages.Shared.AtomicWriteText(savePath, envelopeJson, backupPath);
                 });
             }
             finally
@@ -208,11 +198,11 @@ namespace Framework.Save
 
             foreach (var path in paths)
             {
-                if (!File.Exists(path)) continue;
+                if (!FileStorages.Shared.FileExists(path)) continue;
 
                 try
                 {
-                    var raw      = File.ReadAllText(path);
+                    var raw      = FileStorages.Shared.ReadText(path);
                     var envelope = JsonSerializers.Shared.FromJson<SaveEnvelope>(raw);
 
                     var encrypted = Convert.FromBase64String(envelope.d);
@@ -265,7 +255,7 @@ namespace Framework.Save
 
         /// <summary>当前账号是否存在指定类型 + 槽位的存档</summary>
         public bool HasSave<T>(int slot = 0) where T : SaveData
-            => File.Exists(SlotPath<T>(slot));
+            => FileStorages.Shared.FileExists(SlotPath<T>(slot));
 
         /// <summary>删除当前账号指定类型 + 槽位的存档（包括备份）</summary>
         public void DeleteSave<T>(int slot = 0) where T : SaveData
@@ -278,8 +268,7 @@ namespace Framework.Save
         /// <summary>删除当前账号的全部存档（保留其他账号数据）</summary>
         public void DeleteCurrentUserSaves()
         {
-            if (Directory.Exists(UserDir))
-                Directory.Delete(UserDir, recursive: true);
+            FileStorages.Shared.DeleteDirectory(UserDir, recursive: true);
             GameLog.Log($"[SaveManager] 已删除账号 {_currentUserId} 的全部存档");
         }
 
@@ -287,14 +276,13 @@ namespace Framework.Save
         public void DeleteAllSaves()
         {
             var root = Path.Combine(Application.persistentDataPath, "saves");
-            if (Directory.Exists(root))
-                Directory.Delete(root, recursive: true);
+            FileStorages.Shared.DeleteDirectory(root, recursive: true);
             GameLog.Log("[SaveManager] 已删除全设备所有存档");
         }
 
         private static void TryDeleteFile(string path)
         {
-            if (File.Exists(path)) File.Delete(path);
+            FileStorages.Shared.TryDeleteFile(path);
         }
 
         // userId 净化：只保留字母、数字、下划线，防止路径注入（如 "../"）

@@ -1,8 +1,8 @@
 using System;
-using System.IO;
 using UnityEngine;
 using UnityEngine.Networking;
 using Cysharp.Threading.Tasks;
+using Framework.Storage;
 
 namespace Framework.HotUpdate
 {
@@ -63,9 +63,9 @@ namespace Framework.HotUpdate
             bool forceRefresh = false)
         {
             // forceRefresh：直接删除本地文件，跳过断点续传判断
-            if (forceRefresh && File.Exists(savePath))
+            if (forceRefresh && FileStorages.Shared.FileExists(savePath))
             {
-                File.Delete(savePath);
+                FileStorages.Shared.DeleteFile(savePath);
                 GameLog.Log($"[PatchDownloader] forceRefresh=true，已清除旧文件: {savePath}");
             }
 
@@ -101,15 +101,13 @@ namespace Framework.HotUpdate
             {
                 GameLog.Log($"[PatchDownloader] 开始下载: {url} -> {savePath}");
 
-                string directory = Path.GetDirectoryName(savePath);
-                if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
-                    Directory.CreateDirectory(directory);
+                FileStorages.Shared.EnsureParentDirectory(savePath);
 
                 // 断点续传：读取本地已有大小
                 long startPosition = 0;
-                if (File.Exists(savePath))
+                if (FileStorages.Shared.FileExists(savePath))
                 {
-                    startPosition = new FileInfo(savePath).Length;
+                    startPosition = FileStorages.Shared.GetFileSize(savePath);
                     _downloadedSize = startPosition;
                     GameLog.Log($"[PatchDownloader] 检测到已下载 {startPosition} 字节，尝试断点续传");
                 }
@@ -137,8 +135,7 @@ namespace Framework.HotUpdate
                     GameLog.Warning($"[PatchDownloader] 收到 416，服务器文件已变更，清除本地缓存后重试全量下载");
                     _currentRequest.Dispose();
                     _currentRequest = null;
-                    if (File.Exists(savePath))
-                        File.Delete(savePath);
+                    FileStorages.Shared.TryDeleteFile(savePath);
                     // 直接递归一次全量下载（startPosition = 0）
                     return await DownloadFileInternalAsync(url, savePath, onProgress);
                 }
@@ -153,15 +150,14 @@ namespace Framework.HotUpdate
                 if (startPosition > 0)
                 {
                     // 断点续传追加写入
-                    using var fs = new FileStream(savePath, FileMode.Append, FileAccess.Write);
-                    fs.Write(data, 0, data.Length);
+                    FileStorages.Shared.AppendBytes(savePath, data);
                 }
                 else
                 {
-                    File.WriteAllBytes(savePath, data);
+                    FileStorages.Shared.WriteBytes(savePath, data);
                 }
 
-                _downloadedSize = new FileInfo(savePath).Length;
+                _downloadedSize = FileStorages.Shared.GetFileSize(savePath);
                 _totalSize = _downloadedSize;
                 GameLog.Log($"[PatchDownloader] 下载完成: {savePath} ({_downloadedSize} 字节)");
                 onProgress?.Invoke(1.0f);

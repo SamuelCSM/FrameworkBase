@@ -5,6 +5,7 @@ using System.IO;
 using Cysharp.Threading.Tasks;
 using Framework.Core;
 using Framework.Serialization;
+using Framework.Storage;
 using UnityEngine;
 
 namespace Framework.RemoteConfig
@@ -227,15 +228,7 @@ namespace Framework.RemoteConfig
         {
             _active = null;
             FetchedThisSession = false;
-            try
-            {
-                if (File.Exists(_cachePath))
-                    File.Delete(_cachePath);
-            }
-            catch
-            {
-                // 删除失败无碍：下次拉取成功会覆盖写
-            }
+            FileStorages.Shared.TryDeleteFile(_cachePath);
         }
 
         // ── 内部 ─────────────────────────────────────────────────────────────
@@ -304,7 +297,7 @@ namespace Framework.RemoteConfig
         {
             try
             {
-                File.WriteAllText(_cachePath, json);
+                FileStorages.Shared.WriteText(_cachePath, json);
             }
             catch (Exception ex)
             {
@@ -316,10 +309,10 @@ namespace Framework.RemoteConfig
         {
             try
             {
-                if (!File.Exists(_cachePath))
+                if (!FileStorages.Shared.FileExists(_cachePath))
                     return;
 
-                string json = File.ReadAllText(_cachePath);
+                string json = FileStorages.Shared.ReadText(_cachePath);
                 if (JsonObjectParser.TryParseObject(json, out var values))
                     _active = values;
                 else

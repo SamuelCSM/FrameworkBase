@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using Cysharp.Threading.Tasks;
 using Framework.Core;
+using Framework.Storage;
 using UnityEngine;
 
 namespace Framework.Analytics
@@ -276,7 +277,7 @@ namespace Framework.Analytics
                     lines.Add(line);
                 }
 
-                File.WriteAllLines(_pendingFilePath, lines);
+                FileStorages.Shared.WriteLines(_pendingFilePath, lines.ToArray());
             }
             catch (Exception ex)
             {
@@ -289,10 +290,10 @@ namespace Framework.Analytics
         {
             try
             {
-                if (!File.Exists(_pendingFilePath))
+                if (!FileStorages.Shared.FileExists(_pendingFilePath))
                     return;
 
-                foreach (string line in File.ReadAllLines(_pendingFilePath))
+                foreach (string line in FileStorages.Shared.ReadLines(_pendingFilePath))
                 {
                     if (!string.IsNullOrWhiteSpace(line))
                         EnqueueSerialized(line);
@@ -308,15 +309,7 @@ namespace Framework.Analytics
 
         private void TryDeletePendingFile()
         {
-            try
-            {
-                if (File.Exists(_pendingFilePath))
-                    File.Delete(_pendingFilePath);
-            }
-            catch
-            {
-                // 删除失败无碍：下次启动会重读一遍（事件重复优于丢失）
-            }
+            FileStorages.Shared.TryDeleteFile(_pendingFilePath);
         }
     }
 }

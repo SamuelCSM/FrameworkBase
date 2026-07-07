@@ -8,6 +8,7 @@ using Cysharp.Threading.Tasks;
 using Framework.Data;
 using Framework.Http;
 using Framework.Serialization;
+using Framework.Storage;
 using UnityEngine;
 using UnityEngine.AddressableAssets;
 using UnityEngine.ResourceManagement.AsyncOperations;
@@ -920,14 +921,14 @@ namespace Framework
         /// </summary>
         private HotUpdate.UpdateInfo TryReadVersionInfo(string versionPath)
         {
-            if (string.IsNullOrEmpty(versionPath) || !File.Exists(versionPath))
+            if (string.IsNullOrEmpty(versionPath) || !FileStorages.Shared.FileExists(versionPath))
             {
                 return null;
             }
 
             try
             {
-                string json = File.ReadAllText(versionPath);
+                string json = FileStorages.Shared.ReadText(versionPath);
                 return JsonSerializers.Shared.FromJson<HotUpdate.UpdateInfo>(json);
             }
             catch (Exception ex)
@@ -1033,8 +1034,8 @@ namespace Framework
                 return false;
             }
 
-            File.WriteAllBytes(targetPath, response.Data);
-            return File.Exists(targetPath);
+            FileStorages.Shared.WriteBytes(targetPath, response.Data);
+            return FileStorages.Shared.FileExists(targetPath);
 #else
             if (!File.Exists(sourcePath))
             {
@@ -1166,14 +1167,14 @@ namespace Framework
         /// </summary>
         private void DeleteFileQuietly(string path)
         {
-            if (string.IsNullOrEmpty(path) || !File.Exists(path))
+            if (string.IsNullOrEmpty(path) || !FileStorages.Shared.FileExists(path))
             {
                 return;
             }
 
             try
             {
-                File.Delete(path);
+                FileStorages.Shared.DeleteFile(path);
             }
             catch (Exception ex)
             {

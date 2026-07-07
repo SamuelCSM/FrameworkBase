@@ -3,6 +3,7 @@ using System.IO;
 using Cysharp.Threading.Tasks;
 using Framework;
 using Framework.Serialization;
+using Framework.Storage;
 using HybridCLR;
 using UnityEngine;
 
@@ -92,12 +93,12 @@ namespace Framework.HotUpdate
         private static byte[] TryReadPersistent(string bytesFileName)
         {
             string path = Path.Combine(Application.persistentDataPath, bytesFileName);
-            if (!File.Exists(path))
+            if (!FileStorages.Shared.FileExists(path))
                 return null;
 
             try
             {
-                return File.ReadAllBytes(path);
+                return FileStorages.Shared.ReadBytes(path);
             }
             catch (Exception ex)
             {

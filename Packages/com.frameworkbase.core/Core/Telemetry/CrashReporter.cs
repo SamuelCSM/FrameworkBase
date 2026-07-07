@@ -3,6 +3,7 @@ using System.IO;
 using Cysharp.Threading.Tasks;
 using Framework.Http;
 using Framework.Serialization;
+using Framework.Storage;
 using UnityEngine;
 
 namespace Framework.Core.Telemetry
@@ -98,14 +99,13 @@ namespace Framework.Core.Telemetry
                 _sessionRecordCount++;
                 try
                 {
-                    var fileInfo = new FileInfo(_filePath);
-                    if (fileInfo.Exists && fileInfo.Length > MaxLocalFileBytes)
+                    if (FileStorages.Shared.GetFileSize(_filePath) > MaxLocalFileBytes)
                     {
                         // 超限重建：新崩溃比旧崩溃更有排查价值。
-                        fileInfo.Delete();
+                        FileStorages.Shared.TryDeleteFile(_filePath);
                     }
 
-                    File.AppendAllText(_filePath, JsonSerializers.Shared.ToJson(record) + "\n");
+                    FileStorages.Shared.AppendText(_filePath, JsonSerializers.Shared.ToJson(record) + "\n");
                 }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
                 {
@@ -128,9 +128,9 @@ namespace Framework.Core.Telemetry
             string payload;
             try
             {
-                if (!File.Exists(_filePath))
+                if (!FileStorages.Shared.FileExists(_filePath))
                     return false;
-                payload = File.ReadAllText(_filePath);
+                payload = FileStorages.Shared.ReadText(_filePath);
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
@@ -157,7 +157,7 @@ namespace Framework.Core.Telemetry
 
                 lock (_writeLock)
                 {
-                    File.Delete(_filePath);
+                    FileStorages.Shared.DeleteFile(_filePath);
                 }
 
                 GameLog.Log("[CrashReporter] 积压崩溃记录已上报并清理");

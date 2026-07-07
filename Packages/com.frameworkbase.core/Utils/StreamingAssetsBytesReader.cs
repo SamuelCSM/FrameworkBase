@@ -1,6 +1,7 @@
 using System.IO;
 using Cysharp.Threading.Tasks;
 using Framework.Http;
+using Framework.Storage;
 using UnityEngine;
 
 namespace Framework
@@ -29,11 +30,10 @@ namespace Framework
 
             return response.Data;
 #else
-            if (!File.Exists(fullPath))
+            if (!FileStorages.Shared.FileExists(fullPath))
                 return null;
 
-            byte[] bytes = await UniTask.RunOnThreadPool(() => File.ReadAllBytes(fullPath));
-            return bytes;
+            return await FileStorages.Shared.ReadBytesAsync(fullPath);
 #endif
         }
     }

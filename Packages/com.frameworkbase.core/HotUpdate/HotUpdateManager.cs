@@ -9,6 +9,7 @@ using Cysharp.Threading.Tasks;
 using Framework;
 using Framework.Core;
 using Framework.Serialization;
+using Framework.Storage;
 
 namespace Framework.HotUpdate
 {
@@ -98,7 +99,7 @@ namespace Framework.HotUpdate
                 }
 
                 // 解析版本信息
-                string json = File.ReadAllText(tempPath);
+                string json = FileStorages.Shared.ReadText(tempPath);
                 UpdateInfo serverVersion = JsonSerializers.Shared.FromJson<UpdateInfo>(json);
                 
                 GameLog.Log($"[HotUpdateManager] 服务器版本: {serverVersion.AppVersion}, 资源版本: {serverVersion.ResourceVersion}, 代码版本: {serverVersion.CodeVersion}");
@@ -173,8 +174,8 @@ namespace Framework.HotUpdate
                 return false;
             }
 
-            byte[] manifestBytes = File.ReadAllBytes(manifestPath);
-            string signatureBase64 = File.ReadAllText(signaturePath);
+            byte[] manifestBytes = FileStorages.Shared.ReadBytes(manifestPath);
+            string signatureBase64 = FileStorages.Shared.ReadText(signaturePath);
 
             if (!UpdateSecurity.VerifyManifestSignature(manifestBytes, signatureBase64, publicKeyPem))
             {
@@ -268,8 +269,8 @@ namespace Framework.HotUpdate
                     {
                         GameLog.Error($"[HotUpdateManager] 补丁 {patchFile.FileName} 未携带 MD5，拒绝安装（代码补丁禁止无校验下发）");
 
-                        if (File.Exists(savePath))
-                            File.Delete(savePath);
+                        if (FileStorages.Shared.FileExists(savePath))
+                            FileStorages.Shared.TryDeleteFile(savePath);
 
                         _state = UpdateState.Error;
                         OnUpdateError?.Invoke($"补丁缺少校验哈希: {patchFile.FileName}");
@@ -281,8 +282,8 @@ namespace Framework.HotUpdate
                     {
                         GameLog.Error($"[HotUpdateManager] 文件校验失败: {patchFile.FileName}");
 
-                        if (File.Exists(savePath))
-                            File.Delete(savePath);
+                        if (FileStorages.Shared.FileExists(savePath))
+                            FileStorages.Shared.TryDeleteFile(savePath);
 
                         _state = UpdateState.Error;
                         OnUpdateError?.Invoke($"文件校验失败: {patchFile.FileName}");
@@ -415,8 +416,8 @@ namespace Framework.HotUpdate
         private static async UniTask<byte[]> ReadHotUpdateDllBytesAsync(string fileName)
         {
             string persistentPath = Path.Combine(Application.persistentDataPath, fileName);
-            if (File.Exists(persistentPath))
-                return await UniTask.RunOnThreadPool(() => File.ReadAllBytes(persistentPath));
+            if (FileStorages.Shared.FileExists(persistentPath))
+                return await FileStorages.Shared.ReadBytesAsync(persistentPath);
 
             GameLog.Warning($"[HotUpdateManager] persistent 无热更 DLL，回退 StreamingAssets: {fileName}");
             return await StreamingAssetsBytesReader.ReadAsync(fileName);

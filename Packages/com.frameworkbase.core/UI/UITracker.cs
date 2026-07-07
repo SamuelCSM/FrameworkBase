@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using Framework.Serialization;
+using Framework.Storage;
 using UnityEngine;
 
 namespace Framework
@@ -130,11 +131,10 @@ namespace Framework
             string filePath = System.IO.Path.Combine(Application.persistentDataPath, LocalFileName);
             try
             {
-                var fileInfo = new System.IO.FileInfo(filePath);
-                if (fileInfo.Exists && fileInfo.Length > MaxLocalFileBytes)
+                if (FileStorages.Shared.GetFileSize(filePath) > MaxLocalFileBytes)
                 {
                     // 超限重建：埋点属可丢失的辅助数据，丢弃旧文件优于撑爆用户存储。
-                    fileInfo.Delete();
+                    FileStorages.Shared.TryDeleteFile(filePath);
                 }
 
                 var sb = new System.Text.StringBuilder(_buffer.Count * 96);
@@ -143,7 +143,7 @@ namespace Framework
                     sb.AppendLine(JsonSerializers.Shared.ToJson(_buffer[i]));
                 }
 
-                System.IO.File.AppendAllText(filePath, sb.ToString());
+                FileStorages.Shared.AppendText(filePath, sb.ToString());
                 _buffer.Clear();
             }
             catch (Exception ex) when (ex is System.IO.IOException or UnauthorizedAccessException)
