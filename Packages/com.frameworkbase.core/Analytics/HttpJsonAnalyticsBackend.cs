@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Text;
 using Cysharp.Threading.Tasks;
-using UnityEngine.Networking;
+using Framework.Http;
 
 namespace Framework.Analytics
 {
@@ -42,28 +42,15 @@ namespace Framework.Analytics
             }
             body.Append(']');
 
-            try
-            {
-                using (var request = new UnityWebRequest(_endpointUrl, UnityWebRequest.kHttpVerbPOST))
-                {
-                    request.uploadHandler = new UploadHandlerRaw(Encoding.UTF8.GetBytes(body.ToString()));
-                    request.downloadHandler = new DownloadHandlerBuffer();
-                    request.SetRequestHeader("Content-Type", "application/json");
-                    request.timeout = _timeoutSeconds;
+            HttpResponse response = await HttpClients.Shared.PostTextAsync(
+                _endpointUrl,
+                body.ToString(),
+                "application/json",
+                _timeoutSeconds);
 
-                    await request.SendWebRequest();
-
-                    bool ok = request.result == UnityWebRequest.Result.Success;
-                    if (!ok)
-                        GameLog.Warning($"[HttpJsonAnalyticsBackend] 上报失败 code={request.responseCode} err={request.error}");
-                    return ok;
-                }
-            }
-            catch (Exception ex)
-            {
-                GameLog.Warning($"[HttpJsonAnalyticsBackend] 上报异常: {ex.Message}");
-                return false;
-            }
+            if (!response.Succeeded)
+                GameLog.Warning($"[HttpJsonAnalyticsBackend] 上报失败 code={response.StatusCode} err={response.Error}");
+            return response.Succeeded;
         }
     }
 }

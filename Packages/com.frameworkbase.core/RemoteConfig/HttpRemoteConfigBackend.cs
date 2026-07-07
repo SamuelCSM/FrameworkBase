@@ -1,7 +1,7 @@
 using System;
 using System.Text;
 using Cysharp.Threading.Tasks;
-using UnityEngine.Networking;
+using Framework.Http;
 
 namespace Framework.RemoteConfig
 {
@@ -30,26 +30,16 @@ namespace Framework.RemoteConfig
         public async UniTask<string> FetchAsync(RemoteConfigRequest request)
         {
             string url = BuildUrl(request);
-            try
-            {
-                using (var www = UnityWebRequest.Get(url))
-                {
-                    www.timeout = _timeoutSeconds;
-                    await www.SendWebRequest();
+            HttpResponse response = await HttpClients.Shared.SendAsync(
+                HttpRequest.Get(url).WithTimeout(_timeoutSeconds));
 
-                    if (www.result != UnityWebRequest.Result.Success)
-                    {
-                        GameLog.Warning($"[HttpRemoteConfigBackend] 拉取失败 code={www.responseCode} err={www.error}");
-                        return null;
-                    }
-                    return www.downloadHandler.text;
-                }
-            }
-            catch (Exception ex)
+            if (!response.Succeeded)
             {
-                GameLog.Warning($"[HttpRemoteConfigBackend] 拉取异常: {ex.Message}");
+                GameLog.Warning($"[HttpRemoteConfigBackend] 拉取失败 code={response.StatusCode} err={response.Error}");
                 return null;
             }
+
+            return response.Text;
         }
 
         /// <summary>把客户端属性拼为查询参数（供服务端条件定向；空属性省略）。</summary>
@@ -72,7 +62,7 @@ namespace Framework.RemoteConfig
                 return;
             sb.Append(hasQuery ? '&' : '?');
             hasQuery = true;
-            sb.Append(key).Append('=').Append(UnityWebRequest.EscapeURL(value));
+            sb.Append(key).Append('=').Append(HttpUrl.EscapeQueryValue(value));
         }
     }
 }

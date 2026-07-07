@@ -4,6 +4,7 @@ using System.Globalization;
 using System.IO;
 using Cysharp.Threading.Tasks;
 using Framework.Core;
+using Framework.Serialization;
 using UnityEngine;
 
 namespace Framework.RemoteConfig
@@ -121,7 +122,7 @@ namespace Framework.RemoteConfig
                     return false;
                 }
 
-                if (!RemoteConfigJson.TryParseObject(json, out var values))
+                if (!JsonObjectParser.TryParseObject(json, out var values))
                 {
                     GameLog.Warning("[RemoteConfigManager] 配置 JSON 解析失败，保留现值");
                     return false;
@@ -319,7 +320,7 @@ namespace Framework.RemoteConfig
                     return;
 
                 string json = File.ReadAllText(_cachePath);
-                if (RemoteConfigJson.TryParseObject(json, out var values))
+                if (JsonObjectParser.TryParseObject(json, out var values))
                     _active = values;
                 else
                     GameLog.Warning("[RemoteConfigManager] 缓存 JSON 解析失败，忽略缓存");

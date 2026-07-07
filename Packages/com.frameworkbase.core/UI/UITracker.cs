@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using Framework.Serialization;
 using UnityEngine;
 
 namespace Framework
@@ -139,7 +140,7 @@ namespace Framework
                 var sb = new System.Text.StringBuilder(_buffer.Count * 96);
                 for (int i = 0; i < _buffer.Count; i++)
                 {
-                    sb.AppendLine(JsonUtility.ToJson(_buffer[i]));
+                    sb.AppendLine(JsonSerializers.Shared.ToJson(_buffer[i]));
                 }
 
                 System.IO.File.AppendAllText(filePath, sb.ToString());

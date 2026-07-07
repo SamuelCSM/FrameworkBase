@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using Framework.Serialization;
 using UnityEngine;
 
 namespace Framework.Core
@@ -78,7 +79,7 @@ namespace Framework.Core
             run.Success = success;
             run.EndReason = endReason;
 
-            string json = JsonUtility.ToJson(run, true);
+            string json = JsonSerializers.Shared.ToJson(run, true);
             Debug.Log($"[LaunchTelemetry] {json}");
 
             try

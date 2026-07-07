@@ -1,8 +1,9 @@
 using System;
 using System.IO;
 using Cysharp.Threading.Tasks;
+using Framework.Http;
+using Framework.Serialization;
 using UnityEngine;
-using UnityEngine.Networking;
 
 namespace Framework.Core.Telemetry
 {
@@ -43,7 +44,7 @@ namespace Framework.Core.Telemetry
         /// <summary>是否已挂接（幂等保护）。</summary>
         private static bool _installed;
 
-        /// <summary>单条崩溃记录（JsonUtility 序列化载体）。</summary>
+        /// <summary>单条崩溃记录（JSON 序列化载体）。</summary>
         [Serializable]
         private struct CrashRecord
         {
@@ -104,7 +105,7 @@ namespace Framework.Core.Telemetry
                         fileInfo.Delete();
                     }
 
-                    File.AppendAllText(_filePath, JsonUtility.ToJson(record) + "\n");
+                    File.AppendAllText(_filePath, JsonSerializers.Shared.ToJson(record) + "\n");
                 }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
                 {
@@ -142,19 +143,16 @@ namespace Framework.Core.Telemetry
 
             try
             {
-                using (var request = new UnityWebRequest(uploadUrl, UnityWebRequest.kHttpVerbPOST))
-                {
-                    request.uploadHandler = new UploadHandlerRaw(System.Text.Encoding.UTF8.GetBytes(payload));
-                    request.downloadHandler = new DownloadHandlerBuffer();
-                    request.SetRequestHeader("Content-Type", "application/x-ndjson");
-                    request.timeout = 15;
-                    await request.SendWebRequest();
+                HttpResponse response = await HttpClients.Shared.PostTextAsync(
+                    uploadUrl,
+                    payload,
+                    "application/x-ndjson",
+                    15);
 
-                    if (request.result != UnityWebRequest.Result.Success)
-                    {
-                        GameLog.Warning($"[CrashReporter] 崩溃记录上报失败（保留本地下次重试）：{request.error}");
-                        return false;
-                    }
+                if (!response.Succeeded)
+                {
+                    GameLog.Warning($"[CrashReporter] 崩溃记录上报失败（保留本地下次重试）：{response.Error}");
+                    return false;
                 }
 
                 lock (_writeLock)
@@ -165,7 +163,7 @@ namespace Framework.Core.Telemetry
                 GameLog.Log("[CrashReporter] 积压崩溃记录已上报并清理");
                 return true;
             }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or UnityWebRequestException)
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
                 GameLog.Warning($"[CrashReporter] 崩溃记录上报异常（保留本地下次重试）：{ex.Message}");
                 return false;

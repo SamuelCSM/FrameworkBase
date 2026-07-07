@@ -6,9 +6,10 @@ using System.IO;
 using System.Reflection;
 using Cysharp.Threading.Tasks;
 using Framework.Data;
+using Framework.Http;
+using Framework.Serialization;
 using UnityEngine;
 using UnityEngine.AddressableAssets;
-using UnityEngine.Networking;
 using UnityEngine.ResourceManagement.AsyncOperations;
 
 namespace Framework
@@ -801,17 +802,14 @@ namespace Framework
         private async UniTask<byte[]> TryReadStreamingDatabaseBytesAsync(string sourcePath)
         {
             string sourceUrl = PathUtil.GetFileUrl(sourcePath);
-            using (var request = UnityWebRequest.Get(sourceUrl))
+            HttpResponse response = await HttpClients.Shared.SendAsync(HttpRequest.Get(sourceUrl));
+            if (!response.Succeeded)
             {
-                await request.SendWebRequest();
-                if (request.result != UnityWebRequest.Result.Success)
-                {
-                    GameLog.Warning($"[ConfigManager] Failed to read packaged database: {sourceUrl}, {request.error}");
-                    return null;
-                }
-
-                return request.downloadHandler.data;
+                GameLog.Warning($"[ConfigManager] Failed to read packaged database: {sourceUrl}, {response.Error}");
+                return null;
             }
+
+            return response.Data;
         }
 #endif
 
@@ -930,7 +928,7 @@ namespace Framework
             try
             {
                 string json = File.ReadAllText(versionPath);
-                return JsonUtility.FromJson<HotUpdate.UpdateInfo>(json);
+                return JsonSerializers.Shared.FromJson<HotUpdate.UpdateInfo>(json);
             }
             catch (Exception ex)
             {
@@ -1028,18 +1026,15 @@ namespace Framework
 
 #if UNITY_ANDROID && !UNITY_EDITOR
             string sourceUrl = PathUtil.GetFileUrl(sourcePath);
-            using (var request = UnityWebRequest.Get(sourceUrl))
+            HttpResponse response = await HttpClients.Shared.SendAsync(HttpRequest.Get(sourceUrl));
+            if (!response.Succeeded)
             {
-                await request.SendWebRequest();
-                if (request.result != UnityWebRequest.Result.Success)
-                {
-                    GameLog.Warning($"[ConfigManager] Failed to read packaged database: {sourceUrl}, {request.error}");
-                    return false;
-                }
-
-                File.WriteAllBytes(targetPath, request.downloadHandler.data);
-                return File.Exists(targetPath);
+                GameLog.Warning($"[ConfigManager] Failed to read packaged database: {sourceUrl}, {response.Error}");
+                return false;
             }
+
+            File.WriteAllBytes(targetPath, response.Data);
+            return File.Exists(targetPath);
 #else
             if (!File.Exists(sourcePath))
             {

@@ -8,6 +8,7 @@ using UnityEngine;
 using Cysharp.Threading.Tasks;
 using Framework;
 using Framework.Core;
+using Framework.Serialization;
 
 namespace Framework.HotUpdate
 {
@@ -98,7 +99,7 @@ namespace Framework.HotUpdate
 
                 // 解析版本信息
                 string json = File.ReadAllText(tempPath);
-                UpdateInfo serverVersion = JsonUtility.FromJson<UpdateInfo>(json);
+                UpdateInfo serverVersion = JsonSerializers.Shared.FromJson<UpdateInfo>(json);
                 
                 GameLog.Log($"[HotUpdateManager] 服务器版本: {serverVersion.AppVersion}, 资源版本: {serverVersion.ResourceVersion}, 代码版本: {serverVersion.CodeVersion}");
                 

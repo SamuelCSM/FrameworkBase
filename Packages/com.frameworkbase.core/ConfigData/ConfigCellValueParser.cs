@@ -3,6 +3,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Reflection;
+using Framework.Serialization;
 using UnityEngine;
 
 namespace Framework.Data
@@ -113,7 +114,7 @@ namespace Framework.Data
                 return parsedByStaticMethod;
             }
 
-            return JsonUtility.FromJson(text, actualType);
+            return JsonSerializers.Shared.FromJson(text, actualType);
         }
 
         /// <summary>

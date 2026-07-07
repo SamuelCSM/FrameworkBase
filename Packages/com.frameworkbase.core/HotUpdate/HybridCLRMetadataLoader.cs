@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using Cysharp.Threading.Tasks;
 using Framework;
+using Framework.Serialization;
 using HybridCLR;
 using UnityEngine;
 
@@ -49,7 +50,7 @@ namespace Framework.HotUpdate
                 try
                 {
                     string json = System.Text.Encoding.UTF8.GetString(manifestBytes);
-                    var data = JsonUtility.FromJson<HybridCLRMetadataManifestData>(json);
+                    var data = JsonSerializers.Shared.FromJson<HybridCLRMetadataManifestData>(json);
                     if (data?.assemblies != null && data.assemblies.Length > 0)
                         return data.assemblies;
                 }

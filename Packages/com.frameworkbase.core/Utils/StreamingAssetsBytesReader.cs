@@ -1,7 +1,7 @@
 using System.IO;
 using Cysharp.Threading.Tasks;
+using Framework.Http;
 using UnityEngine;
-using UnityEngine.Networking;
 
 namespace Framework
 {
@@ -20,17 +20,14 @@ namespace Framework
 
 #if UNITY_ANDROID && !UNITY_EDITOR
             string sourceUrl = PathUtil.GetFileUrl(fullPath);
-            using (var request = UnityWebRequest.Get(sourceUrl))
+            HttpResponse response = await HttpClients.Shared.SendAsync(HttpRequest.Get(sourceUrl));
+            if (!response.Succeeded)
             {
-                await request.SendWebRequest();
-                if (request.result != UnityWebRequest.Result.Success)
-                {
-                    GameLog.Warning($"[StreamingAssetsBytesReader] 读取失败: {sourceUrl}, {request.error}");
-                    return null;
-                }
-
-                return request.downloadHandler.data;
+                GameLog.Warning($"[StreamingAssetsBytesReader] 读取失败: {sourceUrl}, {response.Error}");
+                return null;
             }
+
+            return response.Data;
 #else
             if (!File.Exists(fullPath))
                 return null;

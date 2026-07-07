@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using Framework.Serialization;
 using UnityEngine;
 
 namespace Framework.HotUpdate
@@ -266,7 +267,7 @@ namespace Framework.HotUpdate
                 try
                 {
                     string json = System.IO.File.ReadAllText(persistentPath);
-                    UpdateInfo versionInfo = JsonUtility.FromJson<UpdateInfo>(json);
+                    UpdateInfo versionInfo = JsonSerializers.Shared.FromJson<UpdateInfo>(json);
                     if (versionInfo != null && !string.IsNullOrEmpty(versionInfo.AppVersion))
                     {
                         // 避免旧安装残留的 persistent/version.json 污染新整包版本判断。
@@ -296,7 +297,7 @@ namespace Framework.HotUpdate
                 try
                 {
                     string json = System.IO.File.ReadAllText(streamingPath);
-                    UpdateInfo versionInfo = JsonUtility.FromJson<UpdateInfo>(json);
+                    UpdateInfo versionInfo = JsonSerializers.Shared.FromJson<UpdateInfo>(json);
                     GameLog.Log($"[VersionManager] 读取出厂版本（StreamingAssets）: " +
                                $"Resource={versionInfo.ResourceVersion} Code={versionInfo.CodeVersion}");
                     return versionInfo;
@@ -393,7 +394,7 @@ namespace Framework.HotUpdate
             try
             {
                 string versionFilePath = System.IO.Path.Combine(Application.persistentDataPath, "version.json");
-                string json = JsonUtility.ToJson(versionInfo, true);
+                string json = JsonSerializers.Shared.ToJson(versionInfo, true);
                 System.IO.File.WriteAllText(versionFilePath, json);
                 GameLog.Log($"[VersionManager] 保存本地版本: {versionInfo.AppVersion}");
             }

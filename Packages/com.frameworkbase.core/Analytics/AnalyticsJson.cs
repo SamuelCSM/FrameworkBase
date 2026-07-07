@@ -1,6 +1,6 @@
 using System.Collections.Generic;
-using System.Globalization;
 using System.Text;
+using Framework.Serialization;
 
 namespace Framework.Analytics
 {
@@ -73,71 +73,17 @@ namespace Framework.Analytics
         /// <summary>按值类型写 "key":value（bool/数值裸写，其余按转义字符串写）。</summary>
         private static void AppendValue(StringBuilder sb, string key, object value)
         {
-            switch (value)
-            {
-                case null:
-                    WriteEscaped(sb, key);
-                    sb.Append(":null");
-                    break;
-                case bool b:
-                    WriteEscaped(sb, key);
-                    sb.Append(':').Append(b ? "true" : "false");
-                    break;
-                case int i:
-                    AppendNumber(sb, key, i);
-                    break;
-                case long l:
-                    AppendNumber(sb, key, l);
-                    break;
-                case float f:
-                    WriteEscaped(sb, key);
-                    sb.Append(':').Append(f.ToString("R", CultureInfo.InvariantCulture));
-                    break;
-                case double d:
-                    WriteEscaped(sb, key);
-                    sb.Append(':').Append(d.ToString("R", CultureInfo.InvariantCulture));
-                    break;
-                default:
-                    AppendString(sb, key, value.ToString());
-                    break;
-            }
+            JsonWriter.AppendProperty(sb, key, value);
         }
 
         private static void AppendNumber(StringBuilder sb, string key, long value)
         {
-            WriteEscaped(sb, key);
-            sb.Append(':').Append(value.ToString(CultureInfo.InvariantCulture));
+            JsonWriter.AppendProperty(sb, key, value);
         }
 
         private static void AppendString(StringBuilder sb, string key, string value)
         {
-            WriteEscaped(sb, key);
-            sb.Append(':');
-            WriteEscaped(sb, value ?? string.Empty);
-        }
-
-        /// <summary>写转义后的 JSON 字符串（含双引号定界）。</summary>
-        private static void WriteEscaped(StringBuilder sb, string s)
-        {
-            sb.Append('"');
-            foreach (char c in s)
-            {
-                switch (c)
-                {
-                    case '"':  sb.Append("\\\""); break;
-                    case '\\': sb.Append("\\\\"); break;
-                    case '\n': sb.Append("\\n");  break;
-                    case '\r': sb.Append("\\r");  break;
-                    case '\t': sb.Append("\\t");  break;
-                    default:
-                        if (c < 0x20)
-                            sb.Append("\\u").Append(((int)c).ToString("x4"));
-                        else
-                            sb.Append(c);
-                        break;
-                }
-            }
-            sb.Append('"');
+            JsonWriter.AppendProperty(sb, key, value ?? string.Empty);
         }
     }
 }

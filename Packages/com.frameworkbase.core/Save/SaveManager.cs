@@ -7,6 +7,7 @@ using System.Threading;
 using Cysharp.Threading.Tasks;
 using UnityEngine;
 using Framework.Core;
+using Framework.Serialization;
 
 namespace Framework.Save
 {
@@ -120,7 +121,7 @@ namespace Framework.Save
         /// </summary>
         public async UniTask SaveAsync<T>(T data, int slot = 0) where T : SaveData
         {
-            var json      = JsonUtility.ToJson(data, false);
+            var json      = JsonSerializers.Shared.ToJson(data, false);
             var encrypted = AesHelper.Encrypt(json);
 
             // 完整性一律用 HMAC-SHA256（encrypt-then-MAC）：篡改后无 MAC Key 无法重算合法完整性码
@@ -131,7 +132,7 @@ namespace Framework.Save
                 d = Convert.ToBase64String(encrypted),
                 m = MacSchemeHmac,
             };
-            var envelopeJson = JsonUtility.ToJson(envelope, false);
+            var envelopeJson = JsonSerializers.Shared.ToJson(envelope, false);
 
             var savePath   = SlotPath<T>(slot);
             var backupPath = BackupPath<T>(slot);
@@ -212,7 +213,7 @@ namespace Framework.Save
                 try
                 {
                     var raw      = File.ReadAllText(path);
-                    var envelope = JsonUtility.FromJson<SaveEnvelope>(raw);
+                    var envelope = JsonSerializers.Shared.FromJson<SaveEnvelope>(raw);
 
                     var encrypted = Convert.FromBase64String(envelope.d);
 
@@ -220,7 +221,7 @@ namespace Framework.Save
                         throw new InvalidDataException("完整性校验失败 — 文件可能被篡改或损坏");
 
                     var json   = AesHelper.Decrypt(encrypted);
-                    var result = JsonUtility.FromJson<T>(json);
+                    var result = JsonSerializers.Shared.FromJson<T>(json);
 
                     result.TryMigrate(envelope.v);
 
