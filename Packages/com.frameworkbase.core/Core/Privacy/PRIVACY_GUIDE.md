@@ -29,6 +29,9 @@ iOS ATT / 个性化广告授权走渠道能力：`GameEntry.Sdk.Privacy.RequestT
 - `false` 时 `Track` **直接丢弃**（数据根本不产生，不是缓存后补发——缓存再补发
   等于同意前就采集了，审核不认）；`FlushAsync` 不出网。
 - 默认 `true`（非合规市场行为不变）；合规市场在启动早期、同意判定前置 `false`。
+- 更稳的接线方式：在 `AppConfig` 开启 `RequirePrivacyConsentForAnalytics` 并填写
+  `PrivacyPolicyVersion`。这样 `AnalyticsManager` 初始化时会先按当前协议版本关闸；
+  未同意时不会读取/补发旧的 `analytics_pending.jsonl`。
 - 三方 SDK（含渠道埋点）同理：同意前不要初始化，放在 Accept 之后再
   `GameEntry.Sdk.InitializeAsync()`。
 

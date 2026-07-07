@@ -59,6 +59,13 @@ namespace Framework.Core
                  "对接三方平台时忽略此项，经 AnalyticsManager.SetBackend 注入扩展包实现")]
         public string AnalyticsUrl = string.Empty;
 
+        [Header("隐私合规")]
+        [Tooltip("开启后 AnalyticsManager 初始化时会按 PrivacyPolicyVersion 检查 PrivacyConsent；未同意前不采集、不补报。")]
+        public bool RequirePrivacyConsentForAnalytics = false;
+
+        [Tooltip("当前隐私协议版本号。协议改版时 +1；RequirePrivacyConsentForAnalytics 开启后用于判定采集闸门。")]
+        public int PrivacyPolicyVersion = 1;
+
         [Header("远程配置")]
         [Tooltip("远程配置端点（HTTP GET 返回扁平 JSON 对象，可为 CDN 静态文件；请求附带 device_id/app_version/channel/env 查询参数供服务端定向）。" +
                  "留空不拉取，仅用磁盘缓存与代码默认值。对接三方平台经 RemoteConfigManager.SetBackend 注入")]

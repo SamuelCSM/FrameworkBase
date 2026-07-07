@@ -1,6 +1,8 @@
 using System.Collections.Generic;
 using System.IO;
+using System.Reflection;
 using Framework.Analytics;
+using Framework.Core;
 using Framework.Core.Privacy;
 using NUnit.Framework;
 using UnityEngine;
@@ -19,12 +21,14 @@ namespace Framework.Tests
         {
             LogAssert.ignoreFailingMessages = true;
             PlayerPrefs.DeleteKey("Privacy.AcceptedPolicyVersion");
+            AppConfig.ClearCache();
         }
 
         [TearDown]
         public void TearDown()
         {
             PlayerPrefs.DeleteKey("Privacy.AcceptedPolicyVersion");
+            AppConfig.ClearCache();
             LogAssert.ignoreFailingMessages = false;
         }
 
@@ -88,6 +92,32 @@ namespace Framework.Tests
             analytics.OnShutdown();
         }
 
+        [Test]
+        public void 配置要求同意_初始化即关闸并清掉待补报快照()
+        {
+            string pendingPath = Path.Combine(Application.persistentDataPath, "analytics_pending.jsonl");
+            File.WriteAllText(pendingPath, "{}");
+
+            AppConfigAsset config = ScriptableObject.CreateInstance<AppConfigAsset>();
+            config.RequirePrivacyConsentForAnalytics = true;
+            config.PrivacyPolicyVersion = 7;
+            SetAppConfigForTest(config);
+
+            var analytics = new AnalyticsManager();
+            analytics.OnInit();
+            var backend = new CountingBackend();
+            analytics.SetBackend(backend);
+
+            analytics.Track("before_consent");
+            Assert.AreEqual(0, analytics.QueuedCount, "配置要求同意时，Analytics 初始化后必须立即关闸");
+            Assert.IsFalse(File.Exists(pendingPath), "未同意前不得保留旧待补报快照，避免之后补发同意前数据");
+
+            Assert.IsTrue(analytics.FlushAsync().GetAwaiter().GetResult());
+            Assert.AreEqual(0, backend.SendCount, "未同意前 Flush 不得出网");
+
+            analytics.OnShutdown();
+        }
+
         // ── RTBF 抹除 ────────────────────────────────────────────────────────
 
         [Test]
@@ -127,6 +157,13 @@ namespace Framework.Tests
                 SendCount++;
                 return Cysharp.Threading.Tasks.UniTask.FromResult(true);
             }
+        }
+
+        private static void SetAppConfigForTest(AppConfigAsset config)
+        {
+            typeof(AppConfig)
+                .GetField("_cached", BindingFlags.Static | BindingFlags.NonPublic)
+                ?.SetValue(null, config);
         }
     }
 }

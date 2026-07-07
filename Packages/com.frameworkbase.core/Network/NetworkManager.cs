@@ -47,10 +47,16 @@ namespace Framework
         {
             public readonly ConnectionEventType Type;
             public readonly string Error;
-            public ConnectionEvent(ConnectionEventType type, string error = null)
+            public readonly bool SuppressConnectedCallback;
+
+            public ConnectionEvent(
+                ConnectionEventType type,
+                string error = null,
+                bool suppressConnectedCallback = false)
             {
                 Type = type;
                 Error = error;
+                SuppressConnectedCallback = suppressConnectedCallback;
             }
         }
 
@@ -105,7 +111,7 @@ namespace Framework
         private int     _maxReconnectAttempts   = 5;
         private int     _currentReconnectAttempt = 0;
         private float[] _reconnectIntervals     = { 1f, 2f, 5f, 10f, 30f };
-        private bool    _isReconnecting         = false;
+        private volatile bool _isReconnecting   = false;
         private string  _lastHost;
         private int     _lastPort;
 
@@ -691,7 +697,9 @@ namespace Framework
 
         // ── TcpClient 回调：可能在后台线程触发，仅入队，处理推迟到主线程 ──────
         private void OnClientConnected()
-            => _connectionEvents.Enqueue(new ConnectionEvent(ConnectionEventType.Connected));
+            => _connectionEvents.Enqueue(new ConnectionEvent(
+                ConnectionEventType.Connected,
+                suppressConnectedCallback: _isReconnecting));
 
         private void OnClientDisconnected()
             => _connectionEvents.Enqueue(new ConnectionEvent(ConnectionEventType.Disconnected));
@@ -706,14 +714,14 @@ namespace Framework
             {
                 switch (ev.Type)
                 {
-                    case ConnectionEventType.Connected:    HandleConnected();      break;
+                    case ConnectionEventType.Connected:    HandleConnected(ev.SuppressConnectedCallback); break;
                     case ConnectionEventType.Disconnected: HandleDisconnected();   break;
                     case ConnectionEventType.Error:        HandleError(ev.Error);  break;
                 }
             }
         }
 
-        private void HandleConnected()
+        private void HandleConnected(bool suppressConnectedCallback)
         {
             // 传输层已连接：无论首连还是重连都重置心跳计时，避免刚连上就误判超时。
             _heartbeatTimer    = 0f;
@@ -728,6 +736,12 @@ namespace Framework
             if (_isReconnecting)
             {
                 GameLog.Log("[NetworkManager] 传输层已连接（重连中，等待重新鉴权恢复会话）");
+                return;
+            }
+
+            if (suppressConnectedCallback)
+            {
+                GameLog.Log("[NetworkManager] 重连连接事件已由重连流程消费，跳过 OnConnected 广播");
                 return;
             }
 

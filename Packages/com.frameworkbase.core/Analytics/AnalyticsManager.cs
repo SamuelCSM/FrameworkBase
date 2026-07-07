@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using Cysharp.Threading.Tasks;
 using Framework.Core;
+using Framework.Core.Privacy;
 using Framework.Storage;
 using UnityEngine;
 
@@ -57,6 +58,9 @@ namespace Framework.Analytics
         private string _appVersion;
         private string _userId = string.Empty;
         private string _pendingFilePath;
+        private bool _privacyConsentRequired;
+        private int _privacyPolicyVersion = 1;
+        private EventSubscription _privacyConsentSubscription;
 
         /// <summary>
         /// 采集闸门（隐私合规）：false 时 Track 直接丢弃（数据根本不产生，而非缓存后不发）、
@@ -78,7 +82,18 @@ namespace Framework.Analytics
             _appVersion = Application.version;
             _pendingFilePath = Path.Combine(Application.persistentDataPath, PendingFileName);
 
-            LoadPendingFromDisk();
+            ApplyPrivacyGateFromConfig();
+            RegisterPrivacyConsentListener();
+
+            if (CollectionEnabled)
+            {
+                LoadPendingFromDisk();
+            }
+            else
+            {
+                TryDeletePendingFile();
+            }
+
             GameLog.Log($"[AnalyticsManager] 初始化 session={_sessionId} 待补报={_queue.Count}");
         }
 
@@ -237,7 +252,14 @@ namespace Framework.Analytics
 
         public override void OnShutdown()
         {
-            PersistQueueToDisk();
+            _privacyConsentSubscription?.Unsubscribe();
+            _privacyConsentSubscription = null;
+
+            if (CollectionEnabled)
+                PersistQueueToDisk();
+            else
+                ClearQueue();
+
             _queue.Clear();
         }
 
@@ -251,6 +273,36 @@ namespace Framework.Analytics
                 _droppedSinceLastReport++;
             }
             _queue.Add(eventJson);
+        }
+
+        private void ApplyPrivacyGateFromConfig()
+        {
+            AppConfigAsset config = AppConfig.Load();
+            _privacyConsentRequired = config != null && config.RequirePrivacyConsentForAnalytics;
+            _privacyPolicyVersion = config != null ? Math.Max(1, config.PrivacyPolicyVersion) : 1;
+
+            if (_privacyConsentRequired)
+                CollectionEnabled = PrivacyConsent.IsAccepted(_privacyPolicyVersion);
+        }
+
+        private void RegisterPrivacyConsentListener()
+        {
+            if (!_privacyConsentRequired || GameEntry.Event == null)
+                return;
+
+            _privacyConsentSubscription = GameEntry.Event.Subscribe<int>(
+                GameMessage.PrivacyConsentChanged,
+                OnPrivacyConsentChanged);
+        }
+
+        private void OnPrivacyConsentChanged(int acceptedPolicyVersion)
+        {
+            if (!_privacyConsentRequired)
+                return;
+
+            CollectionEnabled = acceptedPolicyVersion >= _privacyPolicyVersion && _privacyPolicyVersion > 0;
+            if (!CollectionEnabled)
+                ClearQueue();
         }
 
         /// <summary>取当前后端；未注入时按 AppConfig 惰性选择默认实现。</summary>
