@@ -1,6 +1,8 @@
 using System;
+using System.Collections.Concurrent;
 using System.IO;
 using System.Text;
+using System.Threading;
 using UnityEngine;
 
 namespace Framework
@@ -19,15 +21,46 @@ namespace Framework
 
     /// <summary>
     /// 日志系统
-    /// 提供统一的日志输出接口，支持多种日志级别、文件输出和格式化
+    /// 提供统一的日志输出接口，支持多种日志级别、文件输出和格式化。
+    ///
+    /// 文件日志为异步写入：调用线程只做格式化 + 入队（微秒级），
+    /// 磁盘 I/O 由后台线程批量完成，主线程零阻塞（帧循环里可放心打日志）。
+    /// 代价是进程被强杀时可能丢最后一批未落盘的行——崩溃取证走 CrashReporter，
+    /// 文件日志定位是运行流水，丢尾部可接受。
+    ///
+    /// 轮转：单文件超过 <see cref="MaxLogFileBytes"/> 即切新文件；
+    /// 目录内按 <see cref="MaxLogFiles"/> 保留最新若干个，旧文件自动删除，
+    /// 长期运营的真机设备不会被日志撑爆存储。
     /// </summary>
     public static class GameLog
     {
         private static LogLevel _logLevel = LogLevel.Debug;
         private static bool _enableFileLog = false;
         private static string _logFilePath = string.Empty;
+        private static string _logDirectory = string.Empty;
         private static readonly object _fileLock = new object();
         private static StreamWriter _logWriter = null;
+        private static long _currentFileBytes;
+
+        // ── 异步写入 ─────────────────────────────────────────────────────────
+        private static readonly ConcurrentQueue<string> _pendingLines = new ConcurrentQueue<string>();
+        private static readonly AutoResetEvent _writeSignal = new AutoResetEvent(false);
+        private static Thread _writerThread;
+        private static volatile bool _writerRunning;
+        private static int _pendingCount;
+        private static int _droppedLines;
+
+        /// <summary>内存队列上限：磁盘卡死时封顶内存占用，超限丢行并计数补记。</summary>
+        private const int MaxPendingLines = 8192;
+
+        /// <summary>后台线程无信号时的兜底醒来间隔（毫秒）。</summary>
+        private const int WriterIdleWaitMs = 500;
+
+        /// <summary>单个日志文件体积上限（超过即轮转），可按项目调整。</summary>
+        public static long MaxLogFileBytes = 4 * 1024 * 1024;
+
+        /// <summary>日志目录保留的文件个数上限（含当前文件），可按项目调整。</summary>
+        public static int MaxLogFiles = 5;
 
         /// <summary>
         /// 当前日志级别
@@ -81,7 +114,8 @@ namespace Framework
         }
 
         /// <summary>
-        /// 启用或禁用文件日志
+        /// 启用或禁用文件日志。启用时打开新文件、清理超出保留数的旧文件并启动后台写线程；
+        /// 禁用时冲刷队列、停线程并关闭文件。
         /// </summary>
         /// <param name="enable">是否启用</param>
         /// <param name="logDirectory">日志目录（可选，默认为 PersistentDataPath/Logs）</param>
@@ -89,8 +123,6 @@ namespace Framework
         {
             if (enable == _enableFileLog)
                 return;
-
-            _enableFileLog = enable;
 
             if (enable)
             {
@@ -106,17 +138,19 @@ namespace Framework
                     Directory.CreateDirectory(logDirectory);
                 }
 
-                // 生成日志文件名（按日期分割）
-                string fileName = $"Log_{DateTime.Now:yyyy-MM-dd_HH-mm-ss}.txt";
-                _logFilePath = Path.Combine(logDirectory, fileName);
+                _logDirectory = logDirectory;
 
                 try
                 {
-                    // 创建文件写入器
-                    _logWriter = new StreamWriter(_logFilePath, true, Encoding.UTF8);
-                    _logWriter.AutoFlush = true;
+                    lock (_fileLock)
+                    {
+                        OpenNewLogFile();
+                    }
+                    CleanupOldFiles();
+                    StartWriterThread();
+                    _enableFileLog = true;
 
-                    UnityEngine.Debug.Log($"[GameLog] 文件日志已启用，路径: {_logFilePath}");
+                    UnityEngine.Debug.Log($"[GameLog] 文件日志已启用（异步写入），路径: {_logFilePath}");
                     WriteToFile($"========== 日志开始 {DateTime.Now:yyyy-MM-dd HH:mm:ss} ==========");
                 }
                 catch (Exception ex)
@@ -127,56 +161,188 @@ namespace Framework
             }
             else
             {
-                // 关闭文件日志
+                // 先摘牌再收尾：停止入队后冲刷存量，保证已入队的行都落盘
+                _enableFileLog = false;
                 CloseFileLog();
                 UnityEngine.Debug.Log("[GameLog] 文件日志已禁用");
             }
         }
 
-        /// <summary>
-        /// 关闭文件日志
-        /// </summary>
-        private static void CloseFileLog()
+        // ── 后台写线程 ───────────────────────────────────────────────────────
+
+        private static void StartWriterThread()
         {
-            if (_logWriter != null)
+            if (_writerThread != null && _writerThread.IsAlive)
+                return;
+
+            _writerRunning = true;
+            _writerThread = new Thread(WriterLoop)
             {
-                lock (_fileLock)
-                {
-                    try
-                    {
-                        WriteToFile($"========== 日志结束 {DateTime.Now:yyyy-MM-dd HH:mm:ss} ==========");
-                        _logWriter.Close();
-                        _logWriter.Dispose();
-                        _logWriter = null;
-                    }
-                    catch (Exception ex)
-                    {
-                        UnityEngine.Debug.LogError($"[GameLog] 关闭文件日志失败: {ex.Message}");
-                    }
-                }
-            }
+                Name = "GameLogWriter",
+                IsBackground = true // 不阻止进程退出；正常退出走 Shutdown 冲刷
+            };
+            _writerThread.Start();
         }
 
-        /// <summary>
-        /// 写入文件
-        /// </summary>
-        /// <param name="message">消息</param>
-        private static void WriteToFile(string message)
+        private static void WriterLoop()
         {
-            if (!_enableFileLog || _logWriter == null)
+            while (_writerRunning)
+            {
+                _writeSignal.WaitOne(WriterIdleWaitMs);
+                DrainQueue();
+            }
+            DrainQueue(); // 停机前收尾一遍
+        }
+
+        /// <summary>把队列里的行批量写入并做一次 Flush（批量落盘，不逐行刷）。</summary>
+        private static void DrainQueue()
+        {
+            bool wroteAny = false;
+
+            while (_pendingLines.TryDequeue(out string line))
+            {
+                Interlocked.Decrement(ref _pendingCount);
+                WriteLineWithRotation(line);
+                wroteAny = true;
+            }
+
+            int dropped = Interlocked.Exchange(ref _droppedLines, 0);
+            if (dropped > 0)
+            {
+                WriteLineWithRotation($"[GameLog] 写入积压超过 {MaxPendingLines} 行，丢弃 {dropped} 行");
+                wroteAny = true;
+            }
+
+            if (!wroteAny)
                 return;
 
             lock (_fileLock)
             {
+                try { _logWriter?.Flush(); }
+                catch { /* 磁盘异常时丢日志可接受，不能让写线程崩掉 */ }
+            }
+        }
+
+        /// <summary>写一行并在超过体积上限时轮转到新文件（仅写线程调用）。</summary>
+        private static void WriteLineWithRotation(string line)
+        {
+            lock (_fileLock)
+            {
+                if (_logWriter == null)
+                    return;
+
                 try
                 {
-                    _logWriter.WriteLine(message);
+                    _logWriter.WriteLine(line);
+                    // 估算字节数即可（UTF-8 中文按 1 字符≈1~3 字节），轮转阈值不需要精确
+                    _currentFileBytes += line.Length + 2;
+
+                    if (_currentFileBytes >= MaxLogFileBytes)
+                    {
+                        _logWriter.Flush();
+                        _logWriter.Close();
+                        _logWriter.Dispose();
+                        OpenNewLogFile();
+                        CleanupOldFiles();
+                    }
                 }
                 catch (Exception ex)
                 {
                     UnityEngine.Debug.LogError($"[GameLog] 写入日志文件失败: {ex.Message}");
                 }
             }
+        }
+
+        /// <summary>打开新日志文件（调用方持有 _fileLock）。文件名含毫秒避免快速轮转时撞名。</summary>
+        private static void OpenNewLogFile()
+        {
+            string fileName = $"Log_{DateTime.Now:yyyy-MM-dd_HH-mm-ss-fff}.txt";
+            _logFilePath = Path.Combine(_logDirectory, fileName);
+            _logWriter = new StreamWriter(_logFilePath, true, Encoding.UTF8) { AutoFlush = false };
+            _currentFileBytes = 0;
+        }
+
+        /// <summary>删除超出保留个数的旧日志（时间戳文件名按字典序即时间序）。</summary>
+        private static void CleanupOldFiles()
+        {
+            try
+            {
+                string[] files = Directory.GetFiles(_logDirectory, "Log_*.txt");
+                if (files.Length <= MaxLogFiles)
+                    return;
+
+                Array.Sort(files, StringComparer.Ordinal); // 旧在前
+                int deleteCount = files.Length - MaxLogFiles;
+                for (int i = 0; i < deleteCount; i++)
+                {
+                    try { File.Delete(files[i]); }
+                    catch { /* 单个文件删除失败不影响其余 */ }
+                }
+            }
+            catch (Exception ex)
+            {
+                UnityEngine.Debug.LogWarning($"[GameLog] 清理旧日志失败: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// 关闭文件日志：停写线程（等待其冲刷存量队列）后关文件。
+        /// </summary>
+        private static void CloseFileLog()
+        {
+            // 停线程：WriterLoop 退出前会把队列收尾写完
+            if (_writerThread != null && _writerThread.IsAlive)
+            {
+                _writerRunning = false;
+                _writeSignal.Set();
+                if (!_writerThread.Join(2000))
+                    UnityEngine.Debug.LogWarning("[GameLog] 写线程未在 2s 内退出，尾部日志可能丢失");
+            }
+            _writerThread = null;
+            _writerRunning = false;
+
+            lock (_fileLock)
+            {
+                if (_logWriter == null)
+                    return;
+
+                try
+                {
+                    _logWriter.WriteLine($"========== 日志结束 {DateTime.Now:yyyy-MM-dd HH:mm:ss} ==========");
+                    _logWriter.Flush();
+                    _logWriter.Close();
+                    _logWriter.Dispose();
+                }
+                catch (Exception ex)
+                {
+                    UnityEngine.Debug.LogError($"[GameLog] 关闭文件日志失败: {ex.Message}");
+                }
+                finally
+                {
+                    _logWriter = null;
+                }
+            }
+        }
+
+        /// <summary>
+        /// 写入文件：只入队 + 唤醒写线程，调用线程不做磁盘 I/O。
+        /// 队列超限时丢行计数，由写线程补记一条丢弃统计。
+        /// </summary>
+        /// <param name="message">消息</param>
+        private static void WriteToFile(string message)
+        {
+            if (!_enableFileLog)
+                return;
+
+            if (Interlocked.Increment(ref _pendingCount) > MaxPendingLines)
+            {
+                Interlocked.Decrement(ref _pendingCount);
+                Interlocked.Increment(ref _droppedLines);
+                return;
+            }
+
+            _pendingLines.Enqueue(message);
+            _writeSignal.Set();
         }
 
         /// <summary>
@@ -307,10 +473,13 @@ namespace Framework
         }
 
         /// <summary>
-        /// 清理日志系统（应用退出时调用）
+        /// 清理日志系统（应用退出时调用）：冲刷未落盘队列并关闭文件。
         /// </summary>
         public static void Shutdown()
         {
+            if (!_enableFileLog)
+                return;
+            _enableFileLog = false;
             CloseFileLog();
         }
 
