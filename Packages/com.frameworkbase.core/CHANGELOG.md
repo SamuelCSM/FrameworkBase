@@ -3,6 +3,17 @@
 本包遵循 [语义化版本](https://semver.org/lang/zh-CN/)。版本策略：
 `0.x` 为孵化期（API 可能调整）；首个商业项目立项时冻结为 `1.0.0`，此后破坏性变更必须升主版本。
 
+## [0.5.2] - 2026-07-07
+
+### 新增
+
+- **性能 HUD 叠加层 PerfHud**（P2-3）：屏幕顶部常驻一行——FPS（窗口均值 + 最差帧耗时，
+  均值掩盖不了的卡顿尖刺单独暴露）、托管/Native/预留内存与会话 GC 次数、
+  Addressables 存活句柄三计数（阶段切换前后不回落即有泄漏，配合 ResourceScope 定位）、
+  网络 RTT（心跳采样）。GameEntry 自动挂载（Inspector 可关，`PerfHud.Visible` 运行时可切）；
+  仅 Editor / Development Build 编译，正式包整类剥离零开销；文本每 0.5s 重建，帧内零分配。
+- 帧统计聚合 `FrameStatsAggregator` 纯逻辑独立（HUD 数字来源），单测 5 例。
+
 ## [0.5.1] - 2026-07-07
 
 ### 新增

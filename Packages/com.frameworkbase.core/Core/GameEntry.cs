@@ -51,6 +51,9 @@ namespace Framework.Core
         /// <summary>是否禁止屏幕自动休眠。联机对局中等待对手时通常无输入，不设会锁屏断线。</summary>
         [SerializeField] private bool _neverSleep = true;
 
+        /// <summary>是否挂载性能 HUD（FPS/内存/GC/资源句柄/RTT 常驻叠加）。仅 Editor / Development Build 生效，正式包零开销。</summary>
+        [SerializeField] private bool _enablePerfHud = true;
+
         // ── Manager 静态访问点 ────────────────────────────────────────────────
 
         /// <summary>资源管理器 — Addressables 加载、实例化、释放</summary>
@@ -113,6 +116,12 @@ namespace Framework.Core
             // 非 Editor 环境（EXE / 真机）自动挂载屏幕日志面板
             if (GetComponent<RuntimeConsole>() == null)
                 gameObject.AddComponent<RuntimeConsole>();
+#endif
+
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+            // 性能 HUD：FPS/内存/GC/Addressables 句柄/RTT 常驻叠加（正式包整类被剥离，零开销）
+            if (_enablePerfHud && GetComponent<PerfHud>() == null)
+                gameObject.AddComponent<PerfHud>();
 #endif
 
             Debug.Log("[GameEntry] 开始初始化框架...");
