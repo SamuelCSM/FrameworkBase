@@ -3,20 +3,20 @@ using System;
 namespace Framework
 {
     /// <summary>
-    /// Backward-compatible entry for the framework object pool.
-    /// New code should prefer <see cref="Pooling.ObjectPool{T}"/>; this type remains to avoid breaking existing callers.
+    /// 框架对象池的兼容入口。
+    /// 新代码建议优先使用 <see cref="Pooling.ObjectPool{T}"/>；此类型保留用于避免破坏已有调用方。
     /// </summary>
     public class ObjectPool<T> : Pooling.ObjectPool<T> where T : class, new()
     {
         /// <summary>
-        /// Create a general-purpose object pool.
+        /// 创建通用对象池。
         /// </summary>
-        /// <param name="createFunc">Object factory. Defaults to <c>new T()</c>.</param>
-        /// <param name="onGet">Callback invoked after checkout.</param>
-        /// <param name="onRelease">Callback invoked before storing the object back in the pool.</param>
-        /// <param name="defaultCapacity">Initial stack capacity.</param>
-        /// <param name="maxSize">Maximum number of objects retained in the pool.</param>
-        /// <param name="checkDuplicate">Whether duplicate releases are rejected.</param>
+        /// <param name="createFunc">对象创建工厂，默认使用 <c>new T()</c>。</param>
+        /// <param name="onGet">对象取出后的回调。</param>
+        /// <param name="onRelease">对象放回池前的回调。</param>
+        /// <param name="defaultCapacity">对象池初始容量。</param>
+        /// <param name="maxSize">对象池最多保留的对象数量。</param>
+        /// <param name="checkDuplicate">是否拒绝重复回收。</param>
         public ObjectPool(
             Func<T> createFunc = null,
             Action<T> onGet = null,

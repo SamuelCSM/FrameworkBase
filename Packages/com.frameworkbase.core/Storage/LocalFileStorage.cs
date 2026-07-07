@@ -5,7 +5,7 @@ using Cysharp.Threading.Tasks;
 namespace Framework.Storage
 {
     /// <summary>
-    /// System.IO-backed implementation of <see cref="IFileStorage"/> for Unity runtime/editor code.
+    /// 基于 System.IO 的 <see cref="IFileStorage"/> 实现，供 Unity 运行时和编辑器代码使用。
     /// </summary>
     public sealed class LocalFileStorage : IFileStorage
     {

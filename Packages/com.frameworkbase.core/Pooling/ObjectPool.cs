@@ -4,8 +4,8 @@ using System.Collections.Generic;
 namespace Framework.Pooling
 {
     /// <summary>
-    /// General-purpose object pool for reference types.
-    /// It centralizes duplicate-release checks, lifecycle callbacks, prewarm/shrink behavior, and simple statistics.
+    /// 面向引用类型的通用对象池。
+    /// 统一处理重复回收检测、生命周期回调、预热/收缩以及基础统计信息。
     /// </summary>
     public class ObjectPool<T> where T : class
     {
@@ -21,24 +21,24 @@ namespace Framework.Pooling
         private int _getCount;
         private int _releaseCount;
 
-        /// <summary>Current number of objects available in the pool.</summary>
+        /// <summary>当前池内可复用对象数量。</summary>
         public int CountInPool => _pool.Count;
 
-        /// <summary>Total number of objects created by this pool.</summary>
+        /// <summary>对象池累计创建的对象数量。</summary>
         public int CountCreated => _createCount;
 
-        /// <summary>Estimated number of checked-out objects.</summary>
+        /// <summary>估算的已取出对象数量。</summary>
         public int CountActive => _createCount - _pool.Count;
 
         /// <summary>
-        /// Create a pool.
+        /// 创建对象池。
         /// </summary>
-        /// <param name="createFunc">Factory used when the pool is empty.</param>
-        /// <param name="onGet">Callback invoked after an item is checked out.</param>
-        /// <param name="onRelease">Callback invoked before an item is stored back in the pool.</param>
-        /// <param name="defaultCapacity">Initial stack capacity.</param>
-        /// <param name="maxSize">Maximum number of objects retained in the pool.</param>
-        /// <param name="checkDuplicate">Whether duplicate releases are rejected in O(1) through a HashSet.</param>
+        /// <param name="createFunc">池为空时使用的对象创建工厂。</param>
+        /// <param name="onGet">对象取出后的回调。</param>
+        /// <param name="onRelease">对象放回池前的回调。</param>
+        /// <param name="defaultCapacity">对象池初始容量。</param>
+        /// <param name="maxSize">对象池最多保留的对象数量。</param>
+        /// <param name="checkDuplicate">是否通过 HashSet 以 O(1) 成本拒绝重复回收。</param>
         public ObjectPool(
             Func<T> createFunc,
             Action<T> onGet = null,
@@ -59,7 +59,7 @@ namespace Framework.Pooling
             _checkDuplicate = checkDuplicate;
         }
 
-        /// <summary>Get an object from the pool, creating a new one if needed.</summary>
+        /// <summary>从对象池取出对象；池为空时创建新对象。</summary>
         public T Get()
         {
             T obj = _pool.Count > 0 ? _pool.Pop() : CreateNew();
@@ -73,7 +73,7 @@ namespace Framework.Pooling
             return obj;
         }
 
-        /// <summary>Release an object back to the pool.</summary>
+        /// <summary>将对象回收到对象池。</summary>
         public void Release(T obj)
         {
             if (obj == null)
@@ -104,7 +104,7 @@ namespace Framework.Pooling
             _inPoolSet?.Add(obj);
         }
 
-        /// <summary>Pre-create objects and store them in the pool.</summary>
+        /// <summary>预先创建对象并放入对象池。</summary>
         public void Prewarm(int count)
         {
             if (count <= 0)
@@ -120,7 +120,7 @@ namespace Framework.Pooling
             GameLog.Log($"ObjectPool.Prewarm: 预热 {count} 个对象 - {typeof(T).Name}");
         }
 
-        /// <summary>Dispose pooled items and clear the pool. Checked-out items are not touched.</summary>
+        /// <summary>释放池内对象并清空对象池；已取出的对象不受影响。</summary>
         public void Clear()
         {
             while (_pool.Count > 0)
@@ -131,7 +131,7 @@ namespace Framework.Pooling
             GameLog.Log($"ObjectPool.Clear: 清空对象池 - {typeof(T).Name}");
         }
 
-        /// <summary>Remove pooled items until the pool reaches the target size.</summary>
+        /// <summary>移除多余池内对象，直到对象池达到目标大小。</summary>
         public void Shrink(int targetSize)
         {
             int normalizedTarget = Math.Max(0, targetSize);
@@ -150,7 +150,7 @@ namespace Framework.Pooling
             GameLog.Log($"ObjectPool.Shrink: 收缩对象池，移除 {removeCount} 个对象 - {typeof(T).Name}");
         }
 
-        /// <summary>Return human-readable pool statistics.</summary>
+        /// <summary>返回便于阅读的对象池统计信息。</summary>
         public string GetStatistics()
         {
             return $"[ObjectPool<{typeof(T).Name}>] " +
@@ -161,7 +161,7 @@ namespace Framework.Pooling
                    $"Release: {_releaseCount}";
         }
 
-        /// <summary>Log pool statistics through <see cref="GameLog"/>.</summary>
+        /// <summary>通过 <see cref="GameLog"/> 输出对象池统计信息。</summary>
         public void PrintStatistics()
         {
             GameLog.Log(GetStatistics());
