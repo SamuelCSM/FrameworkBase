@@ -110,6 +110,14 @@ namespace Framework.Analytics
                 return;
             }
 
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+            // 事件字典校验（仅开发期，正式包零开销）：违规打 Error 就地暴露，但不拦截发送——
+            // 埋点宁脏勿丢，修正闭环靠开发期告警，不靠线上丢事件。
+            List<string> violations = AnalyticsSchemaRegistry.Shared.Validate(eventName, properties);
+            for (int i = 0; i < violations.Count; i++)
+                GameLog.Error($"[AnalyticsManager] 事件字典违规: {violations[i]}");
+#endif
+
             // 丢弃补报：队列曾溢出时，把丢弃数作为质量信号随后续事件带出
             if (_droppedSinceLastReport > 0)
             {

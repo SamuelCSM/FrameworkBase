@@ -64,4 +64,32 @@ await GameEntry.Analytics.FlushAsync();
 | `launch_phase` | 每个启动阶段 | phase / success / duration_ms / detail |
 | `analytics_dropped` | 队列曾溢出 | count |
 
-业务事件命名建议 `snake_case`，模块前缀（如 `shop_open`），在项目内维护事件字典。
+业务事件命名建议 `snake_case`，模块前缀（如 `shop_open`）。
+
+## 事件字典（schema 校验）
+
+埋点最大的质量问题不是丢数据，是**脏数据**：事件名打错、属性名各写各的、类型漂移，
+看板全是碎片。事件契约用代码登记，开发期违规就地暴露：
+
+```csharp
+// 组合根启动时注册业务事件 schema（框架内置事件已预注册）
+AnalyticsSchemaRegistry.Shared.Register(
+    new AnalyticsEventSchema("stage_enter")
+        .Require("stage", AnalyticsPropType.String)
+        .Optional("from", AnalyticsPropType.String));
+
+// 严格事件：字典外属性也算违规
+AnalyticsSchemaRegistry.Shared.Register(
+    new AnalyticsEventSchema("purchase_done")
+        .Require("order_id", AnalyticsPropType.String)
+        .Require("amount", AnalyticsPropType.Integer)
+        .Strict());
+```
+
+行为约定：
+
+- 校验只在 **Editor / Development Build** 执行（`Track` 内条件编译），正式包零开销；
+- 违规打 Error 日志但**不拦截发送**——埋点宁脏勿丢，修正闭环靠开发期告警；
+- 未注册事件按事件名去重告警（同名只报一次，不刷屏）；
+- 重复注册后者覆盖，业务可覆写框架内置事件的契约；
+- 整数属性可传给 Float 类型（无损放行），反向不行。

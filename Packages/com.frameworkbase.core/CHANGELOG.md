@@ -3,6 +3,18 @@
 本包遵循 [语义化版本](https://semver.org/lang/zh-CN/)。版本策略：
 `0.x` 为孵化期（API 可能调整）；首个商业项目立项时冻结为 `1.0.0`，此后破坏性变更必须升主版本。
 
+## [0.6.3] - 2026-07-07
+
+### 新增
+
+- **埋点事件字典（schema 校验）**（P2B-7）：`AnalyticsSchemaRegistry` 把事件契约
+  代码化——事件名、必带/可选属性及类型（String/Bool/Integer/Float）、Strict 模式
+  （字典外属性也算违规）。`Track` 时校验仅在 Editor / Development Build 执行
+  （正式包零开销），违规打 Error 就地暴露但不拦截发送（埋点宁脏勿丢）；
+  未注册事件同名去重告警。框架内置事件（launch_run / launch_phase /
+  analytics_dropped / server_error）已预注册且与实发属性对齐。
+  整数传 Float 无损放行、反向拒绝。单测 8 例；用法见 ANALYTICS_GUIDE.md。
+
 ## [0.6.2] - 2026-07-07
 
 ### 新增
