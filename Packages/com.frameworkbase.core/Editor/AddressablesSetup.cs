@@ -167,35 +167,15 @@ namespace Framework.Editor
         }
 
         // ─── 验证（排查工具） ─────────────────────────────────────
+        /// <summary>
+        /// 深度校验入口（历史菜单保留，行为升级为完整规则引擎）：
+        /// 地址规范、remote/local 路径、label、场景混包、隐式依赖重复打包、
+        /// 体积阈值、同步漂移。规则说明见 Resource/ADDRESSABLES_GUIDE.md。
+        /// </summary>
         [MenuItem("Framework/Validate Addressables")]
         public static void ValidateAddressables()
         {
-            var settings = AddressableAssetSettingsDefaultObject.Settings;
-            if (settings == null) { Debug.LogWarning("[Addressables] Settings 不存在，请执行 Register Assets"); return; }
-
-            int issues = 0;
-            Debug.Log("══════════ Addressables 当前状态 ══════════");
-            foreach (var group in settings.groups)
-            {
-                if (group == null) continue;
-                Debug.Log($"  [{group.Name}]  {group.entries.Count} 个条目");
-                foreach (var entry in group.entries)
-                {
-                    string expected = AddrHelper.Address(entry.AssetPath);
-                    if (expected != null && expected != entry.address)
-                    {
-                        Debug.LogWarning($"      ⚠ {entry.address}  建议→  {expected}");
-                        issues++;
-                    }
-                    else
-                    {
-                        Debug.Log($"      ✓ {entry.address}");
-                    }
-                }
-            }
-            Debug.Log(issues == 0
-                ? "══════════ 验证通过 ✓ ══════════"
-                : $"══════════ {issues} 个地址问题，请执行 Register Assets (Sync) ══════════");
+            AddressablesValidator.RunAndReport();
         }
 
         // ─── Profile 方案（A 方案：整包本地化） ───────────────────────
@@ -250,6 +230,14 @@ namespace Framework.Editor
             {
                 Debug.LogError("[Addressables] Prepare Full Package 失败：Addressables Settings 不存在");
                 return;
+            }
+
+            // 构建 Addressables 前先过深度校验：Error 级问题（路径错配/场景混包等）直接终止，
+            // 与玩家构建的 AddressablesBuildCheck 门禁保持同一标准。
+            if (!AddressablesValidator.ValidateForBuild(out string errorSummary))
+            {
+                Debug.LogError($"[Addressables] Prepare Full Package 终止：{errorSummary}");
+                throw new System.InvalidOperationException(errorSummary);
             }
 
             try
