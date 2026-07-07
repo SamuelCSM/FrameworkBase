@@ -3,6 +3,22 @@
 本包遵循 [语义化版本](https://semver.org/lang/zh-CN/)。版本策略：
 `0.x` 为孵化期（API 可能调整）；首个商业项目立项时冻结为 `1.0.0`，此后破坏性变更必须升主版本。
 
+## [0.4.1] - 2026-07-07
+
+### 新增 / 改进
+
+- **HTTP / 序列化统一抽象**：`Framework.Http`（`IHttpClient` + `HttpClients.Shared`
+  可注入、`HttpRequest/HttpResponse`、`UnityHttpClient`、`HttpClientExtensions`、`HttpUrl`）
+  与 `Framework.Serialization`（`IJsonSerializer` + `JsonSerializers.Shared`、
+  `JsonObjectParser`、`JsonWriter`）。运行时联网/JSON 一律走这两层，不再直碰
+  `UnityWebRequest`/`JsonUtility`；埋点后端、崩溃上报、RemoteConfig、VersionManager 已收口。
+  规范见 `Http/HTTP_SERIALIZATION_GUIDE.md`（登记 `PatchDownloader` 为唯一运行时直连例外：
+  流式下载 + Range 断点续传）。
+- **GameLog 文件日志异步化**：写入改后台线程队列，主线程零阻塞磁盘 I/O；
+  按体积轮转 + 按个数清理旧文件，长期运营真机不被日志撑爆存储；退出冲刷不丢尾部。
+- **测试补齐**：AesHelper 加密核心 7 例（往返/随机 IV/HMAC 防篡改/设备绑定）、
+  VersionManager 热更判定矩阵 8 例、SaveManager 端到端 6 例、GameLog 4 例、HTTP 2 例。
+
 ## [0.4.0] - 2026-07-07
 
 ### 新增
