@@ -3,6 +3,21 @@
 本包遵循 [语义化版本](https://semver.org/lang/zh-CN/)。版本策略：
 `0.x` 为孵化期（API 可能调整）；首个商业项目立项时冻结为 `1.0.0`，此后破坏性变更必须升主版本。
 
+## [0.6.0] - 2026-07-07
+
+### 新增
+
+- **协议错误码字典 + 统一错误处理**（P2-2）：`ErrorCodeRegistry` 表驱动注册
+  （精确 > 窄区间 > 宽区间 > 默认规则；区间做模块段兜底，新增码天然有提示）+
+  `ErrorCenter.Handle(code, msg)` 一行完成 查字典→执行反应→限流埋点（同码 60s）。
+  反应类型：Silent / Toast / Popup / PopupRetry / ForceLogout / Maintenance；
+  文案回退链：localizer → key 原样 → 服务端 message → 默认文案。
+- 分段约定：0 成功；负数客户端本地合成（`ClientErrorCodes`：超时/断连/解析失败，
+  框架已内置规则）；1~999 框架保留；≥1000 业务按模块分段。
+- 默认呈现器走 TipManager（弹窗类降级 Error Toast），业务经 `SetPresenter` 替换；
+  新增 `GameMessage.ServerForceLogout / ServerMaintenance` 广播占号。
+- 用法见 `Core/Errors/ERROR_HANDLING_GUIDE.md`；单测 9 例。
+
 ## [0.5.2] - 2026-07-07
 
 ### 新增

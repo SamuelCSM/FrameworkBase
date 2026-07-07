@@ -14,6 +14,12 @@ namespace Framework
         /// <summary>语言切换，参数：string language。</summary>
         LanguageChanged = 9005,
 
+        /// <summary>服务端要求强制登出（会话失效/顶号/封禁），参数：int errorCode；业务订阅后跳登录界面。</summary>
+        ServerForceLogout = 9006,
+
+        /// <summary>停服维护通知，参数：int errorCode；业务订阅后进维护页/公告。</summary>
+        ServerMaintenance = 9007,
+
         // ==================== 玩家与登录消息：10000-10999 ====================
 
         /// <summary>玩家登录成功。</summary>
