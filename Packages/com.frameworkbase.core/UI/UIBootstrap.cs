@@ -40,6 +40,16 @@ namespace Framework
         [Tooltip("EventSystem 上的输入模块，当前项目使用旧输入系统 StandaloneInputModule")]
         [SerializeField] private BaseInputModule _inputModule;
 
+        [Header("适配")]
+        [Tooltip("开启后每个 UILayer Canvas 下垫一个 SafeArea 容器（GetLayerRoot 返回它），" +
+                 "所有经框架打开的 UI 自动避让刘海/挖孔/Home 条；关闭则由各 UI prefab 自行挂 SafeAreaFitter。" +
+                 "注意：开启会改变既有 UI 的实际可用区域，存量项目先在真机/Device Simulator 过一遍再开")]
+        [SerializeField] private bool _applySafeAreaToLayers = false;
+
+        [Tooltip("开启后在 UIRoot 上自动挂 CanvasScalerAutoMatch：按 屏幕/参考分辨率宽高比 动态设置 " +
+                 "CanvasScaler.matchWidthOrHeight（更宽按高缩放、更窄按宽缩放），异形比例设备 UI 不再溢出")]
+        [SerializeField] private bool _autoMatchScaler = true;
+
         /// <summary>UIRoot 根 Canvas</summary>
         public Canvas UIRootCanvas => _uiRootCanvas;
 
@@ -51,6 +61,9 @@ namespace Framework
 
         // 各层级 Canvas，由 Awake 动态创建
         private readonly Dictionary<UILayer, Canvas> _layerCanvases = new Dictionary<UILayer, Canvas>();
+
+        // 各层级的 SafeArea 容器（仅 _applySafeAreaToLayers 开启时创建）
+        private readonly Dictionary<UILayer, RectTransform> _layerSafeRoots = new Dictionary<UILayer, RectTransform>();
 
         private void Awake()
         {
@@ -67,6 +80,10 @@ namespace Framework
             // UI 统一改用 Screen Space - Overlay：直接合成在场景相机渲染之上，无需独立 UICamera
             //（UICamera 已从框架与场景移除），既省一台相机与移动端 tile 显存刷写，也免去跨场景维护相机 Stack。
             _uiRootCanvas.renderMode = RenderMode.ScreenSpaceOverlay;
+
+            // 分辨率适配：按屏幕宽高比动态调 CanvasScaler.match，固定值在异形比例设备上必翻车
+            if (_autoMatchScaler && _uiRootCanvas.GetComponent<CanvasScalerAutoMatch>() == null)
+                _uiRootCanvas.gameObject.AddComponent<CanvasScalerAutoMatch>();
 
             CreateLayerCanvases();
         }
@@ -170,6 +187,23 @@ namespace Framework
                 rt.anchoredPosition = Vector2.zero;
 
                 _layerCanvases[layer] = canvas;
+
+                // 可选：层内垫 SafeArea 容器，GetLayerRoot 返回它 → 全部经框架打开的 UI 自动避让异形屏
+                if (_applySafeAreaToLayers)
+                {
+                    var safe = new GameObject("SafeArea");
+                    safe.layer = uiLayer;
+                    safe.transform.SetParent(obj.transform, false);
+
+                    var safeRt = safe.AddComponent<RectTransform>();
+                    safeRt.anchorMin        = Vector2.zero;
+                    safeRt.anchorMax        = Vector2.one;
+                    safeRt.sizeDelta        = Vector2.zero;
+                    safeRt.anchoredPosition = Vector2.zero;
+                    safe.AddComponent<SafeAreaFitter>();
+
+                    _layerSafeRoots[layer] = safeRt;
+                }
             }
         }
 
@@ -182,8 +216,13 @@ namespace Framework
 
         /// <summary>
         /// 获取指定层级 Canvas 的 Transform，作为 UI Prefab 实例化时的父节点。
+        /// 开启 Apply Safe Area To Layers 时返回该层的 SafeArea 容器（UI 自动避让异形屏）。
         /// </summary>
         public Transform GetLayerRoot(UILayer layer)
-            => GetLayerCanvas(layer).transform;
+        {
+            if (_layerSafeRoots.TryGetValue(layer, out RectTransform safeRoot))
+                return safeRoot;
+            return GetLayerCanvas(layer).transform;
+        }
     }
 }

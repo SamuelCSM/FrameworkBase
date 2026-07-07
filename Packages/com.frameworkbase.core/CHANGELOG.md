@@ -3,6 +3,20 @@
 本包遵循 [语义化版本](https://semver.org/lang/zh-CN/)。版本策略：
 `0.x` 为孵化期（API 可能调整）；首个商业项目立项时冻结为 `1.0.0`，此后破坏性变更必须升主版本。
 
+## [0.6.4] - 2026-07-07
+
+### 新增
+
+- **UI 安全区/多分辨率适配**（P2B-8）：`SafeAreaFitter` 把 RectTransform 锚定到
+  Screen.safeArea（避让刘海/挖孔/Home 条，各边可选掩码，越界脏数据 Clamp 保护，
+  变化检测零成本跟随转屏）；`CanvasScalerAutoMatch` 按 屏幕/参考分辨率宽高比 动态
+  设置 CanvasScaler match（更宽按高缩放、更窄按宽缩放，信封式适配不溢出不变形）。
+- UIBootstrap 集成：`Auto Match Scaler`（默认开）自动挂载 match 适配；
+  `Apply Safe Area To Layers`（默认关，存量项目零影响）开启后各层 Canvas 垫
+  SafeArea 容器、GetLayerRoot 返回它，全部经框架打开的 UI 自动避让。
+- 纯计算入口可单测（TryCalculateAnchors / CalculateMatch），单测 8 例；
+  用法与两种接入方式取舍见 `UI/SAFEAREA_GUIDE.md`。
+
 ## [0.6.3] - 2026-07-07
 
 ### 新增
