@@ -3,6 +3,19 @@
 本包遵循 [语义化版本](https://semver.org/lang/zh-CN/)。版本策略：
 `0.x` 为孵化期（API 可能调整）；首个商业项目立项时冻结为 `1.0.0`，此后破坏性变更必须升主版本。
 
+## [0.7.0] - 2026-07-07
+
+### 新增
+
+- **隐私合规贯通**（P2B-10）：`PrivacyConsent` 版本化同意管理（同意绑定协议版本，
+  改版后旧同意失效须重新征得；变化广播 `GameMessage.PrivacyConsentChanged`）；
+  `AnalyticsManager.CollectionEnabled` 采集闸门（false 时 Track 直接丢弃——数据根本
+  不产生而非缓存补发，FlushAsync 不出网；默认 true 行为不变）；
+  `PrivacyCompliance.EraseAllLocalUserData()` RTBF 本地抹除编排（埋点队列与快照/
+  远程配置缓存/全部账号存档/PlayerPrefs/崩溃记录/启动指标/文件日志，逐项异常隔离
+  并返回执行报告）。边界如实：只清设备本地，服务端侧删除走业务后台流程。
+  接线指南 `Core/Privacy/PRIVACY_GUIDE.md`；单测 6 例。
+
 ## [0.6.5] - 2026-07-07
 
 ### 新增

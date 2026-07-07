@@ -20,6 +20,9 @@ namespace Framework
         /// <summary>停服维护通知，参数：int errorCode；业务订阅后进维护页/公告。</summary>
         ServerMaintenance = 9007,
 
+        /// <summary>隐私同意状态变化，参数：int acceptedPolicyVersion（0 = 撤回/未同意）。</summary>
+        PrivacyConsentChanged = 9008,
+
         // ==================== 玩家与登录消息：10000-10999 ====================
 
         /// <summary>玩家登录成功。</summary>

@@ -58,6 +58,13 @@ namespace Framework.Analytics
         private string _userId = string.Empty;
         private string _pendingFilePath;
 
+        /// <summary>
+        /// 采集闸门（隐私合规）：false 时 Track 直接丢弃（数据根本不产生，而非缓存后不发）、
+        /// FlushAsync 不出网。合规市场在用户同意隐私协议前置 false，同意后置 true
+        /// （接线见 Core/Privacy/PRIVACY_GUIDE.md）。默认 true 保持既有行为。
+        /// </summary>
+        public bool CollectionEnabled { get; set; } = true;
+
         /// <summary>当前会话 ID（每次启动一个）。</summary>
         public string SessionId => _sessionId;
 
@@ -110,6 +117,10 @@ namespace Framework.Analytics
                 return;
             }
 
+            // 隐私合规闸门：未同意前数据根本不产生（不进队列、不落盘），而非缓存后补发
+            if (!CollectionEnabled)
+                return;
+
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
             // 事件字典校验（仅开发期，正式包零开销）：违规打 Error 就地暴露，但不拦截发送——
             // 埋点宁脏勿丢，修正闭环靠开发期告警，不靠线上丢事件。
@@ -142,6 +153,9 @@ namespace Framework.Analytics
         /// </summary>
         public async UniTask<bool> FlushAsync()
         {
+            if (!CollectionEnabled)
+                return true; // 合规闸门关闭：不出网（同意前的残留队列留在本地，抹除走 ClearQueue）
+
             if (_isFlushing || _queue.Count == 0)
                 return true;
 
