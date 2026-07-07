@@ -64,7 +64,19 @@ namespace Framework
         /// <returns>用于取消本次订阅的句柄。</returns>
         public EventSubscription Subscribe(GameMessage message, Action callback, int priority = 0)
         {
-            return SubscribeInternal((int)message, callback, priority);
+            return Subscribe((int)message, callback, priority);
+        }
+
+        /// <summary>
+        /// 订阅无参数消息。业务热更程序集可自建枚举/常量后转为 int 传入。
+        /// </summary>
+        /// <param name="messageId">统一消息 ID。</param>
+        /// <param name="callback">消息回调。</param>
+        /// <param name="priority">优先级，数值越大越先触发。</param>
+        /// <returns>用于取消本次订阅的句柄。</returns>
+        public EventSubscription Subscribe(int messageId, Action callback, int priority = 0)
+        {
+            return SubscribeInternal(messageId, callback, priority);
         }
 
         /// <summary>
@@ -77,7 +89,20 @@ namespace Framework
         /// <returns>用于取消本次订阅的句柄。</returns>
         public EventSubscription Subscribe<T>(GameMessage message, Action<T> callback, int priority = 0)
         {
-            return SubscribeInternal((int)message, callback, priority);
+            return Subscribe((int)message, callback, priority);
+        }
+
+        /// <summary>
+        /// 订阅一个参数的消息。业务热更程序集可自建枚举/常量后转为 int 传入。
+        /// </summary>
+        /// <typeparam name="T">参数类型。</typeparam>
+        /// <param name="messageId">统一消息 ID。</param>
+        /// <param name="callback">消息回调。</param>
+        /// <param name="priority">优先级，数值越大越先触发。</param>
+        /// <returns>用于取消本次订阅的句柄。</returns>
+        public EventSubscription Subscribe<T>(int messageId, Action<T> callback, int priority = 0)
+        {
+            return SubscribeInternal(messageId, callback, priority);
         }
 
         /// <summary>
@@ -91,7 +116,21 @@ namespace Framework
         /// <returns>用于取消本次订阅的句柄。</returns>
         public EventSubscription Subscribe<T1, T2>(GameMessage message, Action<T1, T2> callback, int priority = 0)
         {
-            return SubscribeInternal((int)message, callback, priority);
+            return Subscribe((int)message, callback, priority);
+        }
+
+        /// <summary>
+        /// 订阅两个参数的消息。业务热更程序集可自建枚举/常量后转为 int 传入。
+        /// </summary>
+        /// <typeparam name="T1">第一个参数类型。</typeparam>
+        /// <typeparam name="T2">第二个参数类型。</typeparam>
+        /// <param name="messageId">统一消息 ID。</param>
+        /// <param name="callback">消息回调。</param>
+        /// <param name="priority">优先级，数值越大越先触发。</param>
+        /// <returns>用于取消本次订阅的句柄。</returns>
+        public EventSubscription Subscribe<T1, T2>(int messageId, Action<T1, T2> callback, int priority = 0)
+        {
+            return SubscribeInternal(messageId, callback, priority);
         }
 
         /// <summary>
@@ -103,7 +142,19 @@ namespace Framework
         /// <returns>用于取消本次订阅的句柄。</returns>
         public EventSubscription SubscribeArgs(GameMessage message, Action<object[]> callback, int priority = 0)
         {
-            return SubscribeInternal((int)message, callback, priority);
+            return SubscribeArgs((int)message, callback, priority);
+        }
+
+        /// <summary>
+        /// 订阅 object[] 自由参数消息，用于少量兼容广播场景。
+        /// </summary>
+        /// <param name="messageId">统一消息 ID。</param>
+        /// <param name="callback">消息回调。</param>
+        /// <param name="priority">优先级，数值越大越先触发。</param>
+        /// <returns>用于取消本次订阅的句柄。</returns>
+        public EventSubscription SubscribeArgs(int messageId, Action<object[]> callback, int priority = 0)
+        {
+            return SubscribeInternal(messageId, callback, priority);
         }
 
         /// <summary>
@@ -112,7 +163,16 @@ namespace Framework
         /// <param name="message">消息枚举。</param>
         public void Publish(GameMessage message)
         {
-            PublishInternal((int)message, action => ((Action)action).Invoke(), typeof(Action));
+            Publish((int)message);
+        }
+
+        /// <summary>
+        /// 发布无参数消息。业务热更程序集可自建枚举/常量后转为 int 传入。
+        /// </summary>
+        /// <param name="messageId">统一消息 ID。</param>
+        public void Publish(int messageId)
+        {
+            PublishInternal(messageId, action => ((Action)action).Invoke(), typeof(Action));
         }
 
         /// <summary>
@@ -123,7 +183,18 @@ namespace Framework
         /// <param name="arg">消息参数。</param>
         public void Publish<T>(GameMessage message, T arg)
         {
-            PublishInternal((int)message, action => ((Action<T>)action).Invoke(arg), typeof(Action<T>));
+            Publish((int)message, arg);
+        }
+
+        /// <summary>
+        /// 发布一个参数的消息。业务热更程序集可自建枚举/常量后转为 int 传入。
+        /// </summary>
+        /// <typeparam name="T">参数类型。</typeparam>
+        /// <param name="messageId">统一消息 ID。</param>
+        /// <param name="arg">消息参数。</param>
+        public void Publish<T>(int messageId, T arg)
+        {
+            PublishInternal(messageId, action => ((Action<T>)action).Invoke(arg), typeof(Action<T>));
         }
 
         /// <summary>
@@ -136,8 +207,21 @@ namespace Framework
         /// <param name="arg2">第二个消息参数。</param>
         public void Publish<T1, T2>(GameMessage message, T1 arg1, T2 arg2)
         {
+            Publish((int)message, arg1, arg2);
+        }
+
+        /// <summary>
+        /// 发布两个参数的消息。业务热更程序集可自建枚举/常量后转为 int 传入。
+        /// </summary>
+        /// <typeparam name="T1">第一个参数类型。</typeparam>
+        /// <typeparam name="T2">第二个参数类型。</typeparam>
+        /// <param name="messageId">统一消息 ID。</param>
+        /// <param name="arg1">第一个消息参数。</param>
+        /// <param name="arg2">第二个消息参数。</param>
+        public void Publish<T1, T2>(int messageId, T1 arg1, T2 arg2)
+        {
             PublishInternal(
-                (int)message,
+                messageId,
                 action => ((Action<T1, T2>)action).Invoke(arg1, arg2),
                 typeof(Action<T1, T2>));
         }
@@ -149,7 +233,17 @@ namespace Framework
         /// <param name="args">自由参数列表。</param>
         public void PublishArgs(GameMessage message, params object[] args)
         {
-            PublishInternal((int)message, action => ((Action<object[]>)action).Invoke(args), typeof(Action<object[]>));
+            PublishArgs((int)message, args);
+        }
+
+        /// <summary>
+        /// 发布 object[] 自由参数消息。
+        /// </summary>
+        /// <param name="messageId">统一消息 ID。</param>
+        /// <param name="args">自由参数列表。</param>
+        public void PublishArgs(int messageId, params object[] args)
+        {
+            PublishInternal(messageId, action => ((Action<object[]>)action).Invoke(args), typeof(Action<object[]>));
         }
 
         /// <summary>

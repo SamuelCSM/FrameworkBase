@@ -70,8 +70,9 @@ Tools/ci/                    本地 CI 门禁脚本（run-ci.ps1）与 CI 说明
    `GameProtocol → HotUpdate`；无热更程序集的项目关闭 `EnableHotUpdate`。
 4. **提交纪律**：提交前跑 `Tools\ci\run-ci.ps1`（需关闭 Unity 编辑器）；push/PR 由 GitHub Actions
    复验（首次启用需配置 Unity 许可 Secrets，见 `Tools/ci/README.md`）。
-5. **业务广播消息**：在业务程序集自建枚举从 20000 起占号；`Framework/Event/GameMessage.cs`
-   仅保留框架系统段（9000-9999）与登录段（10000-10999）。
+5. **业务广播消息**：在业务程序集自建枚举从 20000 起占号，订阅/发布时转成 `int` 走
+   `EventManager` 重载；`Framework/Event/GameMessage.cs` 仅保留框架系统段（9000-9999）
+   与登录段（10000-10999）。
 
 ## 约定
 

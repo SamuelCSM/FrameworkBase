@@ -112,8 +112,8 @@ namespace Framework.Core
         {
             base.Awake();
 
-#if !UNITY_EDITOR
-            // 非 Editor 环境（EXE / 真机）自动挂载屏幕日志面板
+#if !UNITY_EDITOR && DEVELOPMENT_BUILD
+            // 非 Editor 的 Development Build 自动挂载屏幕日志面板
             if (GetComponent<RuntimeConsole>() == null)
                 gameObject.AddComponent<RuntimeConsole>();
 #endif

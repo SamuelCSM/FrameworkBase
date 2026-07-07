@@ -193,7 +193,19 @@ namespace Framework
         /// <returns>订阅句柄，通常无需手动持有。</returns>
         protected EventSubscription ListenEvent(GameMessage message, Action callback, int priority = 0)
         {
-            EventSubscription sub = GameEntry.Event.Subscribe(message, callback, priority);
+            return ListenEvent((int)message, callback, priority);
+        }
+
+        /// <summary>
+        /// 订阅无参数消息，窗口关闭时自动注销。业务热更程序集可自建枚举/常量后转为 int 传入。
+        /// </summary>
+        /// <param name="messageId">统一消息 ID。</param>
+        /// <param name="callback">消息回调。</param>
+        /// <param name="priority">优先级，数值越大越先触发。</param>
+        /// <returns>订阅句柄，通常无需手动持有。</returns>
+        protected EventSubscription ListenEvent(int messageId, Action callback, int priority = 0)
+        {
+            EventSubscription sub = GameEntry.Event.Subscribe(messageId, callback, priority);
             AddSubscription(sub);
             return sub;
         }
@@ -208,7 +220,20 @@ namespace Framework
         /// <returns>订阅句柄，通常无需手动持有。</returns>
         protected EventSubscription ListenEvent<T>(GameMessage message, Action<T> callback, int priority = 0)
         {
-            EventSubscription sub = GameEntry.Event.Subscribe(message, callback, priority);
+            return ListenEvent((int)message, callback, priority);
+        }
+
+        /// <summary>
+        /// 订阅一个参数的消息，窗口关闭时自动注销。业务热更程序集可自建枚举/常量后转为 int 传入。
+        /// </summary>
+        /// <typeparam name="T">参数类型。</typeparam>
+        /// <param name="messageId">统一消息 ID。</param>
+        /// <param name="callback">消息回调。</param>
+        /// <param name="priority">优先级，数值越大越先触发。</param>
+        /// <returns>订阅句柄，通常无需手动持有。</returns>
+        protected EventSubscription ListenEvent<T>(int messageId, Action<T> callback, int priority = 0)
+        {
+            EventSubscription sub = GameEntry.Event.Subscribe(messageId, callback, priority);
             AddSubscription(sub);
             return sub;
         }
@@ -224,7 +249,21 @@ namespace Framework
         /// <returns>订阅句柄，通常无需手动持有。</returns>
         protected EventSubscription ListenEvent<T1, T2>(GameMessage message, Action<T1, T2> callback, int priority = 0)
         {
-            EventSubscription sub = GameEntry.Event.Subscribe(message, callback, priority);
+            return ListenEvent((int)message, callback, priority);
+        }
+
+        /// <summary>
+        /// 订阅两个参数的消息，窗口关闭时自动注销。业务热更程序集可自建枚举/常量后转为 int 传入。
+        /// </summary>
+        /// <typeparam name="T1">第一个参数类型。</typeparam>
+        /// <typeparam name="T2">第二个参数类型。</typeparam>
+        /// <param name="messageId">统一消息 ID。</param>
+        /// <param name="callback">消息回调。</param>
+        /// <param name="priority">优先级，数值越大越先触发。</param>
+        /// <returns>订阅句柄，通常无需手动持有。</returns>
+        protected EventSubscription ListenEvent<T1, T2>(int messageId, Action<T1, T2> callback, int priority = 0)
+        {
+            EventSubscription sub = GameEntry.Event.Subscribe(messageId, callback, priority);
             AddSubscription(sub);
             return sub;
         }

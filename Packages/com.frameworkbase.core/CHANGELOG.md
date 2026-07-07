@@ -17,6 +17,16 @@
 - 默认呈现器走 TipManager（弹窗类降级 Error Toast），业务经 `SetPresenter` 替换；
   新增 `GameMessage.ServerForceLogout / ServerMaintenance` 广播占号。
 - 用法见 `Core/Errors/ERROR_HANDLING_GUIDE.md`；单测 9 例。
+- `EventManager` 新增 `int messageId` 订阅/发布重载，`UIBase.ListenEvent` 同步支持
+  `int messageId`，业务热更程序集可自建消息枚举（建议 20000 起按模块分段）而无需修改
+  框架层 `GameMessage`。
+
+### 改进 / 修复
+
+- `RuntimeConsole` 自动挂载收紧到非 Editor 的 Development Build；组件即使被手动放进
+  正式包场景，也会在 `Awake` 直接禁用，不订阅日志、不绘制面板。
+- `Resource/ADDRESSABLES_GUIDE.md` 扩写为 Addressables 分组与打包指南，补充目录约定、
+  分组决策、Shared 依赖、Profile、同步菜单与常见校验问题修复。
 
 ## [0.5.2] - 2026-07-07
 

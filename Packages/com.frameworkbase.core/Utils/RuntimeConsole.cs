@@ -54,6 +54,10 @@ namespace Framework
 
         private void Awake()
         {
+#if !UNITY_EDITOR && !DEVELOPMENT_BUILD
+            enabled = false;
+            return;
+#endif
             DontDestroyOnLoad(gameObject);
             Application.logMessageReceived += OnLogReceived;
 

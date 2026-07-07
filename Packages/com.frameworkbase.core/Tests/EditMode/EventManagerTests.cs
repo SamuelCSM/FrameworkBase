@@ -11,6 +11,11 @@ namespace Framework.Tests
     /// </summary>
     public class EventManagerTests
     {
+        private enum BusinessMessage
+        {
+            BagChanged = 20000,
+        }
+
         private EventManager _event;
 
         [SetUp]
@@ -48,6 +53,19 @@ namespace Framework.Tests
             _event.Publish(GameMessage.LanguageChanged, "zh-CN");
 
             Assert.AreEqual("zh-CN", received);
+        }
+
+        /// <summary>业务热更消息可使用自建枚举，通过 int ID 订阅和发布。</summary>
+        [Test]
+        public void Subscribe_BusinessIntMessage_Invoked()
+        {
+            int received = 0;
+            int messageId = (int)BusinessMessage.BagChanged;
+            _event.Subscribe<int>(messageId, value => received = value);
+
+            _event.Publish(messageId, 7);
+
+            Assert.AreEqual(7, received);
         }
 
         /// <summary>取消订阅后再发布不应再触发回调。</summary>

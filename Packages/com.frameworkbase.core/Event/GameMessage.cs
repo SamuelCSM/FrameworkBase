@@ -1,8 +1,8 @@
 namespace Framework
 {
     /// <summary>
-    /// 游戏内通用消息 ID 表。
-    /// 所有业务广播消息必须在这里统一占号，避免不同模块私自定义重复 ID。
+    /// 框架内置消息 ID 表。
+    /// 业务热更程序集请自建枚举或常量，并通过 EventManager 的 int messageId 重载订阅/发布。
     /// </summary>
     public enum GameMessage
     {
@@ -30,9 +30,5 @@ namespace Framework
 
         /// <summary>玩家登出。</summary>
         PlayerLogout = 10003,
-
-        // ==================== 业务消息：20000 起 ====================
-        // 业务项目在此从 20000 开始追加自己的广播消息占号（建议按模块划分号段），
-        // 框架层不使用该区间，占号统一登记在本枚举避免模块间冲突。
     }
 }
