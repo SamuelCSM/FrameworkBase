@@ -1,0 +1,61 @@
+# FrameworkBase 代码风格统一（IDE / Rider / VS / VSCode 自动生效）。
+# 定位：跨成员、跨 IDE 的最低一致性底线——编码、缩进、换行不再各人一套；
+# C# 命名规则违规在 IDE 内即时以 warning 提示，评审不再纠结格式。
+root = true
+
+[*]
+charset = utf-8
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+[*.cs]
+indent_style = space
+indent_size = 4
+
+# ── C# 风格（IDE 提示级，不阻塞编译）─────────────────────────────────────
+# this. 前缀：不用（与现有代码一致）
+dotnet_style_qualification_for_field = false:suggestion
+dotnet_style_qualification_for_property = false:suggestion
+dotnet_style_qualification_for_method = false:suggestion
+# 内置类型关键字（int 而非 Int32）
+dotnet_style_predefined_type_for_locals_parameters_members = true:warning
+# 表达式可读性
+csharp_style_var_when_type_is_apparent = true:suggestion
+csharp_prefer_braces = true:suggestion
+
+# ── 命名规则（违规 IDE 报 warning）────────────────────────────────────────
+# 私有实例字段：_camelCase（与框架现有代码一致）
+dotnet_naming_rule.private_fields_underscore.symbols = private_fields
+dotnet_naming_rule.private_fields_underscore.style = underscore_camel
+dotnet_naming_rule.private_fields_underscore.severity = warning
+dotnet_naming_symbols.private_fields.applicable_kinds = field
+dotnet_naming_symbols.private_fields.applicable_accessibilities = private
+dotnet_naming_style.underscore_camel.capitalization = camel_case
+dotnet_naming_style.underscore_camel.required_prefix = _
+
+# 常量：PascalCase
+dotnet_naming_rule.constants_pascal.symbols = constants
+dotnet_naming_rule.constants_pascal.style = pascal_case_style
+dotnet_naming_rule.constants_pascal.severity = warning
+dotnet_naming_symbols.constants.applicable_kinds = field
+dotnet_naming_symbols.constants.required_modifiers = const
+dotnet_naming_style.pascal_case_style.capitalization = pascal_case
+
+# 接口：I 前缀
+dotnet_naming_rule.interfaces_prefixed.symbols = interfaces
+dotnet_naming_rule.interfaces_prefixed.style = interface_prefix
+dotnet_naming_rule.interfaces_prefixed.severity = warning
+dotnet_naming_symbols.interfaces.applicable_kinds = interface
+dotnet_naming_style.interface_prefix.capitalization = pascal_case
+dotnet_naming_style.interface_prefix.required_prefix = I
+
+[*.{json,asmdef,yml,yaml}]
+indent_style = space
+indent_size = 2
+
+[*.md]
+trim_trailing_whitespace = false
+
+[*.{ps1,bat}]
+indent_style = space
+indent_size = 4

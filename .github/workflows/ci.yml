@@ -1,4 +1,4 @@
-# FrameworkBase 质量门禁：编译 + EditMode 测试。
+# FrameworkBase 质量门禁：编译 + EditMode 测试 + PlayMode 冒烟。
 # 与 Tools/ci/run-ci.ps1 等价，push / PR 自动执行。
 #
 # 首次启用需要在仓库 Settings → Secrets and variables → Actions 配置 Unity 授权：
@@ -13,8 +13,8 @@ on:
   pull_request:
 
 jobs:
-  editmode-tests:
-    name: 编译 + EditMode 测试
+  tests:
+    name: 编译 + EditMode/PlayMode 测试
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -30,15 +30,16 @@ jobs:
 
       # unityVersion 默认从 ProjectSettings/ProjectVersion.txt 读取（2022.3.62f3）。
       # 编译错误会导致本步骤失败，天然充当编译门禁。
-      - name: Run EditMode tests
+      # testMode: all = EditMode + PlayMode 两条跑道（单 job 串行，避免个人版许可并发冲突）。
+      - name: Run EditMode + PlayMode tests
         uses: game-ci/unity-test-runner@v4
         env:
           UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
           UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
           UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
         with:
-          testMode: editmode
-          checkName: EditMode Test Results
+          testMode: all
+          checkName: Test Results
 
       - name: Upload test results
         uses: actions/upload-artifact@v4

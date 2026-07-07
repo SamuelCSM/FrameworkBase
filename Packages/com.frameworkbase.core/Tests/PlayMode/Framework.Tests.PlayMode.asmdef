@@ -1,0 +1,22 @@
+{
+    "name": "Framework.Tests.PlayMode",
+    "rootNamespace": "Framework.Tests.PlayMode",
+    "references": [
+        "Framework",
+        "UniTask",
+        "UnityEngine.TestRunner"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": true,
+    "precompiledReferences": [
+        "nunit.framework.dll"
+    ],
+    "autoReferenced": false,
+    "defineConstraints": [
+        "UNITY_INCLUDE_TESTS"
+    ],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

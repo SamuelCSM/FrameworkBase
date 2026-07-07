@@ -3,6 +3,21 @@
 本包遵循 [语义化版本](https://semver.org/lang/zh-CN/)。版本策略：
 `0.x` 为孵化期（API 可能调整）；首个商业项目立项时冻结为 `1.0.0`，此后破坏性变更必须升主版本。
 
+## [0.6.1] - 2026-07-07
+
+### 新增
+
+- **CI PlayMode 跑道**（P2-5）：新增 `Tests/PlayMode` 测试程序集与冒烟用例 3 例
+  （UniTask 真实帧循环调度 / TimerManager 接真实 Update 驱动的单次与循环定时器 /
+  PerfHud 挂载采样渲染）——EditMode 守逻辑正确性，PlayMode 守"接上真实玩家循环没散架"，
+  用例保持场景无关，任何工程可跑。
+- `Tools/ci/run-ci.ps1` 升级：EditMode 先行、通过后自动续跑 PlayMode
+  （`-SkipPlayMode` 可快速自查），分平台产物 `Logs/ci/{editmode,playmode}-*.xml`；
+  GitHub Actions 改 `testMode: all`（单 job 串行，避免个人版许可并发冲突）。
+- **静态门禁 .editorconfig**：编码/缩进/换行统一 + C# 命名规则
+  （私有字段 `_camelCase`、常量 PascalCase、接口 I 前缀）IDE 内即时 warning，
+  评审不再纠结格式。
+
 ## [0.6.0] - 2026-07-07
 
 ### 新增
