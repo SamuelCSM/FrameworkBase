@@ -18,7 +18,7 @@ namespace Framework
     ///   3. 按分组/标签计算并下载远端资源包
     ///   4. 提供带引用计数的异步加载 / 实例化 / 释放接口
     /// </summary>
-    public class ResourceManager : Core.FrameworkComponent
+    public class ResourceManager : Core.FrameworkComponent, IResourceScopeHost
     {
         // 资源引用计数字典（仅统计 LoadAsset/LoadAssetAsync 加载的资源句柄）
         private Dictionary<string, int> _referenceCount = new Dictionary<string, int>();
@@ -847,6 +847,33 @@ namespace Framework
         {
             return _instanceCountByAddress.TryGetValue(address, out var count) ? count : 0;
         }
+
+        #endregion
+
+        #region 资源作用域
+
+        /// <summary>
+        /// 创建资源作用域：按 场景/阶段/功能 划定生命周期，Dispose 时归还全部借出，
+        /// 业务不再逐个对账 Release。用法见 Resource/RESOURCE_SCOPE_GUIDE.md。
+        /// </summary>
+        /// <param name="name">作用域名（诊断用，建议用阶段/场景名）。</param>
+        public ResourceScope CreateScope(string name)
+        {
+            return new ResourceScope(this, name);
+        }
+
+        #endregion
+
+        #region 诊断信息（性能 HUD / 泄漏排查用）
+
+        /// <summary>存活的资源句柄数（LoadAsset 系加载、尚未释放到 0 的地址数）。</summary>
+        public int LiveAssetHandleCount => _handleCache.Count;
+
+        /// <summary>存活的实例数（InstantiateAsync 创建、尚未 ReleaseInstance）。</summary>
+        public int LiveInstanceCount => _instanceToAddress.Count;
+
+        /// <summary>存活的标签预加载句柄数。</summary>
+        public int LiveLabelHandleCount => _labelHandleCache.Count;
 
         #endregion
 

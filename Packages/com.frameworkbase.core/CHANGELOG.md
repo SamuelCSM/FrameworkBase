@@ -3,6 +3,20 @@
 本包遵循 [语义化版本](https://semver.org/lang/zh-CN/)。版本策略：
 `0.x` 为孵化期（API 可能调整）；首个商业项目立项时冻结为 `1.0.0`，此后破坏性变更必须升主版本。
 
+## [0.5.1] - 2026-07-07
+
+### 新增
+
+- **资源作用域 ResourceScope**（P2-4）：按 场景/阶段/功能 划定资源生命周期，
+  Dispose 一次性归还全部借出（实例 + 按次数的资源引用），把"归还"从 N 处 Release
+  收敛成一处，结构上杜绝句柄漏还。提前归还销账、Dispose 幂等、Dispose 后拒借、
+  外部销毁实例跳过、await 中途被 Dispose 自动归还迟到引用。
+- **泄漏检测**：Editor/Development 下未 Dispose 即被 GC 的作用域由终结器哨兵报
+  Error 并附创建堆栈（正式包零开销）；ResourceManager 新增
+  LiveAssetHandleCount / LiveInstanceCount / LiveLabelHandleCount 诊断计数（性能 HUD 用）。
+- 作用域记账逻辑经 IResourceScopeHost 抽象与 Addressables 解耦，离线单测 8 例；
+  用法见 `Resource/RESOURCE_SCOPE_GUIDE.md`。
+
 ## [0.5.0] - 2026-07-07
 
 ### 新增
