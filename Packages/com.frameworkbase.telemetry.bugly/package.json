@@ -1,0 +1,19 @@
+{
+  "name": "com.frameworkbase.telemetry.bugly",
+  "version": "0.1.0",
+  "displayName": "FrameworkBase Telemetry — Bugly",
+  "description": "FrameworkBase 崩溃后端参考扩展包：把腾讯 Bugly 的原生崩溃 / ANR / OOM 捕获接到主干的 ICrashBackend。\n\n骨架实现——不含 Bugly 原生 SDK 二进制；原生调用锁在编译宏 FRAMEWORKBASE_BUGLY_SDK 之后，未启用时退化为无操作以保证可编译。落地真实 SDK 的步骤见 README。",
+  "unity": "2022.3",
+  "dependencies": {
+    "com.frameworkbase.core": "0.8.0"
+  },
+  "keywords": [
+    "framework",
+    "telemetry",
+    "crash",
+    "bugly"
+  ],
+  "author": {
+    "name": "SamuelCSM"
+  }
+}
