@@ -2,6 +2,7 @@
     "name": "Framework",
     "rootNamespace": "Framework",
     "references": [
+        "Framework.Foundation",
         "UniTask",
         "Unity.Addressables",
         "Unity.ResourceManager",

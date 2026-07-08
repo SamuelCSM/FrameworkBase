@@ -3,6 +3,17 @@
 本包遵循 [语义化版本](https://semver.org/lang/zh-CN/)。版本策略：
 `0.x` 为孵化期（API 可能调整）；首个商业项目立项时冻结为 `1.0.0`，此后破坏性变更必须升主版本。
 
+## [0.7.2] - 2026-07-08
+
+### 变更
+
+- **Framework.Foundation 程序集拆分**（ADR-002 第一步）：`Serialization / Http /
+  Storage / Enum` 四个零依赖目录经 asmref 聚合下沉为独立程序集
+  `Framework.Foundation`（目录结构、命名空间、代码零改动），`Framework` 引用之，
+  层间依赖自此编译期强制。Pooling（`ObjectPool`→`GameLog`/`IPoolable`）与
+  Utils（`PerfHud`→`GameEntry`）存在上行引用，本轮不进，待解绳结后下沉。
+  后续路线（Kernel → Boot/Runtime）成文 `ARCHITECTURE_DECISIONS.md` ADR-002。
+
 ## [0.7.1] - 2026-07-07
 
 ### 新增

@@ -38,3 +38,40 @@ Framework.Core / Network / Resource / UI / … 多程序集的收益是增量编
 **拆分时的建议切法**（留给未来）：先切叶子（Serialization → Http → Storage，
 它们已零横向依赖），再切 Network/Save/Analytics，最后处理 GameEntry 门面
 （拆成 per-module 注册 + 服务定位）；每切一刀跑全量门禁。
+
+## ADR-002：分层拆分启动——Framework.Foundation 先行（2026-07）
+
+**状态**：已实施（第一步）。部分修订 ADR-001：per-module 全拆维持挂起，
+但**分层拆分**按下述路线启动。
+
+**动机**：架构长期健康——趁规模小把层间依赖固化为编译期约束，防止继续糊；
+无 ADR-001 所列外部触发（编译耗时/多人/裁剪/热更均未命中）。
+
+**实测修正 ADR-001 的两个判断**：
+
+1. "改动面覆盖几乎每个文件"不成立——`GameEntry.X` 全部 124 处引用中约半数是
+   模块经门面取自己，真正模块互调约 60 处、集中在 9 个服务上；
+2. 依赖扫描必须以编译验证为准——`using` 扫描抓不到根命名空间 `Framework`
+   下类型的无 using 引用（本次 Pooling 即栽在 `GameLog`/`IPoolable` 上）。
+
+**第一步（本次）**：`Serialization / Http / Storage / Enum` 四个零依赖目录经
+**asmref 聚合**进新程序集 `Framework.Foundation`（asmdef 落在 `Foundation/`，
+各目录放 `.asmref`，目录结构与命名空间零改动）；`Framework` 引用它。
+外部引用仅 UniTask。零代码改动，MSBuild 双程序集编译验证通过。
+
+**本轮未进 Foundation 的候选及原因**：
+
+- **Pooling**：`ObjectPool` 引用根命名空间的 `GameLog`（Utils）与 `IPoolable`
+  （Resource 目录）——待解绳结：日志改注入或下沉、`IPoolable` 归属移入 Pooling；
+- **Utils**：`PerfHud` 直连 `Core.GameEntry`，且混杂纯工具（StableHash/MD5Util）
+  与 Unity 调试件（RuntimeConsole/UIExtensions），需先按性质拆开。
+
+**后续路线**（每步独立提交、全量门禁）：
+
+- 第二步：`Framework.Kernel`（FrameworkComponent / MonoSingleton / Event /
+  Timer / AppConfig / Telemetry / ErrorCenter），唯一手术是 ErrorCenter→Tips
+  反转为事件订阅；
+- 第三步（挂起，沿用 ADR-001 触发条件）：Boot 提取（GameEntry/LaunchFlow/
+  LoginFlow 上移为组合根，命名空间不变故业务侧零改动）+ Runtime 按模块拆；
+  平时顺手做的准备：门面自引用改直连、NetworkWaitingUI/ReconnectPanel 归属
+  理顺、确认 Analytics↔Sdk 实为单向。
