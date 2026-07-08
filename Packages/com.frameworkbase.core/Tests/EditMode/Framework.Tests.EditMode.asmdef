@@ -3,6 +3,7 @@
     "rootNamespace": "Framework.Tests",
     "references": [
         "Framework",
+        "Framework.Foundation",
         "Framework.Editor",
         "UniTask",
         "UnityEngine.TestRunner",

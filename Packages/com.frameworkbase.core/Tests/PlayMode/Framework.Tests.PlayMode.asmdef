@@ -3,6 +3,7 @@
     "rootNamespace": "Framework.Tests.PlayMode",
     "references": [
         "Framework",
+        "Framework.Foundation",
         "UniTask",
         "UnityEngine.TestRunner"
     ],
