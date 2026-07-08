@@ -1,21 +1,34 @@
 @echo off
+setlocal
 chcp 65001 >nul
-pushd "%~dp0"
+cd /d "%~dp0"
+set "CI_EXIT_CODE=0"
 
-echo [CI] 本地质量门禁：编译 + EditMode 测试（须先关闭 Unity 编辑器）...
+echo [CI] FrameworkBase local gate: compile + EditMode + PlayMode tests.
+echo [CI] Please close the Unity Editor before running this script.
 echo.
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0Tools\ci\run-ci.ps1"
-if errorlevel 1 goto err
+
+if not exist "%~dp0Tools\ci\run-ci.ps1" (
+    echo [CI] Missing script: "%~dp0Tools\ci\run-ci.ps1"
+    set "CI_EXIT_CODE=1"
+    goto err
+)
+
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0Tools\ci\run-ci.ps1" 2>&1
+if errorlevel 1 (
+    set "CI_EXIT_CODE=%ERRORLEVEL%"
+    goto err
+)
 
 echo.
-echo [CI] 通过。
-popd
-pause
-exit /b 0
+echo [CI] Passed.
+goto done
 
 :err
 echo.
-echo [CI] 未通过。请查看上方输出与 Logs\ci\ 下的日志。
-popd
+echo [CI] Failed. Check the output above and logs under Logs\ci\.
+
+:done
+echo.
 pause
-exit /b 1
+exit /b %CI_EXIT_CODE%

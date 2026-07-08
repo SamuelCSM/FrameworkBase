@@ -1,4 +1,4 @@
-# FrameworkBase 本地 CI 门禁：编译 + EditMode 测试 + PlayMode 冒烟。
+﻿# FrameworkBase 本地 CI 门禁：编译 + EditMode 测试 + PlayMode 冒烟。
 # 与 .github/workflows/ci.yml 跑同一套门禁，提交前在本机自查用。
 #
 # 用法（PowerShell，工程须先关闭 Unity 编辑器）：
