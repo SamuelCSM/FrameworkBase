@@ -3,7 +3,6 @@ using System.Security.Cryptography;
 using System.Text;
 using Framework.HotUpdate;
 using NUnit.Framework;
-using UnityEngine.TestTools;
 
 namespace Framework.Tests
 {
@@ -12,19 +11,6 @@ namespace Framework.Tests
     /// </summary>
     public class UpdateSecurityTests
     {
-        [SetUp]
-        public void SetUp()
-        {
-            // 被测代码在拒绝路径上会输出 GameLog.Error（预期行为），避免 Error 日志让用例误判失败
-            LogAssert.ignoreFailingMessages = true;
-        }
-
-        [TearDown]
-        public void TearDown()
-        {
-            LogAssert.ignoreFailingMessages = false;
-        }
-
         // ── URL 准入 ─────────────────────────────────────────────────────────
 
         [Test]
@@ -150,6 +136,9 @@ namespace Framework.Tests
             Assert.IsFalse(UpdateSecurity.VerifyManifestSignature(manifest, null, "<RSAKeyValue/>"));
             Assert.IsFalse(UpdateSecurity.VerifyManifestSignature(manifest, "AAAA", null));
             Assert.IsFalse(UpdateSecurity.VerifyManifestSignature(null, "AAAA", "<RSAKeyValue/>"));
+            UnityEngine.TestTools.LogAssert.Expect(
+                UnityEngine.LogType.Error,
+                new System.Text.RegularExpressions.Regex(@"\[UpdateSecurity\] 清单签名校验异常"));
             Assert.IsFalse(UpdateSecurity.VerifyManifestSignature(manifest, "不是Base64!!", "<RSAKeyValue/>"));
         }
 
@@ -160,6 +149,9 @@ namespace Framework.Tests
         {
             var server = new UpdateInfo { CodeVersion = 2, PatchFiles = new List<PatchFile>() };
 
+            UnityEngine.TestTools.LogAssert.Expect(
+                UnityEngine.LogType.Error,
+                new System.Text.RegularExpressions.Regex(@"\[VersionManager\] CodeVersion 已变更但服务端清单未提供 PatchFiles"));
             bool ok = VersionManager.TryResolveCodePatchFiles(server, "https://cdn.example.com/Updates", out var patches);
 
             Assert.IsFalse(ok);
@@ -178,6 +170,9 @@ namespace Framework.Tests
                 }
             };
 
+            UnityEngine.TestTools.LogAssert.Expect(
+                UnityEngine.LogType.Error,
+                new System.Text.RegularExpressions.Regex(@"\[VersionManager\] 补丁清单未通过安全准入"));
             Assert.IsFalse(VersionManager.TryResolveCodePatchFiles(server, "https://cdn.example.com/Updates", out _));
         }
 

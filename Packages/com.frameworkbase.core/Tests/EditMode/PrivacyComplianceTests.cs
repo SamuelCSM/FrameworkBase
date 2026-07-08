@@ -19,7 +19,8 @@ namespace Framework.Tests
         [SetUp]
         public void SetUp()
         {
-            LogAssert.ignoreFailingMessages = true;
+            AnalyticsSchemaRegistry.Shared = AnalyticsSchemaRegistry.CreateWithFrameworkEvents();
+            AnalyticsSchemaRegistry.Shared.Register(new AnalyticsEventSchema("e_after_consent"));
             PlayerPrefs.DeleteKey("Privacy.AcceptedPolicyVersion");
             AppConfig.ClearCache();
         }
@@ -29,7 +30,7 @@ namespace Framework.Tests
         {
             PlayerPrefs.DeleteKey("Privacy.AcceptedPolicyVersion");
             AppConfig.ClearCache();
-            LogAssert.ignoreFailingMessages = false;
+            AnalyticsSchemaRegistry.Shared = AnalyticsSchemaRegistry.CreateWithFrameworkEvents();
         }
 
         // ── 同意管理 ─────────────────────────────────────────────────────────
@@ -59,7 +60,13 @@ namespace Framework.Tests
         [Test]
         public void 非法版本号_拒绝记录()
         {
+            LogAssert.Expect(
+                LogType.Error,
+                new System.Text.RegularExpressions.Regex(@"\[PrivacyConsent\] 协议版本号必须为正数，收到 0"));
             PrivacyConsent.Accept(0);
+            LogAssert.Expect(
+                LogType.Error,
+                new System.Text.RegularExpressions.Regex(@"\[PrivacyConsent\] 协议版本号必须为正数，收到 -1"));
             PrivacyConsent.Accept(-1);
             Assert.AreEqual(0, PrivacyConsent.AcceptedPolicyVersion);
             Assert.IsFalse(PrivacyConsent.IsAccepted(0), "版本 0 永远不算已同意");

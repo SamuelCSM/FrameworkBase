@@ -164,7 +164,9 @@ namespace Framework.RemoteConfig
             if (value is string s) return s;
             if (value is bool b) return b ? "true" : "false";
             if (value is long l) return l.ToString(CultureInfo.InvariantCulture);
+            if (value is int i) return i.ToString(CultureInfo.InvariantCulture);
             if (value is double d) return d.ToString(CultureInfo.InvariantCulture);
+            if (value is float f) return f.ToString(CultureInfo.InvariantCulture);
             return defaultValue;
         }
 
@@ -200,7 +202,9 @@ namespace Framework.RemoteConfig
                 return defaultValue;
 
             if (value is double d) return (float)d;
+            if (value is float f) return f;
             if (value is long l) return l;
+            if (value is int i) return i;
             if (value is string s &&
                 float.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out float parsed))
                 return parsed;
@@ -258,7 +262,16 @@ namespace Framework.RemoteConfig
         private static long CoerceToLong(object value, long fallback)
         {
             if (value is long l) return l;
+            if (value is int i) return i;
+            if (value is short sh) return sh;
+            if (value is byte by) return by;
+            if (value is sbyte sb) return sb;
+            if (value is uint ui) return ui;
+            if (value is ushort us) return us;
+            if (value is ulong ul) return ul <= long.MaxValue ? (long)ul : fallback;
             if (value is double d) return (long)d;
+            if (value is float f) return (long)f;
+            if (value is decimal m) return (long)m;
             if (value is string s &&
                 long.TryParse(s, NumberStyles.Integer, CultureInfo.InvariantCulture, out long parsed))
                 return parsed;

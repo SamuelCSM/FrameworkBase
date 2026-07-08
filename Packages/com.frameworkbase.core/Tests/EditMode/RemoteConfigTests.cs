@@ -3,7 +3,6 @@ using Cysharp.Threading.Tasks;
 using Framework.HotUpdate;
 using Framework.RemoteConfig;
 using NUnit.Framework;
-using UnityEngine.TestTools;
 
 namespace Framework.Tests
 {
@@ -19,7 +18,6 @@ namespace Framework.Tests
         [SetUp]
         public void SetUp()
         {
-            LogAssert.ignoreFailingMessages = true;
             _config = new RemoteConfigManager();
             _config.OnInit();
             _config.ClearCache(); // 清掉可能存在的历史磁盘缓存，保证用例初态确定
@@ -32,7 +30,6 @@ namespace Framework.Tests
         {
             _config.ClearCache(); // 不让用例缓存污染下次运行
             _config.OnShutdown();
-            LogAssert.ignoreFailingMessages = false;
         }
 
         private static T Wait<T>(UniTask<T> task) => task.GetAwaiter().GetResult();

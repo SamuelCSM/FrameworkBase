@@ -1,7 +1,6 @@
 using Cysharp.Threading.Tasks;
 using Framework.Sdk;
 using NUnit.Framework;
-using UnityEngine.TestTools;
 
 namespace Framework.Tests
 {
@@ -18,15 +17,12 @@ namespace Framework.Tests
         {
             _sdk = new SdkManager();
             _sdk.OnInit();
-            // 被测代码在拒绝路径上会输出 GameLog.Error/Warning（预期行为）
-            LogAssert.ignoreFailingMessages = true;
         }
 
         [TearDown]
         public void TearDown()
         {
             _sdk.OnShutdown();
-            LogAssert.ignoreFailingMessages = false;
         }
 
         /// <summary>同步取 UniTask 结果（Mock 实现全部同步完成）。</summary>
@@ -56,6 +52,9 @@ namespace Framework.Tests
             _sdk.RegisterProvider(new FakeChannelProvider());
             Assert.IsTrue(Wait(_sdk.InitializeAsync()).Success);
 
+            UnityEngine.TestTools.LogAssert.Expect(
+                UnityEngine.LogType.Error,
+                new System.Text.RegularExpressions.Regex(@"\[SdkManager\] SDK 已初始化，拒绝切换渠道实现"));
             _sdk.RegisterProvider(new MockSdkProvider());
 
             Assert.AreEqual("fake_channel", _sdk.ChannelName, "初始化后注册应被拒绝");

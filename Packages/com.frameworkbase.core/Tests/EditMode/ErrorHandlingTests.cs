@@ -1,7 +1,6 @@
 using System.Collections.Generic;
 using Framework.Core.Errors;
 using NUnit.Framework;
-using UnityEngine.TestTools;
 
 namespace Framework.Tests
 {
@@ -11,18 +10,6 @@ namespace Framework.Tests
     /// </summary>
     public class ErrorHandlingTests
     {
-        [SetUp]
-        public void SetUp()
-        {
-            LogAssert.ignoreFailingMessages = true;
-        }
-
-        [TearDown]
-        public void TearDown()
-        {
-            LogAssert.ignoreFailingMessages = false;
-        }
-
         // ── 注册表解析 ───────────────────────────────────────────────────────
 
         [Test]
@@ -124,6 +111,9 @@ namespace Framework.Tests
             var presenter = new RecordingPresenter { Throw = true };
             var center = new ErrorCenter(new ErrorCodeRegistry(), presenter, () => 0);
 
+            UnityEngine.TestTools.LogAssert.Expect(
+                UnityEngine.LogType.Error,
+                new System.Text.RegularExpressions.Regex(@"\[ErrorCenter\] 呈现器异常"));
             Assert.DoesNotThrow(() => center.Handle(1), "呈现器炸了不能反过来炸业务错误分支");
         }
 

@@ -1,8 +1,10 @@
+using System.Collections;
 using System.IO;
 using Cysharp.Threading.Tasks;
 using Framework.Storage;
 using NUnit.Framework;
 using UnityEngine;
+using UnityEngine.TestTools;
 
 namespace Framework.Tests
 {
@@ -45,17 +47,17 @@ namespace Framework.Tests
             Assert.IsTrue(storage.TryDeleteFile(Path.Combine(_dir, "missing.txt")));
         }
 
-        [Test]
-        public void ReadBytesAsync_ReadsOnThreadPool()
+        [UnityTest]
+        public IEnumerator ReadBytesAsync_ReadsOnThreadPool() => UniTask.ToCoroutine(async () =>
         {
             string path = Path.Combine(_dir, "bytes.bin");
             IFileStorage storage = new LocalFileStorage();
             storage.WriteBytes(path, new byte[] { 1, 2, 3 });
 
-            byte[] bytes = storage.ReadBytesAsync(path).GetAwaiter().GetResult();
+            byte[] bytes = await storage.ReadBytesAsync(path);
 
             CollectionAssert.AreEqual(new byte[] { 1, 2, 3 }, bytes);
-        }
+        });
 
         [Test]
         public void AppendBytes_AppendsToExistingFile()

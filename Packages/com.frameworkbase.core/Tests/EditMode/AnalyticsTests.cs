@@ -2,7 +2,6 @@ using System.Collections.Generic;
 using Cysharp.Threading.Tasks;
 using Framework.Analytics;
 using NUnit.Framework;
-using UnityEngine.TestTools;
 
 namespace Framework.Tests
 {
@@ -19,7 +18,8 @@ namespace Framework.Tests
         [SetUp]
         public void SetUp()
         {
-            LogAssert.ignoreFailingMessages = true;
+            AnalyticsSchemaRegistry.Shared = AnalyticsSchemaRegistry.CreateWithFrameworkEvents();
+            RegisterTestEvents("e1", "e2", "purchase", "after_drop");
             _analytics = new AnalyticsManager();
             _analytics.OnInit();
             _analytics.ClearQueue(); // 清掉可能存在的历史落盘补报，保证用例计数确定
@@ -32,10 +32,22 @@ namespace Framework.Tests
         {
             _analytics.ClearQueue(); // 不让用例事件落盘污染下次运行
             _analytics.OnShutdown();
-            LogAssert.ignoreFailingMessages = false;
+            AnalyticsSchemaRegistry.Shared = AnalyticsSchemaRegistry.CreateWithFrameworkEvents();
         }
 
         private static T Wait<T>(UniTask<T> task) => task.GetAwaiter().GetResult();
+
+        private static void RegisterTestEvents(params string[] eventNames)
+        {
+            foreach (string eventName in eventNames)
+                AnalyticsSchemaRegistry.Shared.Register(new AnalyticsEventSchema(eventName));
+        }
+
+        private static void RegisterEventRange(string prefix, int count)
+        {
+            for (int i = 0; i < count; i++)
+                AnalyticsSchemaRegistry.Shared.Register(new AnalyticsEventSchema($"{prefix}{i}"));
+        }
 
         /// <summary>从事件 JSON 中取出 "field":"value" 的 value（测试用，仅支持字符串字段）。</summary>
         private static string ExtractField(string json, string field)
@@ -87,6 +99,7 @@ namespace Framework.Tests
         [Test]
         public void 每条事件_event_id唯一()
         {
+            RegisterEventRange("e", 200);
             for (int i = 0; i < 200; i++)
                 _analytics.Track($"e{i}");
             Wait(_analytics.FlushAsync());
@@ -144,6 +157,7 @@ namespace Framework.Tests
         [Test]
         public void 排水式冲刷_一次发完积压且单批不超50()
         {
+            RegisterEventRange("e", 120);
             _backend.AlwaysFail = true; // 阻止自动冲刷，累积队列
             for (int i = 0; i < 120; i++)
                 _analytics.Track($"e{i}");
@@ -162,6 +176,7 @@ namespace Framework.Tests
         [Test]
         public void 单次排水有上限_不会无限连发()
         {
+            RegisterEventRange("e", 1050);
             _backend.AlwaysFail = true;
             // 21 批 = 1050 条，但队列上限 500，实际约 10 批即可排空——
             // 用远超上限的量确认循环有 MaxBatchesPerFlush 保护（不因巨量积压卡死一次调用）。
@@ -192,6 +207,7 @@ namespace Framework.Tests
         [Test]
         public void 队列溢出_丢最旧并随后补报丢弃计数()
         {
+            RegisterEventRange("e", 520);
             _backend.AlwaysFail = true; // 阻止自动冲刷，制造溢出
             for (int i = 0; i < 520; i++)
                 _analytics.Track($"e{i}");

@@ -3,7 +3,6 @@ using System.Linq;
 using Cysharp.Threading.Tasks;
 using NUnit.Framework;
 using UnityEngine;
-using UnityEngine.TestTools;
 
 namespace Framework.Tests
 {
@@ -19,14 +18,7 @@ namespace Framework.Tests
         [SetUp]
         public void SetUp()
         {
-            LogAssert.ignoreFailingMessages = true;
             _host = new FakeHost();
-        }
-
-        [TearDown]
-        public void TearDown()
-        {
-            LogAssert.ignoreFailingMessages = false;
         }
 
         private static T Wait<T>(UniTask<T> task) => task.GetAwaiter().GetResult();
@@ -104,7 +96,13 @@ namespace Framework.Tests
             var scope = new ResourceScope(_host, "test");
             scope.Dispose();
 
+            UnityEngine.TestTools.LogAssert.Expect(
+                UnityEngine.LogType.Error,
+                new System.Text.RegularExpressions.Regex(@"\[ResourceScope\] ""test"" 已 Dispose，拒绝加载 a"));
             Assert.IsNull(Wait(scope.LoadAssetAsync<ScriptableObject>("a")));
+            UnityEngine.TestTools.LogAssert.Expect(
+                UnityEngine.LogType.Error,
+                new System.Text.RegularExpressions.Regex(@"\[ResourceScope\] ""test"" 已 Dispose，拒绝实例化 inst"));
             Assert.IsNull(Wait(scope.InstantiateAsync("inst")));
             Assert.AreEqual(0, _host.LoadCount, "Dispose 后不应再穿透到宿主");
         }

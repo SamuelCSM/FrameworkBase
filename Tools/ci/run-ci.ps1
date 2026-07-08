@@ -61,9 +61,38 @@ function Invoke-UnityTests([string]$platform) {
         -testResults $resultsPath `
         -logFile $logPath
     $exit = $LASTEXITCODE
+    if ($null -eq $exit) { $exit = 1 }
+
+    for ($i = 0; $i -lt 300 -and -not (Test-Path $resultsPath); $i++) {
+        if ($i -gt 0 -and $i % 25 -eq 0) {
+            Write-Host "等待 $platform 结果文件落盘... $([int]($i / 5))s"
+        }
+        Start-Sleep -Milliseconds 200
+    }
 
     if (Test-Path $resultsPath) {
-        [xml]$xml = Get-Content $resultsPath
+        [xml]$xml = $null
+        for ($i = 0; $i -lt 300; $i++) {
+            try {
+                [xml]$candidate = Get-Content -Encoding UTF8 -Raw $resultsPath
+                if ($null -ne $candidate.DocumentElement) {
+                    $xml = $candidate
+                    break
+                }
+            }
+            catch {
+            }
+
+            if ($i -gt 0 -and $i % 25 -eq 0) {
+                Write-Host "等待 $platform 结果文件写入完成... $([int]($i / 5))s"
+            }
+            Start-Sleep -Milliseconds 200
+        }
+        if ($null -eq $xml) {
+            Write-Host "无法解析 $platform 结果文件，详见日志: $logPath"
+            return 1
+        }
+
         $run = $xml."test-run"
         Write-Host ("{0} 结果: total={1} passed={2} failed={3} skipped={4}" -f `
             $platform, $run.total, $run.passed, $run.failed, $run.skipped)
@@ -76,6 +105,16 @@ function Invoke-UnityTests([string]$platform) {
                 if ($null -ne $msg) { Write-Host ("        {0}" -f $msg.InnerText.Trim()) }
             }
         }
+
+        if ([int]$run.failed -gt 0 -or $run.result -notlike "Passed*") {
+            $exit = 1
+        }
+        else {
+            if ($exit -ne 0) {
+                Write-Host "$platform 测试报告已通过，但 Unity 进程退出码为 $exit；按测试报告判定通过。"
+            }
+            $exit = 0
+        }
     }
     else {
         Write-Host "未生成 $platform 结果文件（大概率编译失败），详见日志: $logPath"
@@ -83,6 +122,10 @@ function Invoke-UnityTests([string]$platform) {
         Get-Content $logPath -ErrorAction SilentlyContinue |
             Where-Object { $_ -match "error CS|Compilation failed" } |
             Select-Object -First 20
+
+        if ($exit -eq 0) {
+            $exit = 1
+        }
     }
 
     return $exit
@@ -111,4 +154,5 @@ if ($finalExit -eq 0) {
 else {
     Write-Host "== CI 未通过（Unity 退出码 $finalExit）=="
 }
-exit $finalExit
+if ($null -eq $finalExit -or $finalExit -eq 0) { exit 0 }
+exit 1

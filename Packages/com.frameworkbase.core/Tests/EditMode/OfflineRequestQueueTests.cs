@@ -1,7 +1,6 @@
 using System.Collections.Generic;
 using Framework.Network;
 using NUnit.Framework;
-using UnityEngine.TestTools;
 
 namespace Framework.Tests
 {
@@ -11,18 +10,6 @@ namespace Framework.Tests
     /// </summary>
     public class OfflineRequestQueueTests
     {
-        [SetUp]
-        public void SetUp()
-        {
-            LogAssert.ignoreFailingMessages = true;
-        }
-
-        [TearDown]
-        public void TearDown()
-        {
-            LogAssert.ignoreFailingMessages = false;
-        }
-
         [Test]
         public void 入队_超过上限拒绝()
         {
@@ -103,6 +90,9 @@ namespace Framework.Tests
             queue.TryEnqueue(() => throw new System.InvalidOperationException("boom"), () => { }, 30, 0);
             queue.TryEnqueue(() => secondSent = true, () => { }, 30, 0);
 
+            UnityEngine.TestTools.LogAssert.Expect(
+                UnityEngine.LogType.Error,
+                new System.Text.RegularExpressions.Regex(@"\[OfflineRequestQueue\] 补发回调异常"));
             Assert.DoesNotThrow(() => queue.FlushAll());
             Assert.IsTrue(secondSent, "首项回调炸了不得影响后续项补发");
         }
