@@ -154,18 +154,33 @@ function Invoke-AssetGate {
     & $UnityPath @gateArgs
     $procExit = $LASTEXITCODE
 
-    # 摘出门禁关键行（CiGate 自身 Exit，日志里有结论）。
-    Get-Content $logPath -ErrorAction SilentlyContinue |
-        Where-Object { $_ -match "\[CiGate\]|\[AddressablesValidator\]|\[FontCoverage\]" } |
-        Select-Object -Last 40
-
-    # 以 CiGate 自身落日志的 ASCII 结论哨兵为准，而非 Unity 进程退出码：
+    # 以 CiGate 落日志的 ASCII 结论哨兵为准，而非 Unity 进程退出码：
     # batchmode 下即便 EditorApplication.Exit(0)，Unity 进程仍可能返回非 0（与测试跑道同款现象）。
+    # 关键：Unity 日志在进程退出后仍有落盘延迟（末尾几行可能还没冲刷），必须像测试跑道等结果
+    # 文件那样轮询等待哨兵出现，否则会读到不含结论的半截日志而误判「未产出结论」。
     # 纯 ASCII 匹配 + UTF8 读取，免受日志中文编码影响。
     $verdict = $null
-    $endLine = Get-Content $logPath -Encoding UTF8 -ErrorAction SilentlyContinue |
-        Where-Object { $_ -match "\[CiGate\]\s+GATE_RESULT\s+exit=(\d+)" } | Select-Object -Last 1
-    if ($endLine -and $endLine -match "GATE_RESULT\s+exit=(\d+)") { $verdict = [int]$Matches[1] }
+    for ($i = 0; $i -lt 150; $i++) {
+        if (Test-Path $logPath) {
+            $endLine = Get-Content $logPath -Encoding UTF8 -ErrorAction SilentlyContinue |
+                Where-Object { $_ -match "\[CiGate\]\s+GATE_RESULT\s+exit=(\d+)" } | Select-Object -Last 1
+            if ($endLine -and $endLine -match "GATE_RESULT\s+exit=(\d+)") {
+                $verdict = [int]$Matches[1]
+                break
+            }
+        }
+        if ($i -gt 0 -and $i % 25 -eq 0) {
+            Write-Host "等待资源门禁结论落盘... $([int]($i / 5))s"
+        }
+        Start-Sleep -Milliseconds 200
+    }
+
+    # 摘出门禁关键行（此时日志已完整）。必须走 Write-Host：否则这些行会并入函数返回值，
+    # 污染 $gateExit（PowerShell 函数返回全部未捕获输出，而非仅 return 值）。
+    Get-Content $logPath -Encoding UTF8 -ErrorAction SilentlyContinue |
+        Where-Object { $_ -match "\[CiGate\]|\[AddressablesValidator\]|\[FontCoverage\]" } |
+        Select-Object -Last 40 |
+        ForEach-Object { Write-Host $_ }
 
     if ($null -ne $verdict) {
         if ($verdict -ne 0) {
@@ -182,9 +197,10 @@ function Invoke-AssetGate {
 
     # 无门禁结论 = 未跑完（编译失败/异常）。
     Write-Host "资源门禁未产出结论（大概率编译失败或异常），详见日志: $logPath"
-    Get-Content $logPath -ErrorAction SilentlyContinue |
+    Get-Content $logPath -Encoding UTF8 -ErrorAction SilentlyContinue |
         Where-Object { $_ -match "error CS|Compilation failed|Exception" } |
-        Select-Object -First 20
+        Select-Object -First 20 |
+        ForEach-Object { Write-Host $_ }
     if ($procExit -eq 0) { return 1 } else { return $procExit }
 }
 
