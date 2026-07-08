@@ -41,9 +41,10 @@ Framework.Core / Network / Resource / UI / … 多程序集的收益是增量编
 
 ## ADR-002：分层拆分启动——Framework.Foundation 先行（2026-07）
 
-**状态**：已实施（第一、二步完成；第三步挂起）。部分修订 ADR-001：per-module
-全拆维持挂起，但**分层拆分**按下述路线启动。依赖链现为 `Runtime → Kernel →
-Foundation` 三层单向、编译期强制。
+**状态**：已实施（第一、二步完成；第三步仅做 3a 去环，3b/3c 挂起）。部分修订
+ADR-001：per-module 全拆维持挂起，但**分层拆分**按下述路线启动。依赖链现为
+`Runtime → Kernel → Foundation` 三层单向、编译期强制；运行时 18 模块经 3a 去环后
+folder 依赖图为无环 DAG。
 
 **动机**：架构长期健康——趁规模小把层间依赖固化为编译期约束，防止继续糊；
 无 ADR-001 所列外部触发（编译耗时/多人/裁剪/热更均未命中）。
@@ -118,3 +119,47 @@ ErrorCenter/EventManager/TimerManager）。
 **第二步后仍在 Framework 层的原 Core 成员**：GameEntry / LaunchFlow / LoginFlow /
 Auth / Privacy / VersionDisplayHelper 等——它们是组合根与业务编排，正是第三步
 Boot 提取的对象，本步不动。
+
+### 第三步依赖分析与 3a 实施记录：去环（2026-07-08）
+
+**决策**：第三步范围收敛为 **3a（去环 + 门面自引用核查）**，不新增程序集；
+3b（Framework.Boot 提取）、3c（18 路 per-module 拆分）维持挂起，仅在 ADR-001
+触发条件出现时重启。动机仍为长期健康、无外部触发；结论：3a 拿走绝大部分结构
+健康收益，3b/3c 在当前规模 ROI 存疑，边界留到真有需求时沿 DAG 一刀切。
+
+**依赖分析结论**：拿掉 Foundation/Kernel 两底层后，18 个运行时模块**本身是
+无环 DAG**，仅被 4 个"放错模块的跨层文件"打破成 4 个环——每个环的成因都相同：
+一个视图/编排文件被塞进了本该在其下层的服务模块里。
+
+| 环 | 唯一肇事文件 | 原模块 |
+|---|---|---|
+| Network→UI | `NetworkWaitingUI.cs` | Network |
+| UI→Network、UI→Auth | `ReconnectPanel.cs` | UI |
+| Auth→UI | `LoginAuthPopupPresenter.cs` | Core/Auth |
+| Privacy→Analytics/RemoteConfig | `PrivacyCompliance.cs`（RTBF 编排器）| Core/Privacy |
+
+**3a-去环（已实施）**：4 个肇事文件经 `git mv` 上移到 `Core/Composition/`
+（同属 Framework 程序集、命名空间不变、prefab 按 .meta GUID 绑定不断），故零代码
+改动、零引用破坏。此后各服务模块目录不再含上行依赖文件，folder 依赖图成真 DAG
+——这是未来沿 DAG 切 asmdef 的强制前置。
+
+**规划期两处误判，经读码/编译更正**：
+
+1. `PrivacyConsent → Analytics` 不存在——那些 `GameEntry.Analytics.CollectionEnabled`
+   仅在 XML 文档注释的 `<code>` 示例里；实际代码只广播 `PrivacyConsentChanged`
+   事件，Analytics 侧已正确订阅（`AnalyticsManager.RegisterPrivacyConsentListener`）。
+   故 consent 层本就无环、无需事件反转；Privacy 的环纯由 `PrivacyCompliance`
+   编排器与低层 `PrivacyConsent` 同目录造成，移走编排器即解。
+2. "门面自引用清理"实为空操作——排查确认**没有任何 Manager 在自己的文件里调
+   `GameEntry.<自己>`**（真自引用为零）。残留的 `GameEntry.X` 调用只有三类：
+   ① 文档注释示例（业务的合法公共 API 用法，应保留）；② 真实跨模块边界
+   （即 DAG 的边，保留至 3b DI）；③ 模块内兄弟类取本模块 Manager（如 Resource
+   的 `GameObjectPool`/`AddressableGameObjectProvider`、Stage 的 Navigation→Manager、
+   `InputBlockScope`）——它们走门面只因 Manager 无 `.Instance` 访问器，消除需引入
+   实例访问器/构造注入，属 3b 范畴，本步不强行改。
+
+**3a 后的门面定性**：`GameEntry.X` 是**对外公共 API**（业务/热更程序集 ~13 处
+合法使用），不删；能拆程序集的前提是把"框架模块内部"的跨模块门面互调换成注入，
+那是 3b 的核心工作量（ADR-001 所称"几周冻结"的真实来源）。
+
+**验证**：编辑器占锁，MSBuild 重建 Framework + EditMode 测试全绿。

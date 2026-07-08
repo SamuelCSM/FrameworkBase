@@ -3,6 +3,22 @@
 本包遵循 [语义化版本](https://semver.org/lang/zh-CN/)。版本策略：
 `0.x` 为孵化期（API 可能调整）；首个商业项目立项时冻结为 `1.0.0`，此后破坏性变更必须升主版本。
 
+## [0.7.4] - 2026-07-08
+
+### 变更
+
+- **运行时依赖去环**（ADR-002 第三步 3a）：依赖分析确认 18 个运行时模块本身是
+  无环 DAG，仅被 4 个"放错模块的跨层文件"打破成 4 个环。将它们经 `git mv` 上移到
+  `Core/Composition/`（同属 Framework 程序集、命名空间不变、prefab 按 GUID 绑定
+  不断，零代码改动、零引用破坏）：`NetworkWaitingUI`（Network→UI）、`ReconnectPanel`
+  （UI→Network/Auth）、`LoginAuthPopupPresenter`（Auth→UI）、`PrivacyCompliance`
+  （Privacy→Analytics/RemoteConfig 的 RTBF 编排器）。此后各服务模块目录不再含
+  上行依赖文件，folder 依赖图成真 DAG——未来沿 DAG 切 asmdef 的强制前置。
+- 排查确认无"门面自引用"可清理（没有 Manager 在自己文件里调 `GameEntry.<自己>`）；
+  残留 `GameEntry.X` 均为文档示例、真实跨模块边界或模块内兄弟类取本模块 Manager
+  （消除需实例访问器/注入，属挂起的 3b）。范围决策与依赖全图成文
+  `ARCHITECTURE_DECISIONS.md`（ADR-002 第三步）；3b/3c 维持挂起。
+
 ## [0.7.3] - 2026-07-08
 
 ### 变更
