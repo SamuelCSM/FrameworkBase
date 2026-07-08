@@ -211,6 +211,9 @@ namespace Framework.Core
             }
 
             LoginResult loginResult = await LoginFlow.RunAsync(_loginViewPrefab, systemRoot);
+            // 登录后把用户 ID 交给崩溃回捞做归因，使后续崩溃报告可按玩家定位。
+            if (!string.IsNullOrEmpty(loginResult.UserId))
+                Telemetry.CrashReporter.SetUser(loginResult.UserId);
             Debug.Log($"[GameEntry] 登录完成 userId={loginResult.UserId} token={(string.IsNullOrEmpty(loginResult.SessionToken) ? "(none)" : "ok")}");
             // 登录成功后由业务层接管（如 StageNavigation.ReplaceStageAsync）。
         }
@@ -271,7 +274,8 @@ namespace Framework.Core
             HotUpdate       = AddComponent<HotUpdateManager>();
 
             // 上一次运行留下的崩溃记录：后台尝试上报（不阻塞启动，失败静默保留下次再试）。
-            Telemetry.CrashReporter.TryUploadPendingAsync(AppConfig.Load().CrashReportUrl).Forget();
+            // 上报端点由后端自读（默认后端读 AppConfig.CrashReportUrl，原生后端走自身管道）。
+            Telemetry.CrashReporter.TryUploadPendingAsync().Forget();
 
             Debug.Log("[GameEntry] 所有 Manager 初始化完成");
         }

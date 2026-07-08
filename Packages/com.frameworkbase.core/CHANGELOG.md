@@ -3,6 +3,34 @@
 本包遵循 [语义化版本](https://semver.org/lang/zh-CN/)。版本策略：
 `0.x` 为孵化期（API 可能调整）；首个商业项目立项时冻结为 `1.0.0`，此后破坏性变更必须升主版本。
 
+## [0.8.0] - 2026-07-08
+
+### 新增
+
+- **崩溃后端抽象 `ICrashBackend`**（P0 可观测性补齐第一步）：主干只定义崩溃后端契约
+  （`Install` / `SetUser` / `SetCustomKey` / `LeaveBreadcrumb` / `RecordManagedException` /
+  `TryFlushPendingAsync`），厂商实现（Crashlytics / Sentry / Bugly）留各自扩展包，经
+  `CrashReporter.Register` 注入、由 `[RuntimeInitializeOnLoadMethod(BeforeSceneLoad)]` 自注册。
+  关键设计：崩溃捕获是两层——原生致命崩溃（SIGSEGV / OOM 杀进程 / ANR）只有厂商原生信号
+  处理器 / NDK / ANR watchdog 能捕获、走厂商自身管道上报，框架搬不动字节；故接口不是
+  `Analytics` 式 `SendAsync(batch)`，而是「尽早 Install 让原生捕获就位 + 透传归因上下文
+  （用户 / 自定义键 / 面包屑）+ 转发托管异常为非致命」。
+- `MockCrashBackend` 内存参考实现（单测断言 + 厂商实现对照）。
+- `Tests/EditMode/CrashReporterTests.cs`：编排时序 / 归因转发 / flush 路由 / 监听挂接 +
+  默认后端落盘字段 / 会话上限 / 无 URL 不上报，共 12 用例。
+
+### 变更
+
+- `CrashReporter` 由「实现」重构为「编排器」：挂托管异常监听、维护会话归因上下文、路由到
+  注入后端；未注册后端时落默认 `LocalFileCrashBackend`（原落盘 + HTTP 上报逻辑等价搬入，
+  仅覆盖托管异常）。`TryUploadPendingAsync` 改无参（上报端点由后端自读）；新增 `Register` /
+  `Shutdown`（与 `Install` 对称，供应用退出 / 测试隔离）。
+- 登录成功后 `GameEntry` 调 `CrashReporter.SetUser(userId)` 打通崩溃按玩家归因。
+
+### 已知限制
+
+- 默认后端只覆盖托管异常；原生崩溃 / ANR / OOM 需接入厂商扩展包（下一步：Bugly 参考骨架）。
+
 ## [0.7.4] - 2026-07-08
 
 ### 变更
