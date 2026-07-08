@@ -72,6 +72,9 @@ namespace Framework.Editor
                 }
 
                 Debug.Log($"[CiGate] ===== 资源门禁结束（exit={exitCode}）=====");
+                // 纯 ASCII 结论哨兵：供 CI 脚本免受日志编码影响地判定门禁结果
+                // （batchmode 进程退出码不可靠，脚本以此行为准，不信进程码）。
+                Debug.Log($"[CiGate] GATE_RESULT exit={exitCode}");
                 EditorApplication.Exit(exitCode);
             }
             catch (Exception ex)

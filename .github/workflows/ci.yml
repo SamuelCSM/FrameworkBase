@@ -41,10 +41,14 @@ jobs:
           testMode: all
           checkName: Test Results
 
-      # 资源门禁：batchmode 执行 CiGate.RunAssetGate（Addressables 校验阻断 + 字体缺字告警）。
-      # 复用同一 Unity 许可；CiGate 自身 EditorApplication.Exit(0/1)，非零即失败本步骤。
-      # 借 unity-builder 跑任意 executeMethod（buildMethod）；校验类方法在产出构建前自行 Exit。
-      - name: 资源门禁（Addressables + 字体缺字）
+      # 资源门禁：batchmode 执行 CiGate.RunAssetGate（Addressables 校验 + 字体缺字）。
+      # 复用同一 Unity 许可；CiGate 落 ASCII 结论行 "[CiGate] GATE_RESULT exit=N"。
+      # advisory（continue-on-error）：unity-builder 以进程退出码判定，而 batchmode 下即便
+      # EditorApplication.Exit(0) 进程码仍可能非 0（本地跑道已证实），直接判定会误红卡 PR。
+      # 强制门禁以本地 run-ci.ps1 为准（它按 GATE_RESULT 结论判定）；此步先做可见性，
+      # 待日后换成「跑 editor + 解析 GATE_RESULT」的自定义步骤后再转强制。
+      - name: 资源门禁（Addressables + 字体缺字，advisory）
+        continue-on-error: true
         uses: game-ci/unity-builder@v4
         env:
           UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}

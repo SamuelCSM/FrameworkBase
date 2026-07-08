@@ -152,18 +152,40 @@ function Invoke-AssetGate {
     if ($StrictFonts) { $gateArgs += "-strictFonts" }
 
     & $UnityPath @gateArgs
-    $exit = $LASTEXITCODE
-    if ($null -eq $exit) { $exit = 1 }
+    $procExit = $LASTEXITCODE
 
     # 摘出门禁关键行（CiGate 自身 Exit，日志里有结论）。
     Get-Content $logPath -ErrorAction SilentlyContinue |
         Where-Object { $_ -match "\[CiGate\]|\[AddressablesValidator\]|\[FontCoverage\]" } |
         Select-Object -Last 40
 
-    if ($exit -eq 0) { Write-Host "资源门禁通过。" }
-    else { Write-Host "资源门禁未通过（exit=$exit），详见日志: $logPath" }
+    # 以 CiGate 自身落日志的 ASCII 结论哨兵为准，而非 Unity 进程退出码：
+    # batchmode 下即便 EditorApplication.Exit(0)，Unity 进程仍可能返回非 0（与测试跑道同款现象）。
+    # 纯 ASCII 匹配 + UTF8 读取，免受日志中文编码影响。
+    $verdict = $null
+    $endLine = Get-Content $logPath -Encoding UTF8 -ErrorAction SilentlyContinue |
+        Where-Object { $_ -match "\[CiGate\]\s+GATE_RESULT\s+exit=(\d+)" } | Select-Object -Last 1
+    if ($endLine -and $endLine -match "GATE_RESULT\s+exit=(\d+)") { $verdict = [int]$Matches[1] }
 
-    return $exit
+    if ($null -ne $verdict) {
+        if ($verdict -ne 0) {
+            Write-Host "资源门禁未通过（CiGate exit=$verdict），详见日志: $logPath"
+        }
+        elseif ($procExit -ne 0) {
+            Write-Host "资源门禁通过（CiGate exit=0；Unity 进程退出码 $procExit 已忽略，按门禁结论判定）。"
+        }
+        else {
+            Write-Host "资源门禁通过。"
+        }
+        return $verdict
+    }
+
+    # 无门禁结论 = 未跑完（编译失败/异常）。
+    Write-Host "资源门禁未产出结论（大概率编译失败或异常），详见日志: $logPath"
+    Get-Content $logPath -ErrorAction SilentlyContinue |
+        Where-Object { $_ -match "error CS|Compilation failed|Exception" } |
+        Select-Object -First 20
+    if ($procExit -eq 0) { return 1 } else { return $procExit }
 }
 
 Write-Host "== FrameworkBase CI =="

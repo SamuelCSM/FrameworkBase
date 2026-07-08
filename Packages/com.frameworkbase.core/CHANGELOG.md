@@ -3,6 +3,17 @@
 本包遵循 [语义化版本](https://semver.org/lang/zh-CN/)。版本策略：
 `0.x` 为孵化期（API 可能调整）；首个商业项目立项时冻结为 `1.0.0`，此后破坏性变更必须升主版本。
 
+## [0.9.1] - 2026-07-08
+
+### 修复
+
+- **资源门禁误判失败**：batchmode 下即便 `CiGate` 调 `EditorApplication.Exit(0)`，Unity
+  进程仍可能返回非 0 退出码（与测试跑道同款现象），导致 `run-ci.ps1` 把通过的门禁判成失败。
+  改为以 `CiGate` 落日志的纯 ASCII 结论哨兵 `[CiGate] GATE_RESULT exit=N` 为准（UTF8 读取、
+  ASCII 匹配，免受日志中文编码影响），不再信进程退出码。
+- `ci.yml` 资源门禁步骤改 advisory（`continue-on-error`）：unity-builder 以进程退出码判定，
+  同样受上述不可靠退出码影响，直接判定会误红卡 PR；强制门禁以本地 `run-ci.ps1` 为准。
+
 ## [0.9.0] - 2026-07-08
 
 ### 新增
