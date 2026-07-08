@@ -260,11 +260,16 @@ namespace Framework.Core
             // 组合根注入：ErrorCenter 属 Kernel 层、不认识 Tips/Analytics（ADR-002），
             // 由此处注入 UI 呈现器并把限流后的错误上报转发给埋点管道。
             ErrorCenter.Shared.SetPresenter(new DefaultErrorPresenter());
-            ErrorCenter.Shared.ErrorReported += decision => Analytics?.Track("server_error", new Dictionary<string, object>
+            ErrorCenter.Shared.ErrorReported += decision =>
             {
-                { "code", decision.Code },
-                { "reaction", decision.Reaction.ToString() },
-            });
+                Analytics?.Track("server_error", new Dictionary<string, object>
+                {
+                    { "code", decision.Code },
+                    { "reaction", decision.Reaction.ToString() },
+                });
+                // 服务端错误留面包屑：崩溃前的错误码链常是根因线索。
+                Telemetry.CrashReporter.LeaveBreadcrumb($"error:{decision.Code} reaction={decision.Reaction}");
+            };
 
             RefData         = AddComponent<ConfigManager>();
             Audio           = AddComponent<AudioManager>();

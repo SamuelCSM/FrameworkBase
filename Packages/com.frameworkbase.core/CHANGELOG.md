@@ -3,6 +3,18 @@
 本包遵循 [语义化版本](https://semver.org/lang/zh-CN/)。版本策略：
 `0.x` 为孵化期（API 可能调整）；首个商业项目立项时冻结为 `1.0.0`，此后破坏性变更必须升主版本。
 
+## [0.8.1] - 2026-07-08
+
+### 变更
+
+- **崩溃归因接线铺满**（P0 收尾，纯接线无新 API）：把 `CrashReporter` 的归因三件套接到既有链路，
+  让崩溃报告能定位「谁、在哪个阶段、出了什么前兆」：
+  - `LaunchTelemetryHelper.BeginPhaseMetric` / `FinalizeRunMetric` → 每个启动阶段留面包屑
+    （`launch:stepNN_...`）——启动崩溃最有价值的上下文。
+  - `AuthManager.SetState` → 登录状态迁移留面包屑（`auth:State reason code`）。
+  - `GameEntry` 的 `ErrorCenter.ErrorReported` 订阅 → 服务端错误码留面包屑（`error:CODE`）。
+  - `SdkManager.InitializeAsync` 成功 → 渠道名写入自定义键（`channel`），供分渠道排查。
+
 ## [0.8.0] - 2026-07-08
 
 ### 新增

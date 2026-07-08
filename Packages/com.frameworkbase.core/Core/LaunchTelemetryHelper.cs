@@ -60,6 +60,9 @@ namespace Framework.Core
                 StartTicksUtc = DateTime.UtcNow.Ticks
             };
             run.Phases.Add(metric);
+
+            // 留一条启动阶段面包屑：崩溃报告即可定位「卡在启动哪一步」——启动崩溃最有价值的上下文。
+            Telemetry.CrashReporter.LeaveBreadcrumb($"launch:{displayName}");
             return metric;
         }
 
@@ -79,6 +82,8 @@ namespace Framework.Core
         {
             run.Success = success;
             run.EndReason = endReason;
+
+            Telemetry.CrashReporter.LeaveBreadcrumb($"launch:end success={success} reason={endReason}");
 
             string json = JsonSerializers.Shared.ToJson(run, true);
             Debug.Log($"[LaunchTelemetry] {json}");

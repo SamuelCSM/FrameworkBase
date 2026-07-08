@@ -298,6 +298,9 @@ namespace Framework.Core.Auth
                 AtUtc = DateTime.UtcNow
             };
             OnStateChanged?.Invoke(snapshot);
+
+            // 登录状态迁移留面包屑：崩溃报告可回溯玩家当时处于登录哪一步、错在哪个码。
+            Telemetry.CrashReporter.LeaveBreadcrumb($"auth:{state} {snapshot.Reason} {snapshot.ErrorCode}");
             GameLog.Log($"[AuthFlow] state={state}, reason={snapshot.Reason}, code={snapshot.ErrorCode}");
         }
 

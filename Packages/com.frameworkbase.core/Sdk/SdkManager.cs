@@ -86,7 +86,11 @@ namespace Framework.Sdk
             _initialized = result.Success;
 
             if (result.Success)
+            {
                 GameLog.Log($"[SdkManager] SDK 初始化完成 channel={provider.ChannelName}");
+                // 渠道名作为崩溃归因维度：分渠道排查崩溃（不同渠道 SDK / 机型分布差异大）。
+                Framework.Core.Telemetry.CrashReporter.SetCustomKey("channel", provider.ChannelName);
+            }
             else
                 GameLog.Error($"[SdkManager] SDK 初始化失败 channel={provider.ChannelName} code={result.Code} msg={result.Message}");
 
