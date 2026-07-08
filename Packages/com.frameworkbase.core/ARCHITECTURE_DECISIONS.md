@@ -139,8 +139,9 @@ Boot 提取的对象，本步不动。
 | Privacy→Analytics/RemoteConfig | `PrivacyCompliance.cs`（RTBF 编排器）| Core/Privacy |
 
 **3a-去环（已实施）**：4 个肇事文件经 `git mv` 上移到 `Core/Composition/`
-（同属 Framework 程序集、命名空间不变、prefab 按 .meta GUID 绑定不断），故零代码
-改动、零引用破坏。此后各服务模块目录不再含上行依赖文件，folder 依赖图成真 DAG
+并按职责细分：`UIAdapters/` 承接 Network/Auth 与 UI 的跨模块适配，
+`Privacy/` 承接 RTBF 本地抹除编排（同属 Framework 程序集、命名空间不变、prefab
+按 .meta GUID 绑定不断），故零代码改动、零引用破坏。此后各服务模块目录不再含上行依赖文件，folder 依赖图成真 DAG
 ——这是未来沿 DAG 切 asmdef 的强制前置。
 
 **规划期两处误判，经读码/编译更正**：
