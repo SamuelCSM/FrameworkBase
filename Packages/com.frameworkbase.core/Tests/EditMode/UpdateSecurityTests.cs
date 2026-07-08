@@ -195,6 +195,47 @@ namespace Framework.Tests
             Assert.AreEqual(2, patches.Count);
         }
 
+        [Test]
+        public void 补丁下载URL_按UpdateServerUrl重定基_忽略清单host()
+        {
+            // 清单里补丁写的是发布机本地 host（甚至明文 http），运行时必须改写为客户端信任的更新服务器同源地址。
+            var server = new UpdateInfo
+            {
+                CodeVersion = 2,
+                PatchFiles = new List<PatchFile>
+                {
+                    new PatchFile { FileName = "GameProtocol.dll.bytes", Url = "http://127.0.0.1:80/Updates/GameProtocol.dll.bytes", Size = 10, MD5 = "aa" },
+                    new PatchFile { FileName = "HotUpdate.dll.bytes",    Url = "HotUpdate.dll.bytes",                              Size = 20, MD5 = "bb" }
+                }
+            };
+
+            bool ok = VersionManager.TryResolveCodePatchFiles(server, "https://cdn.example.com/Updates/", out var patches);
+
+            Assert.IsTrue(ok);
+            Assert.AreEqual("https://cdn.example.com/Updates/GameProtocol.dll.bytes", patches[0].Url);
+            Assert.AreEqual("https://cdn.example.com/Updates/HotUpdate.dll.bytes", patches[1].Url);
+            // 原清单对象不被篡改（重定基产出的是副本）。
+            Assert.AreEqual("http://127.0.0.1:80/Updates/GameProtocol.dll.bytes", server.PatchFiles[0].Url);
+        }
+
+        [Test]
+        public void 补丁下载URL_空UpdateServerUrl_回退清单Url()
+        {
+            var server = new UpdateInfo
+            {
+                CodeVersion = 2,
+                PatchFiles = new List<PatchFile>
+                {
+                    new PatchFile { FileName = "HotUpdate.dll.bytes", Url = "http://127.0.0.1:80/Updates/HotUpdate.dll.bytes", Size = 20, MD5 = "bb" }
+                }
+            };
+
+            bool ok = VersionManager.TryResolveCodePatchFiles(server, string.Empty, out var patches);
+
+            Assert.IsTrue(ok);
+            Assert.AreEqual("http://127.0.0.1:80/Updates/HotUpdate.dll.bytes", patches[0].Url);
+        }
+
         // ── 工具 ─────────────────────────────────────────────────────────────
 
         /// <summary>生成测试用 RSA 密钥对（XML 格式，与运行时/发布工具一致）。</summary>

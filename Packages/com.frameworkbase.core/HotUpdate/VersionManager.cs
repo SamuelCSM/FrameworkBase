@@ -198,6 +198,13 @@ namespace Framework.HotUpdate
         /// 无校验补丁——发布工具（HotUpdatePublisher）生成的 version.json 天然带全量哈希，
         /// 手写清单必须补齐 PatchFiles 才能下发代码热更。
         /// </para>
+        /// <para>
+        /// 下载地址收口：补丁的实际下载 URL 由客户端信任的 <paramref name="updateServerUrl"/> 与补丁
+        /// FileName 派生（与 version.json / version.json.sig <b>同源</b>，已过 prod-HTTPS 门禁），
+        /// <b>忽略清单内自带 host</b>——被投毒的清单无法把 DLL 重定向到明文链路或第三方服务器；
+        /// 同时一份签名清单在 dev/qa/prod 任意环境通用，换 CDN 无需重签。<paramref name="updateServerUrl"/>
+        /// 为空（本地无热更服务器）时回退清单自带 Url，供本机联调。
+        /// </para>
         /// </summary>
         public static bool TryResolveCodePatchFiles(
             UpdateInfo serverVersion,
@@ -213,6 +220,7 @@ namespace Framework.HotUpdate
                 return false;
             }
 
+            var resolved = new List<PatchFile>(serverVersion.PatchFiles.Count);
             foreach (PatchFile patch in serverVersion.PatchFiles)
             {
                 if (!UpdateSecurity.ValidateCodePatchFile(patch, out string reason))
@@ -220,10 +228,29 @@ namespace Framework.HotUpdate
                     GameLog.Error($"[VersionManager] 补丁清单未通过安全准入，拒绝代码热更: {reason}");
                     return false;
                 }
+
+                resolved.Add(new PatchFile
+                {
+                    FileName = patch.FileName,
+                    Url = string.IsNullOrEmpty(updateServerUrl)
+                        ? patch.Url
+                        : CombinePatchUrl(updateServerUrl, patch.FileName),
+                    Size = patch.Size,
+                    MD5 = patch.MD5
+                });
             }
 
-            patchFiles = serverVersion.PatchFiles;
+            patchFiles = resolved;
             return true;
+        }
+
+        /// <summary>
+        /// 拼接补丁下载 URL：更新服务器根地址 + 补丁文件名（规整重复的斜杠）。
+        /// 与 <c>{updateServerUrl}/version.json</c> 的取法保持同源同规则。
+        /// </summary>
+        private static string CombinePatchUrl(string updateServerUrl, string fileName)
+        {
+            return $"{updateServerUrl.TrimEnd('/')}/{fileName}";
         }
         
         /// <summary>

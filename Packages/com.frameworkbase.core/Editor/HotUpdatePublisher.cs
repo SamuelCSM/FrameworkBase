@@ -652,7 +652,9 @@ $@"{{
             for (int i = 0; i < dllArtifacts.Count; i++)
             {
                 var artifact = dllArtifacts[i];
-                string dllUrl = $"http://127.0.0.1:80/Updates/{artifact.FileName}";
+                // 只写相对文件名，保持清单环境无关：实际下载地址运行时由客户端 UpdateServerUrl 派生
+                // （见 VersionManager.TryResolveCodePatchFiles），不再硬编码发布机 host。
+                string dllUrl = artifact.FileName;
                 sb.Append("    {\n");
                 sb.Append("      \"FileName\": \"").Append(EscapeJsonString(artifact.FileName)).Append("\",\n");
                 sb.Append("      \"Url\":      \"").Append(EscapeJsonString(dllUrl)).Append("\",\n");
