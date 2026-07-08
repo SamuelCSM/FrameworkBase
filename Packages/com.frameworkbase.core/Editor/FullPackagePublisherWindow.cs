@@ -6,6 +6,7 @@ using System.Security.Cryptography;
 using System.Text;
 using Editor.ExcelTool;
 using Framework.Core;
+using Framework.Editor.Release;
 using Framework.HotUpdate;
 using SQLite;
 using UnityEditor;
@@ -170,8 +171,39 @@ namespace Framework.Editor
             DrawLog();
         }
 
+        /// <summary>绘制发布环境下拉（dev/qa/staging/prod），选择结果存 EditorPrefs（机器级）。</summary>
+        private void DrawReleaseEnvSelector()
+        {
+            EditorGUILayout.LabelField("发布环境", EditorStyles.boldLabel);
+            EditorGUILayout.BeginVertical("box");
+
+            string[] envs = ReleaseProfileStore.KnownEnvironments;
+            int current = Mathf.Max(0, Array.IndexOf(envs, ReleaseProfileStore.ActiveEnv));
+            int selected = EditorGUILayout.Popup("目标环境", current, envs);
+            if (selected != current)
+                ReleaseProfileStore.ActiveEnv = envs[selected];
+
+            var profile = ReleaseProfileStore.TryLoad(ReleaseProfileStore.ActiveEnv, out string loadError);
+            if (profile == null)
+            {
+                EditorGUILayout.HelpBox($"未加载到 {ReleaseProfileStore.ActiveEnv}.json：{loadError}", MessageType.Error);
+            }
+            else if (profile.RequireManifestSignature && !UpdateManifestSigner.HasUsablePrivateKey)
+            {
+                EditorGUILayout.HelpBox(
+                    $"环境 {profile.Name} 要求签名，但本机未配置可用私钥——发布将被阻断。\n" +
+                    "菜单 Framework → Hot Update Security → Generate Signing Key Pair / Set Private Key Path。",
+                    MessageType.Warning);
+            }
+
+            EditorGUILayout.EndVertical();
+        }
+
         private void DrawConfig()
         {
+            DrawReleaseEnvSelector();
+            EditorGUILayout.Space(6);
+
             EditorGUILayout.LabelField("配置", EditorStyles.boldLabel);
             EditorGUILayout.BeginVertical("box");
 
@@ -285,6 +317,14 @@ namespace Framework.Editor
             if (string.IsNullOrEmpty(_appVersion))
                 throw new Exception("AppVersion 不能为空");
 
+            // 发布前环境校验（prod 明文 / 要求签名却无私钥等）：不达标直接阻断，避免产出半成品清单。
+            if (!ReleaseProfileStore.TryResolveActive(out ReleaseProfile profile, out string profileReport))
+            {
+                AppendLog("[环境校验] " + profileReport);
+                throw new Exception("发布环境校验未通过：\n" + profileReport);
+            }
+            AppendLog("[环境校验] " + profileReport);
+
             PlayerSettings.bundleVersion = _appVersion;
             AppendLog($"完成：PlayerSettings.bundleVersion = {_appVersion}");
 
@@ -311,7 +351,8 @@ namespace Framework.Editor
             Directory.CreateDirectory(ServerDataDir);
             string serverDataManifest = Path.Combine(ServerDataDir, "version.json");
             File.WriteAllText(serverDataManifest, json, Encoding.UTF8);
-            UpdateManifestSigner.SignManifestForPublish(serverDataManifest, AppendLog);
+            if (!UpdateManifestSigner.SignManifestForPublish(serverDataManifest, AppendLog, profile.RequireManifestSignature))
+                throw new Exception($"清单签名失败（环境 {profile.Name} 要求签名），已中止发布");
 
             string streamingDir = Path.Combine(Application.dataPath, "StreamingAssets");
             Directory.CreateDirectory(streamingDir);

@@ -1,0 +1,9 @@
+{
+  "Name": "staging",
+  "BaseUrl": "https://staging-cdn.example.com/game/updates",
+  "UploadRoot": "",
+  "RequireHttps": true,
+  "RequireManifestSignature": true,
+  "SigningKeyRef": "staging_hotupdate_manifest",
+  "AllowPlayerPrefsOverride": false
+}

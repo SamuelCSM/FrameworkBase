@@ -1,0 +1,9 @@
+{
+  "Name": "prod",
+  "BaseUrl": "https://cdn.example.com/game/updates",
+  "UploadRoot": "",
+  "RequireHttps": true,
+  "RequireManifestSignature": true,
+  "SigningKeyRef": "prod_hotupdate_manifest",
+  "AllowPlayerPrefsOverride": false
+}

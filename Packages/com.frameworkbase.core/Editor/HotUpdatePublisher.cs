@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
+using Framework.Editor.Release;
 using Framework.HotUpdate;
 using HybridCLR.Editor.Commands;
 using UnityEditor;
@@ -157,6 +158,10 @@ namespace Framework.Editor
 
             EditorGUILayout.Space(4);
 
+            DrawReleaseEnvSelector();
+
+            EditorGUILayout.Space(4);
+
             // ── 版本号区域 ──────────────────────────────────────
             GUILayout.Label("当前版本", EditorStyles.boldLabel);
             EditorGUI.BeginDisabledGroup(_building);
@@ -270,6 +275,38 @@ namespace Framework.Editor
             EditorGUILayout.EndScrollView();
         }
 
+        // ─── 发布环境选择 ───────────────────────────────────────
+        /// <summary>绘制发布环境下拉（dev/qa/staging/prod），选择结果存 EditorPrefs（机器级）。</summary>
+        private void DrawReleaseEnvSelector()
+        {
+            GUILayout.Label("发布环境", EditorStyles.boldLabel);
+            EditorGUILayout.BeginVertical("box");
+
+            string[] envs = ReleaseProfileStore.KnownEnvironments;
+            int current = Mathf.Max(0, Array.IndexOf(envs, ReleaseProfileStore.ActiveEnv));
+            int selected = EditorGUILayout.Popup("目标环境", current, envs);
+            if (selected != current)
+                ReleaseProfileStore.ActiveEnv = envs[selected];
+
+            var profile = ReleaseProfileStore.TryLoad(ReleaseProfileStore.ActiveEnv, out string loadError);
+            if (profile == null)
+            {
+                EditorGUILayout.HelpBox($"未加载到 {ReleaseProfileStore.ActiveEnv}.json：{loadError}", MessageType.Error);
+            }
+            else
+            {
+                EditorGUILayout.LabelField($"BaseUrl：{profile.BaseUrl}");
+                EditorGUILayout.LabelField($"强制 HTTPS：{profile.RequireHttps}  强制签名：{profile.RequireManifestSignature}");
+                if (profile.RequireManifestSignature && !UpdateManifestSigner.HasUsablePrivateKey)
+                    EditorGUILayout.HelpBox(
+                        "该环境要求签名，但本机未配置可用私钥——发布将被阻断。\n" +
+                        "菜单 Framework → Hot Update Security → Generate Signing Key Pair / Set Private Key Path。",
+                        MessageType.Warning);
+            }
+
+            EditorGUILayout.EndVertical();
+        }
+
         // ─── 核心发布流程 ───────────────────────────────────────
         private void Publish()
         {
@@ -278,6 +315,13 @@ namespace Framework.Editor
 
             try
             {
+                // 发布前环境校验（prod 明文 / 要求签名却无私钥等）：不达标直接阻断，不产出半成品清单。
+                if (!ReleaseProfileStore.TryResolveActive(out ReleaseProfile profile, out string profileReport))
+                {
+                    AppendLog("[环境校验] " + profileReport);
+                    throw new Exception("发布环境校验未通过：\n" + profileReport);
+                }
+                AppendLog("[环境校验] " + profileReport);
                 // 1. 计算新版本号
                 // 整包更新（AppVersion 已变更）：热更计数归 1 重算，
                 // 因为新大版本的安装包里内置的就是 Resource=1 / Code=1。
@@ -335,7 +379,8 @@ namespace Framework.Editor
                 Directory.CreateDirectory(ServerDataDir);
                 string serverDataManifest = Path.Combine(ServerDataDir, "version.json");
                 File.WriteAllText(serverDataManifest, json, System.Text.Encoding.UTF8);
-                UpdateManifestSigner.SignManifestForPublish(serverDataManifest, AppendLog);
+                if (!UpdateManifestSigner.SignManifestForPublish(serverDataManifest, AppendLog, profile.RequireManifestSignature))
+                    throw new Exception($"清单签名失败（环境 {profile.Name} 要求签名），已中止发布");
                 AppendLog($"      写入 → {ServerDataDir}");
 
                 // 写入 IIS 输出目录
@@ -344,7 +389,8 @@ namespace Framework.Editor
                     Directory.CreateDirectory(_versionOutputDir);
                     string outputManifest = Path.Combine(_versionOutputDir, "version.json");
                     File.WriteAllText(outputManifest, json, System.Text.Encoding.UTF8);
-                    UpdateManifestSigner.SignManifestForPublish(outputManifest, AppendLog);
+                    if (!UpdateManifestSigner.SignManifestForPublish(outputManifest, AppendLog, profile.RequireManifestSignature))
+                        throw new Exception($"清单签名失败（环境 {profile.Name} 要求签名），已中止发布");
                     AppendLog($"      写入 → {_versionOutputDir}");
                 }
 

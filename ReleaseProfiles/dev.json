@@ -1,0 +1,9 @@
+{
+  "Name": "dev",
+  "BaseUrl": "http://127.0.0.1:80/Updates",
+  "UploadRoot": "",
+  "RequireHttps": false,
+  "RequireManifestSignature": false,
+  "SigningKeyRef": "",
+  "AllowPlayerPrefsOverride": true
+}
