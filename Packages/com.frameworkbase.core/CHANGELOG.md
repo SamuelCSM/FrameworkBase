@@ -3,6 +3,26 @@
 本包遵循 [语义化版本](https://semver.org/lang/zh-CN/)。版本策略：
 `0.x` 为孵化期（API 可能调整）；首个商业项目立项时冻结为 `1.0.0`，此后破坏性变更必须升主版本。
 
+## [0.10.0] - 2026-07-08
+
+### 新增
+
+- **凭证安全存储抽象 `ISecureStorage`**（P1）：给登录令牌等敏感串一个<b>不落普通存档</b>的持久化
+  落点（强联网项目「跨重启静默重登」的前置）。主干定义接口 + 注入点，硬件级实现（iOS Keychain /
+  Android Keystore）留扩展包——与崩溃后端 / SDK 同款「主干接口 + 平台实现」模式。
+  - `SecureStorage.Shared` / `SecureStorage.SetBackend` 注入点。
+  - 默认 `EncryptedPrefsSecureStorage`：设备密钥 <b>AES + HMAC 防篡改</b>，密文存 PlayerPrefs，
+    复用 `AesHelper` 同一套设备绑定密钥；读时先验 HMAC 再解密，篡改 / 跨设备 / 损坏一律按读不到。
+    <b>安全边界</b>：比明文强、能挡普通翻存档，但密钥源自可推断的 deviceUniqueIdentifier、非硬件级；
+    高价值凭证请接 Keychain / Keystore 扩展包。
+  - `InMemorySecureStorage`：测试 / 「重启即清空」语义用。
+  - `SecureStorageTests`：往返 / 落盘非明文 / HMAC 防篡改 / 删除 / 注入路由，6 用例。
+
+### 说明
+
+- 本步只落抽象与默认实现，未自动把会话令牌接入持久化——令牌是否持久化是<b>业务安全策略</b>
+  （非框架该替业务决定），故留 `AuthSession` 侧接线由业务按需调用 `SecureStorage`。
+
 ## [0.9.1] - 2026-07-08
 
 ### 修复
