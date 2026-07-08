@@ -3,6 +3,21 @@
 本包遵循 [语义化版本](https://semver.org/lang/zh-CN/)。版本策略：
 `0.x` 为孵化期（API 可能调整）；首个商业项目立项时冻结为 `1.0.0`，此后破坏性变更必须升主版本。
 
+## [0.9.0] - 2026-07-08
+
+### 新增
+
+- **CI 资源门禁 `CiGate`**（P1：把已有校验器接进门禁）：新增 batchmode 入口
+  `Framework.Editor.CiGate.RunAssetGate`，把既有的 Addressables 深度校验与字体缺字检测
+  串成一道<b>不依赖完整出包</b>的检查，拦截「包体一版版胖、真机豆腐块」等长期运营隐患。
+  - Addressables 校验（复用 `AddressablesValidator.ValidateForBuild`）——Error 级<b>阻断</b>；
+    Settings 不存在（纯框架壳）视为通过。
+  - 字体缺字（新增 batchmode 安全的 `FontCoverageChecker.CheckFontsForCi`，扫全工程
+    TMP 字体）——默认<b>告警不阻断</b>（避免图标字体/局部字库误报卡 CI），传
+    `-strictFonts` 升级为阻断；config.db 不存在或无字体时跳过。
+- `run-ci.ps1` 接入资源门禁（EditMode 通过后执行），新增 `-SkipAssetGate` / `-StrictFonts` 开关；
+  `.github/workflows/ci.yml` 增资源门禁步骤（借 unity-builder 跑 executeMethod，复用同一许可）。
+
 ## [0.8.1] - 2026-07-08
 
 ### 变更

@@ -1,4 +1,4 @@
-# FrameworkBase 质量门禁：编译 + EditMode 测试 + PlayMode 冒烟。
+# FrameworkBase 质量门禁：编译 + EditMode 测试 + PlayMode 冒烟 + 资源门禁。
 # 与 Tools/ci/run-ci.ps1 等价，push / PR 自动执行。
 #
 # 首次启用需要在仓库 Settings → Secrets and variables → Actions 配置 Unity 授权：
@@ -40,6 +40,20 @@ jobs:
         with:
           testMode: all
           checkName: Test Results
+
+      # 资源门禁：batchmode 执行 CiGate.RunAssetGate（Addressables 校验阻断 + 字体缺字告警）。
+      # 复用同一 Unity 许可；CiGate 自身 EditorApplication.Exit(0/1)，非零即失败本步骤。
+      # 借 unity-builder 跑任意 executeMethod（buildMethod）；校验类方法在产出构建前自行 Exit。
+      - name: 资源门禁（Addressables + 字体缺字）
+        uses: game-ci/unity-builder@v4
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+        with:
+          targetPlatform: StandaloneLinux64
+          buildMethod: Framework.Editor.CiGate.RunAssetGate
+          allowDirtyBuild: true
 
       - name: Upload test results
         uses: actions/upload-artifact@v4

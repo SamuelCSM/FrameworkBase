@@ -53,17 +53,62 @@ namespace Framework.Editor
                 CheckFont(font, characters);
         }
 
-        /// <summary>检查单个字体（含 fallback 链）对字符集的覆盖，输出缺字报告。</summary>
+        /// <summary>
+        /// CI 门禁入口（batchmode 安全，无弹窗）：扫描工程全部 TMP_FontAsset 对 language 表字符的覆盖。
+        /// </summary>
+        /// <param name="report">人类可读报告（逐字体覆盖/缺字摘要）。</param>
+        /// <param name="fontsWithMissing">存在缺字的字体数量。</param>
+        /// <returns>
+        /// true = 已执行检查（report 为结果）；false = 前置不满足而跳过
+        /// （config.db 不存在 / 工程无 TMP 字体），此时 report 为跳过原因，调用方应按「不阻断」处理。
+        /// </returns>
+        public static bool CheckFontsForCi(out string report, out int fontsWithMissing)
+        {
+            fontsWithMissing = 0;
+
+            HashSet<char> characters = CollectLanguageTableCharacters(out int rowCount, silent: true);
+            if (characters == null)
+            {
+                report = "language 配置库不存在，跳过字体覆盖检查（先跑 ExcelTool 导出 config.db）";
+                return false;
+            }
+
+            string[] guids = AssetDatabase.FindAssets("t:TMP_FontAsset");
+            if (guids.Length == 0)
+            {
+                report = "工程内无 TMP_FontAsset，跳过字体覆盖检查";
+                return false;
+            }
+
+            var sb = new StringBuilder();
+            sb.AppendLine($"[FontCoverage] language 表 {rowCount} 行，去重字符 {characters.Count} 个，检查字体 {guids.Length} 个：");
+            foreach (string guid in guids)
+            {
+                string path = AssetDatabase.GUIDToAssetPath(guid);
+                var font = AssetDatabase.LoadAssetAtPath<TMP_FontAsset>(path);
+                if (font == null)
+                    continue;
+
+                List<char> missing = FindMissing(font, characters);
+                if (missing.Count == 0)
+                {
+                    sb.AppendLine($"  ✓ {font.name}: 全覆盖（含 fallback 链）");
+                }
+                else
+                {
+                    fontsWithMissing++;
+                    sb.AppendLine($"  ✗ {font.name}: 缺字 {missing.Count} 个（真机将显示豆腐块）");
+                }
+            }
+
+            report = sb.ToString().TrimEnd();
+            return true;
+        }
+
+        /// <summary>检查单个字体（含 fallback 链）对字符集的覆盖，输出缺字报告（MenuItem 路径，直接落 Console）。</summary>
         private static void CheckFont(TMP_FontAsset font, HashSet<char> characters)
         {
-            var missing = new List<char>();
-            foreach (char c in characters)
-            {
-                if (char.IsWhiteSpace(c) || char.IsControl(c))
-                    continue;
-                if (!HasCharacterWithFallbacks(font, c, new HashSet<TMP_FontAsset>()))
-                    missing.Add(c);
-            }
+            List<char> missing = FindMissing(font, characters);
 
             if (missing.Count == 0)
             {
@@ -71,7 +116,6 @@ namespace Framework.Editor
                 return;
             }
 
-            missing.Sort();
             var sb = new StringBuilder();
             sb.Append($"[FontCoverage] ✗ {font.name}: 缺字 {missing.Count} 个");
             sb.AppendLine("（真机将显示豆腐块，需扩字库或补 fallback 字体）：");
@@ -85,6 +129,21 @@ namespace Framework.Editor
             if (missing.Count > shown)
                 sb.Append($"…… 其余 {missing.Count - shown} 个从略");
             Debug.LogError(sb.ToString());
+        }
+
+        /// <summary>求单个字体（含 fallback 链）对字符集的缺字清单（升序；跳过空白/控制符）。</summary>
+        private static List<char> FindMissing(TMP_FontAsset font, HashSet<char> characters)
+        {
+            var missing = new List<char>();
+            foreach (char c in characters)
+            {
+                if (char.IsWhiteSpace(c) || char.IsControl(c))
+                    continue;
+                if (!HasCharacterWithFallbacks(font, c, new HashSet<TMP_FontAsset>()))
+                    missing.Add(c);
+            }
+            missing.Sort();
+            return missing;
         }
 
         /// <summary>递归查字体及其 fallback 链是否含指定字符（visited 防 fallback 环）。</summary>
@@ -108,14 +167,17 @@ namespace Framework.Editor
         }
 
         /// <summary>读 language 表全部行、聚合所有语言列（LanguageRef 的 string 字段，Key 除外）的字符。</summary>
-        private static HashSet<char> CollectLanguageTableCharacters(out int rowCount)
+        /// <param name="rowCount">language 表行数。</param>
+        /// <param name="silent">db 不存在时是否静默返回 null（batchmode/CI 传 true，避免弹窗阻塞）。</param>
+        private static HashSet<char> CollectLanguageTableCharacters(out int rowCount, bool silent = false)
         {
             rowCount = 0;
             string dbPath = Path.Combine(Application.streamingAssetsPath, DbRelativePath);
             if (!File.Exists(dbPath))
             {
-                EditorUtility.DisplayDialog("字体覆盖检查",
-                    $"未找到配置库：{dbPath}\n请先用 ExcelTool 导出配置。", "确定");
+                if (!silent)
+                    EditorUtility.DisplayDialog("字体覆盖检查",
+                        $"未找到配置库：{dbPath}\n请先用 ExcelTool 导出配置。", "确定");
                 return null;
             }
 

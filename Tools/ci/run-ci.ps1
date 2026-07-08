@@ -1,16 +1,20 @@
-﻿# FrameworkBase 本地 CI 门禁：编译 + EditMode 测试 + PlayMode 冒烟。
+﻿# FrameworkBase 本地 CI 门禁：编译 + EditMode 测试 + 资源门禁 + PlayMode 冒烟。
 # 与 .github/workflows/ci.yml 跑同一套门禁，提交前在本机自查用。
 #
 # 用法（PowerShell，工程须先关闭 Unity 编辑器）：
 #   .\Tools\ci\run-ci.ps1                     # 自动定位 Unity（Hub 常见安装位置）
 #   .\Tools\ci\run-ci.ps1 -UnityPath "H:\Hub\2022.3.62f3\Editor\Unity.exe"
-#   .\Tools\ci\run-ci.ps1 -SkipPlayMode       # 只跑 EditMode（快速自查）
+#   .\Tools\ci\run-ci.ps1 -SkipPlayMode       # 只跑 EditMode + 资源门禁（快速自查）
+#   .\Tools\ci\run-ci.ps1 -SkipAssetGate      # 跳过资源门禁（Addressables/字体）
+#   .\Tools\ci\run-ci.ps1 -StrictFonts        # 字体缺字从告警升级为阻断
 #   $env:UNITY_EDITOR_PATH = "...\Unity.exe"; .\Tools\ci\run-ci.ps1
 #
-# 退出码：0 = 全部通过；非 0 = 编译失败或有测试未通过。
+# 退出码：0 = 全部通过；非 0 = 编译失败 / 有测试未通过 / 资源门禁被阻断。
 param(
     [string]$UnityPath,
-    [switch]$SkipPlayMode
+    [switch]$SkipPlayMode,
+    [switch]$SkipAssetGate,
+    [switch]$StrictFonts
 )
 
 $ErrorActionPreference = "Stop"
@@ -131,20 +135,59 @@ function Invoke-UnityTests([string]$platform) {
     return $exit
 }
 
+# ── 资源门禁（Addressables 校验 + 字体缺字），batchmode 执行 CiGate ──────────
+function Invoke-AssetGate {
+    $logPath = Join-Path $artifacts "asset-gate.log"
+    if (Test-Path $logPath) { Remove-Item $logPath -Force }
+
+    Write-Host ""
+    Write-Host "── 资源门禁（Addressables + 字体缺字）──────────────"
+
+    $gateArgs = @(
+        "-batchmode", "-nographics",
+        "-projectPath", $projectPath,
+        "-executeMethod", "Framework.Editor.CiGate.RunAssetGate",
+        "-logFile", $logPath
+    )
+    if ($StrictFonts) { $gateArgs += "-strictFonts" }
+
+    & $UnityPath @gateArgs
+    $exit = $LASTEXITCODE
+    if ($null -eq $exit) { $exit = 1 }
+
+    # 摘出门禁关键行（CiGate 自身 Exit，日志里有结论）。
+    Get-Content $logPath -ErrorAction SilentlyContinue |
+        Where-Object { $_ -match "\[CiGate\]|\[AddressablesValidator\]|\[FontCoverage\]" } |
+        Select-Object -Last 40
+
+    if ($exit -eq 0) { Write-Host "资源门禁通过。" }
+    else { Write-Host "资源门禁未通过（exit=$exit），详见日志: $logPath" }
+
+    return $exit
+}
+
 Write-Host "== FrameworkBase CI =="
 Write-Host "Unity   : $UnityPath"
 Write-Host "Project : $projectPath"
-Write-Host ("步骤    : 编译 + EditMode 测试" + $(if ($SkipPlayMode) { "" } else { " + PlayMode 冒烟" }) + "（产物 $artifacts）")
+Write-Host ("步骤    : 编译 + EditMode 测试" + `
+    $(if ($SkipAssetGate) { "" } else { " + 资源门禁" }) + `
+    $(if ($SkipPlayMode) { "" } else { " + PlayMode 冒烟" }) + "（产物 $artifacts）")
 
-# ── 依次跑两条跑道（EditMode 先行：编译失败/逻辑用例挂了就不必再起 PlayMode）──
+# ── 依次跑（EditMode 先行：编译失败/逻辑用例挂了就不必再起后续）──
 $finalExit = Invoke-UnityTests "EditMode"
+
+# 资源门禁：EditMode 通过后执行（独立于测试，被阻断则整体失败）。
+if ($finalExit -eq 0 -and -not $SkipAssetGate) {
+    $gateExit = Invoke-AssetGate
+    if ($gateExit -ne 0) { $finalExit = $gateExit }
+}
 
 if ($finalExit -eq 0 -and -not $SkipPlayMode) {
     $finalExit = Invoke-UnityTests "PlayMode"
 }
 elseif ($finalExit -ne 0) {
     Write-Host ""
-    Write-Host "EditMode 未通过，跳过 PlayMode。"
+    Write-Host "前序步骤未通过，跳过 PlayMode。"
 }
 
 Write-Host ""
