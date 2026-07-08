@@ -1,16 +1,11 @@
 {
-    "name": "Framework.Editor",
-    "rootNamespace": "",
+    "name": "Framework.Kernel",
+    "rootNamespace": "Framework",
     "references": [
-        "Framework",
-        "Framework.Kernel",
-        "Unity.Addressables.Editor",
-        "Unity.TextMeshPro",
-        "HybridCLR.Editor"
+        "Framework.Foundation",
+        "UniTask"
     ],
-    "includePlatforms": [
-        "Editor"
-    ],
+    "includePlatforms": [],
     "excludePlatforms": [],
     "allowUnsafeCode": false,
     "overrideReferences": false,

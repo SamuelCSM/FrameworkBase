@@ -134,17 +134,21 @@ namespace Framework.Tests
             var presenter = new RecordingPresenter();
             var center = new ErrorCenter(new ErrorCodeRegistry(), presenter, () => now);
 
-            // GameEntry.Analytics 在纯单测环境为 null，限流逻辑本身经呈现器调用次数间接验证不了，
-            // 这里验证 Handle 多次调用不抛异常且每次都走呈现器（限流只作用于埋点，不作用于呈现）
-            center.Handle(1);
-            center.Handle(1);
+            // ErrorCenter 属 Kernel 层，不直连 Analytics；埋点经 ErrorReported 事件外发（ADR-002），
+            // 单测直接订阅该事件即可验证限流：同码 60 秒窗口内只上报一次，跨窗口与不同码各自计数。
+            var reported = new List<int>();
+            center.ErrorReported += d => reported.Add(d.Code);
+
+            center.Handle(1);   // 上报
+            center.Handle(1);   // 限流（同码同窗口）
             now = 30;
-            center.Handle(1);
+            center.Handle(1);   // 限流（<60）
             now = 61;
-            center.Handle(1);
-            center.Handle(2);
+            center.Handle(1);   // 上报（>60，新窗口）
+            center.Handle(2);   // 上报（不同码）
 
             Assert.AreEqual(5, presenter.Presented.Count, "限流只限埋点，呈现每次都执行");
+            CollectionAssert.AreEqual(new[] { 1, 1, 2 }, reported, "限流后仅这三次触发埋点上报");
         }
 
         // ── 假呈现器 ─────────────────────────────────────────────────────────

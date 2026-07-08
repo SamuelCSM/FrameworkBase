@@ -3,6 +3,22 @@
 本包遵循 [语义化版本](https://semver.org/lang/zh-CN/)。版本策略：
 `0.x` 为孵化期（API 可能调整）；首个商业项目立项时冻结为 `1.0.0`，此后破坏性变更必须升主版本。
 
+## [0.7.3] - 2026-07-08
+
+### 变更
+
+- **Framework.Kernel 程序集拆分**（ADR-002 第二步）：内核层
+  `FrameworkComponent / MonoSingleton / Singleton / AppConfig / Telemetry /
+  ErrorCenter` 与 `Event` / `Timer` 下沉为独立程序集 `Framework.Kernel`
+  （asmref 聚合，共 15 源文件），依赖链自此为 `Runtime → Kernel → Foundation`
+  三层单向、编译期强制。`GameLog` 一并从 `Utils/` 移入新目录 `Logging/`
+  归入 Foundation（内核诸类依赖它，留在上层会成环）。
+- **ErrorCenter 反转为零上行依赖**（本步唯一代码手术，行为等价）：埋点由此前
+  直连 `GameEntry.Analytics` 改为暴露 `ErrorReported` 事件、组合根订阅转发；
+  Tips/Event 耦合的 `DefaultErrorPresenter` 上移到 Framework 层
+  `Core/DefaultErrorPresenter.cs`，Kernel 内仅留仅日志兜底呈现器，真正 UI 呈现器
+  由 GameEntry 经 `SetPresenter` 注入。副产：埋点限流单测从"无法断言"升级为强断言。
+
 ## [0.7.2] - 2026-07-08
 
 ### 变更

@@ -41,8 +41,9 @@ Framework.Core / Network / Resource / UI / … 多程序集的收益是增量编
 
 ## ADR-002：分层拆分启动——Framework.Foundation 先行（2026-07）
 
-**状态**：已实施（第一步）。部分修订 ADR-001：per-module 全拆维持挂起，
-但**分层拆分**按下述路线启动。
+**状态**：已实施（第一、二步完成；第三步挂起）。部分修订 ADR-001：per-module
+全拆维持挂起，但**分层拆分**按下述路线启动。依赖链现为 `Runtime → Kernel →
+Foundation` 三层单向、编译期强制。
 
 **动机**：架构长期健康——趁规模小把层间依赖固化为编译期约束，防止继续糊；
 无 ADR-001 所列外部触发（编译耗时/多人/裁剪/热更均未命中）。
@@ -75,3 +76,45 @@ Framework.Core / Network / Resource / UI / … 多程序集的收益是增量编
   LoginFlow 上移为组合根，命名空间不变故业务侧零改动）+ Runtime 按模块拆；
   平时顺手做的准备：门面自引用改直连、NetworkWaitingUI/ReconnectPanel 归属
   理顺、确认 Analytics↔Sdk 实为单向。
+
+### 第二步实施记录：Framework.Kernel（2026-07-08）
+
+**状态**：已实施。新增程序集 `Framework.Kernel`（asmdef 落 `Kernel/`），依赖链
+自此为 `Runtime → Kernel → Foundation` 三层单向，编译期强制。
+
+**归入 Kernel 的成员**：`Kernel/`（FrameworkComponent / MonoSingleton / Singleton /
+AppConfig / AppConfigAsset / TelemetryErrorCodes / Errors / Telemetry.CrashReporter）
++ `Event/`（asmref）+ `Timer/`（asmref），共 15 个源文件。
+
+**GameLog 一并下沉 Foundation**：`FrameworkComponent`/`ErrorCenter`/`EventManager`/
+`TimerManager`/`CrashReporter` 均依赖 `GameLog`，若 GameLog 留在 Framework 则
+Kernel 反向依赖 Runtime，闭环。故把 `GameLog.cs` 从 `Utils/` 移到新目录
+`Logging/`（asmref → Foundation）——这正是 ADR-001 预判、第一步 Pooling 栽跟头
+坐实的那个绳结。GameLog 移动经 `git mv`（.meta GUID 保留，引用不断）。
+
+**唯一手术：ErrorCenter 反转为零上行依赖**（此前 `ErrorCenter` 直连
+`GameEntry.Tips`/`GameEntry.Event`/`GameEntry.Analytics`，是 Kernel 化的硬绳结）：
+
+1. 埋点：`ErrorCenter`（Kernel）不再 `GameEntry.Analytics.Track`，改为暴露
+   `event Action<ErrorDecision> ErrorReported`（同码 60 秒限流后触发），由组合根
+   GameEntry 订阅转发埋点；限流状态仍属 ErrorCenter，职责不外泄。
+2. 呈现：`DefaultErrorPresenter`（依赖 Tips/Event/GameEntry）从 ErrorCenter.cs
+   **上移**到 Framework 层新文件 `Core/DefaultErrorPresenter.cs`；Kernel 内仅保留
+   仅日志的兜底 `LoggingErrorPresenter`。真正 UI 呈现器由 GameEntry 经
+   `SetPresenter` 注入。行为等价（Toast/弹窗降级/登出维护广播全保留）。
+3. 副产：埋点上报此前在纯单测中因 `GameEntry.Analytics` 为 null 无法断言，反转后
+   经 `ErrorReported` 事件可直接验证，限流单测已补上强断言。
+
+**未纳入 Kernel 的近邻及原因**：`GameMessage`/`EventDefine` 含业务语义消息码，
+但与 `EventManager` 同目录同程序集不可分割，随 Event 一并入 Kernel（可接受：它们
+是纯枚举/常量，无行为、无上行依赖）。
+
+**验证**：编辑器占锁，手工重建 6 个 csproj（Foundation/Kernel/Framework/Editor/
+两个 Tests）+ Assembly-CSharp，MSBuild 全绿；Kernel、Foundation **单独**重建
+（仅引用下层）通过，反证零上行依赖真实成立。asmdef 引用侧同步更新：Framework /
+Editor / 两个 Tests 均加 `Framework.Kernel` 引用（Editor 用 AppConfigAsset、测试用
+ErrorCenter/EventManager/TimerManager）。
+
+**第二步后仍在 Framework 层的原 Core 成员**：GameEntry / LaunchFlow / LoginFlow /
+Auth / Privacy / VersionDisplayHelper 等——它们是组合根与业务编排，正是第三步
+Boot 提取的对象，本步不动。

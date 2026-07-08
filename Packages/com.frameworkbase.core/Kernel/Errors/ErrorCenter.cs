@@ -8,6 +8,10 @@ namespace Framework.Core.Errors
     /// <c>ErrorCenter.Shared.Handle(code, msg)</c>——查字典、执行反应（Toast/弹窗/登出广播）、
     /// 限流上报埋点，一站完成。规则注册见 <see cref="ErrorCodeRegistry"/>，
     /// 分段约定与接入方式见 ERROR_HANDLING_GUIDE.md。
+    ///
+    /// <para>本类属 Kernel 层，不反向依赖 Tips/Event/Analytics：呈现动作经
+    /// <see cref="IErrorPresenter"/> 抽象外发，埋点经 <see cref="ErrorReported"/> 事件外发，
+    /// 二者均由组合根（GameEntry）在上层注入/订阅。</para>
     /// </summary>
     public sealed class ErrorCenter
     {
@@ -21,13 +25,25 @@ namespace Framework.Core.Errors
 
         private static ErrorCenter _shared;
 
-        /// <summary>框架默认实例（挂 Shared 注册表 + 默认呈现器）。</summary>
+        /// <summary>
+        /// 埋点上报钩子：一次错误经同码限流后触发一次（成功码不触发，被限流的重复码不触发）。
+        /// 组合根订阅此事件把错误分布转发给埋点管道——ErrorCenter 自身（Kernel 层）
+        /// 不认识 Analytics，保持零上行依赖。
+        /// </summary>
+        public event Action<ErrorDecision> ErrorReported;
+
+        /// <summary>
+        /// 框架默认实例（挂 Shared 注册表 + 仅日志兜底呈现器）。
+        /// 兜底呈现器只写日志、不触达 Toast/事件广播；真正的 UI 呈现器
+        /// （<c>DefaultErrorPresenter</c>，位于 Framework 层）由组合根 GameEntry 在 Manager 就绪后
+        /// 经 <see cref="SetPresenter"/> 注入，从而 Kernel 层不反向依赖 Tips/Event。
+        /// </summary>
         public static ErrorCenter Shared
         {
             get
             {
                 if (_shared == null)
-                    _shared = new ErrorCenter(ErrorCodeRegistry.Shared, new DefaultErrorPresenter());
+                    _shared = new ErrorCenter(ErrorCodeRegistry.Shared, new LoggingErrorPresenter());
                 return _shared;
             }
             set => _shared = value;
@@ -77,12 +93,15 @@ namespace Framework.Core.Errors
                 GameLog.Error($"[ErrorCenter] 呈现器异常（决策 {decision}）: {ex.Message}");
             }
 
-            TrackThrottled(decision);
+            ReportThrottled(decision);
             return decision;
         }
 
-        /// <summary>埋点上报（同码限流）：错误码分布是服务端异常的一手监控信号。</summary>
-        private void TrackThrottled(ErrorDecision decision)
+        /// <summary>
+        /// 埋点上报（同码限流）：错误码分布是服务端异常的一手监控信号。
+        /// 限流通过后触发 <see cref="ErrorReported"/>，由上层组合根转发埋点。
+        /// </summary>
+        private void ReportThrottled(ErrorDecision decision)
         {
             double now = _clockSeconds();
             if (_lastReportAt.TryGetValue(decision.Code, out double last) &&
@@ -92,20 +111,16 @@ namespace Framework.Core.Errors
             }
             _lastReportAt[decision.Code] = now;
 
-            GameEntry.Analytics?.Track("server_error", new Dictionary<string, object>
-            {
-                { "code", decision.Code },
-                { "reaction", decision.Reaction.ToString() },
-            });
+            ErrorReported?.Invoke(decision);
         }
     }
 
     /// <summary>
-    /// 框架默认呈现器：Toast 走 TipManager；弹窗类降级为 Error 样式 Toast（并日志提醒
-    /// 接入业务弹窗）；强制登出/维护广播 GameMessage 事件由业务订阅执行跳转。
-    /// TipManager 未就绪（纯单测/启动极早期）时全部降级日志。
+    /// Kernel 内置兜底呈现器：只把决策写入日志，不触达 Toast/事件广播（Kernel 层不认识 Tips/Event）。
+    /// 用于 <see cref="ErrorCenter.Shared"/> 在组合根注入真正 UI 呈现器之前的极早期，
+    /// 以及纯单测环境。业务/框架接入 UI 呈现器后经 <see cref="ErrorCenter.SetPresenter"/> 替换。
     /// </summary>
-    public sealed class DefaultErrorPresenter : IErrorPresenter
+    public sealed class LoggingErrorPresenter : IErrorPresenter
     {
         public void Present(ErrorDecision decision)
         {
@@ -114,42 +129,10 @@ namespace Framework.Core.Errors
                 case ErrorReaction.Silent:
                     GameLog.Log($"[ErrorCenter] 静默错误 {decision}");
                     break;
-
-                case ErrorReaction.Toast:
-                    ShowTip(decision.Message, TipStyle.Warning);
-                    break;
-
-                case ErrorReaction.Popup:
-                case ErrorReaction.PopupRetry:
-                    // 框架不内置通用模态弹窗：降级 Toast 保证玩家有感知，业务接入弹窗后替换呈现器
-                    GameLog.Warning($"[ErrorCenter] 弹窗类错误降级为 Toast（接入业务弹窗后 SetPresenter 替换）: {decision}");
-                    ShowTip(decision.Message, TipStyle.Error);
-                    break;
-
-                case ErrorReaction.ForceLogout:
-                    GameLog.Warning($"[ErrorCenter] 强制登出: {decision}");
-                    ShowTip(decision.Message, TipStyle.Error);
-                    GameEntry.Event?.Publish(GameMessage.ServerForceLogout, decision.Code);
-                    break;
-
-                case ErrorReaction.Maintenance:
-                    GameLog.Warning($"[ErrorCenter] 停服维护: {decision}");
-                    ShowTip(decision.Message, TipStyle.Error);
-                    GameEntry.Event?.Publish(GameMessage.ServerMaintenance, decision.Code);
+                default:
+                    GameLog.Warning($"[ErrorCenter] 错误（UI 呈现器未注入，仅日志）: {decision}");
                     break;
             }
-        }
-
-        private static void ShowTip(string message, TipStyle style)
-        {
-            if (string.IsNullOrEmpty(message))
-                return;
-
-            var tips = GameEntry.Tips;
-            if (tips != null)
-                tips.ShowRaw(message, style);
-            else
-                GameLog.Warning($"[ErrorCenter] TipManager 未就绪，降级日志: {message}");
         }
     }
 }

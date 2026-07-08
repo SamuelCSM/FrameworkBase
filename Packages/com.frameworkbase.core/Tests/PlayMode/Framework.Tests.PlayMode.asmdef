@@ -4,6 +4,7 @@
     "references": [
         "Framework",
         "Framework.Foundation",
+        "Framework.Kernel",
         "UniTask",
         "UnityEngine.TestRunner"
     ],

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using Cysharp.Threading.Tasks;
 using Framework;
 using Framework.Core.Auth;
+using Framework.Core.Errors;
 using Framework.HotUpdate;
 using Framework.Input;
 using Framework.UI;
@@ -252,6 +253,15 @@ namespace Framework.Core
             // 组合根注入：让网络层在断线重连后，经鉴权层静默重放登录握手恢复服务端会话身份，
             // 否则重连得到的匿名连接会导致快照/落子等业务请求被服务端静默丢弃（断线重连失效）。
             Network.SetReauthenticator(() => Auth.ReauthenticateAsync());
+
+            // 组合根注入：ErrorCenter 属 Kernel 层、不认识 Tips/Analytics（ADR-002），
+            // 由此处注入 UI 呈现器并把限流后的错误上报转发给埋点管道。
+            ErrorCenter.Shared.SetPresenter(new DefaultErrorPresenter());
+            ErrorCenter.Shared.ErrorReported += decision => Analytics?.Track("server_error", new Dictionary<string, object>
+            {
+                { "code", decision.Code },
+                { "reaction", decision.Reaction.ToString() },
+            });
 
             RefData         = AddComponent<ConfigManager>();
             Audio           = AddComponent<AudioManager>();
