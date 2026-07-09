@@ -1,6 +1,6 @@
 {
   "name": "com.frameworkbase.experiment",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "displayName": "FrameworkBase Experiment (A/B)",
   "description": "A/B 实验扩展包：在 RemoteConfig（实验配置下发）+ Analytics（曝光埋点）之上做稳定分组分配与曝光追踪。运营改远程 experiments 即可调整分组 / 放量 / 开关实验，无需发版。主干不含实验逻辑。",
   "unity": "2022.3",
