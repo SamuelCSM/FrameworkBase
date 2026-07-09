@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Reflection;
 using Framework.Core;
 using Framework.Data;
@@ -236,20 +237,39 @@ namespace Framework
         }
 
         /// <summary>
+        /// 语言枚举 ↔ 配表列名的单一映射源。
+        /// 两个方向（<see cref="ToCode"/> / <see cref="ToType"/>）都从这里派生，新增语言只改这一处，杜绝漂移。
+        /// </summary>
+        private static readonly Dictionary<LanguageType, string> CodeByType = new Dictionary<LanguageType, string>
+        {
+            { LanguageType.ZhCn, "zh_cn" },
+            { LanguageType.ZhTw, "zh_tw" },
+            { LanguageType.EnUs, "en_us" },
+            { LanguageType.JaJp, "ja_jp" },
+            { LanguageType.KoKr, "ko_kr" },
+            { LanguageType.FrFr, "fr_fr" },
+            { LanguageType.DeDe, "de_de" },
+            { LanguageType.EsEs, "es_es" },
+            { LanguageType.PtBr, "pt_br" },
+            { LanguageType.RuRu, "ru_ru" },
+            { LanguageType.ArSa, "ar_sa" },
+            { LanguageType.ThTh, "th_th" },
+            { LanguageType.ViVn, "vi_vn" },
+            { LanguageType.IdId, "id_id" },
+            { LanguageType.TrTr, "tr_tr" },
+        };
+
+        /// <summary>配表列名 → 语言枚举（由 <see cref="CodeByType"/> 反向构建）。</summary>
+        private static readonly Dictionary<string, LanguageType> TypeByCode = BuildTypeByCode();
+
+        /// <summary>
         /// 将语言枚举转换为配表语言列名。
         /// </summary>
         /// <param name="languageType">语言枚举。</param>
-        /// <returns>配表语言列名。</returns>
+        /// <returns>配表语言列名；未登记时回退默认语言。</returns>
         public static string ToCode(LanguageType languageType)
         {
-            switch (languageType)
-            {
-                case LanguageType.EnUs:
-                    return "en_us";
-                case LanguageType.ZhCn:
-                default:
-                    return DefaultLanguage;
-            }
+            return CodeByType.TryGetValue(languageType, out string code) ? code : DefaultLanguage;
         }
 
         /// <summary>
@@ -259,14 +279,18 @@ namespace Framework
         /// <returns>语言枚举；无法识别时返回 ZhCn。</returns>
         public static LanguageType ToType(string language)
         {
-            switch (NormalizeLanguage(language))
-            {
-                case "en_us":
-                    return LanguageType.EnUs;
-                case "zh_cn":
-                default:
-                    return LanguageType.ZhCn;
-            }
+            return TypeByCode.TryGetValue(NormalizeLanguage(language), out LanguageType type)
+                ? type
+                : LanguageType.ZhCn;
+        }
+
+        /// <summary>反向构建"列名 → 枚举"表。</summary>
+        private static Dictionary<string, LanguageType> BuildTypeByCode()
+        {
+            var map = new Dictionary<string, LanguageType>(CodeByType.Count);
+            foreach (var pair in CodeByType)
+                map[pair.Value] = pair.Key;
+            return map;
         }
 
         /// <summary>
