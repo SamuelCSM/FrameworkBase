@@ -9,7 +9,7 @@ namespace Framework.Input
     /// <remarks>
     /// Login 等 UI 模块后续可通过 <see cref="Gate"/> 与 <see cref="Blocks"/> 接入同一套输入基础设施。
     /// </remarks>
-    public sealed class InputManager : FrameworkComponent
+    public sealed class InputManager : FrameworkComponent<InputManager>
     {
         /// <summary>Legacy 指针采样源。</summary>
         private IPointerInputSource pointerSource;

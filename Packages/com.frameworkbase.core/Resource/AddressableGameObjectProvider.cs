@@ -23,13 +23,13 @@ namespace Framework
                 return null;
             }
 
-            if (GameEntry.Resource == null)
+            if (ResourceManager.Instance == null)
             {
                 GameLog.Error($"[AddressableGameObjectProvider] GetAsync 失败，ResourceManager 未就绪: {key}");
                 return null;
             }
 
-            return await GameEntry.Resource.InstantiateAsync(key, parent);
+            return await ResourceManager.Instance.InstantiateAsync(key, parent);
         }
 
         /// <summary>
@@ -43,9 +43,9 @@ namespace Framework
                 return;
             }
 
-            if (GameEntry.Resource != null)
+            if (ResourceManager.Instance != null)
             {
-                GameEntry.Resource.ReleaseInstance(instance);
+                ResourceManager.Instance.ReleaseInstance(instance);
                 return;
             }
 

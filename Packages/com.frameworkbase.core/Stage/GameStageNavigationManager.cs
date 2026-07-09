@@ -82,7 +82,7 @@ namespace Framework
             if (!CanChangeStage(nextStage, nameof(PushStageAsync)))
                 return;
 
-            var currentStage = GameEntry.StageManager.CurrentStage;
+            var currentStage = GameStageManager.Instance.CurrentStage;
             if (currentStage != null)
                 _backStack.Push(currentStage);
 
@@ -176,7 +176,7 @@ namespace Framework
                 return false;
             }
 
-            if (GameEntry.StageManager == null)
+            if (GameStageManager.Instance == null)
             {
                 GameLog.Error($"[GameStageNavigationManager] {apiName}: StageManager 未初始化");
                 return false;
@@ -191,7 +191,7 @@ namespace Framework
             _isNavigating = true;
             try
             {
-                await GameEntry.StageManager.ChangeStageAsync(nextStage);
+                await GameStageManager.Instance.ChangeStageAsync(nextStage);
             }
             finally
             {

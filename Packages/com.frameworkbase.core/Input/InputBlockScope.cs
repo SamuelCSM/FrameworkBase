@@ -26,7 +26,7 @@ namespace Framework.Input
         /// <returns>可配合 using 使用的作用域。</returns>
         public static InputBlockScope Begin(string reason)
         {
-            InputManager input = GameEntry.Input;
+            InputManager input = InputManager.Instance;
             InputBlockHandle blockHandle = input != null ? input.Blocks.Push(reason) : null;
             return new InputBlockScope(blockHandle);
         }

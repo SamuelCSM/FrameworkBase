@@ -47,7 +47,7 @@ namespace Framework
         /// </summary>
         protected virtual void Awake()
         {
-            var sceneMgr = GameEntry.Scene;
+            var sceneMgr = SceneManager.Instance;
             if (sceneMgr != null)
             {
                 sceneMgr.RegisterContext(this);
@@ -59,7 +59,7 @@ namespace Framework
         {
             if (!_isRegistered) return;
 
-            var sceneMgr = GameEntry.Scene;
+            var sceneMgr = SceneManager.Instance;
             if (sceneMgr != null)
                 sceneMgr.UnregisterContext(this);
 

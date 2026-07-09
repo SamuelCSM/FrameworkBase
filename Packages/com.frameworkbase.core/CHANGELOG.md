@@ -3,6 +3,24 @@
 本包遵循 [语义化版本](https://semver.org/lang/zh-CN/)。版本策略：
 `0.x` 为孵化期（API 可能调整）；首个商业项目立项时冻结为 `1.0.0`，此后破坏性变更必须升主版本。
 
+## [0.11.0] - 2026-07-09
+
+### 新增
+
+- **`FrameworkComponent<T>` + Manager `.Instance` 访问器**（门面解耦前置，ADR-003）：Kernel 新增
+  CRTP 基类，构造时登记 `static T Instance`；组合根 `GameEntry` 造 Manager 时即登记，
+  `GameEntry.X` 与 `X.Instance` 指向同一对象。
+- **命名规约成文（ADR-003）**：`.Instance`=具体硬单例；`.Shared`=接口的可替换注入默认
+  （对齐 .NET `ArrayPool.Shared` / Apple `.shared`）。二者语义不同、刻意保留，不统一命名。
+
+### 变更
+
+- **同模块自引用去门面**：Resource / Stage / Input / Scene 四模块改继承 `FrameworkComponent<T>`，
+  其模块内「取本模块 Manager」的 6 处从 `GameEntry.<自己模块>` 改为 `<Manager>.Instance`
+  （`GameObjectPool` / `AddressableGameObjectProvider` / `GameStageNavigationManager` /
+  `InputBlockScope` / `SceneBase`）。这些目录内代码不再为取自己的 Manager 依赖 `Core.GameEntry`
+  ——拆 asmdef 时会成环的那类边就此消除。跨模块门面互调（真依赖）与对外公共 API 不动。
+
 ## [0.10.0] - 2026-07-08
 
 ### 新增

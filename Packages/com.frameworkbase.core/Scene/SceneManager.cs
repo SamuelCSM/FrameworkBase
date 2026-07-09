@@ -28,7 +28,7 @@ namespace Framework
     /// <see cref="SetTransitionProvider"/> 注入即可。
     /// </para>
     /// </summary>
-    public class SceneManager : Core.FrameworkComponent
+    public class SceneManager : Core.FrameworkComponent<SceneManager>
     {
         // ── 内部状态 ─────────────────────────────────────────────────────────
 

@@ -164,3 +164,69 @@ Boot 提取的对象，本步不动。
 那是 3b 的核心工作量（ADR-001 所称"几周冻结"的真实来源）。
 
 **验证**：编辑器占锁，MSBuild 重建 Framework + EditMode 测试全绿。
+
+## ADR-003：单例访问命名规约 `.Instance` vs `.Shared`（2026-07）
+
+**状态**：已决策。规约成文，后续新增照此判定；不改存量。
+
+**背景**：代码里两种静态单例访问名并存，一度被疑为不一致。排查确认是**两种刻意区分
+的模式**，非随意混用：
+
+| | `.Instance` | `.Shared` |
+|---|---|---|
+| 基座 | `Singleton<T>` / `MonoSingleton<T>` 基类 | `static` 持有类（HttpClients / FileStorages / …） |
+| 返回 | 具体类型 | **接口**（IHttpClient / IFileStorage / ISecureStorage / …） |
+| 可替换 | 否——自造、自管生命周期的硬单例 | **是——带 setter / SetBackend 注入缝**，测试/宿主可换实现 |
+| 存量 | `GameEntry`、`SaveManager` | Http / Storage / Serialization / SecureStorage / ErrorCenter / ErrorCodeRegistry / AnalyticsSchema |
+
+**决策**：**保留区分，写成规约，不统一命名**。
+
+- **`.Shared`** = 某**抽象/接口的可替换共享默认**，<b>必须</b>配注入点（属性 setter 或
+  `SetBackend`）。对齐行业惯例：.NET `ArrayPool<T>.Shared` / `MemoryPool<T>.Shared`、
+  Apple `URLSession.shared`。看到 `.Shared` 即知"此处可注入 mock"。
+- **`.Instance`** = 具体**硬单例**（不可替换、拥有生命周期）。看到 `.Instance` 即知"别想换"。
+
+**为何不统一成 `.Instance`**（曾被提议）：把 `.Shared` 改名 `.Instance` 是**降级**——
+抹掉"可注入"信号、对接口的可替换默认叫 Instance 语义即错、破坏大厂惯例、94 处调用 +
+公共 API 大改换负价值。真正的问题不是命名而是"规约没成文"，本 ADR 即补此。
+
+**判定规则（新增代码照此）**：
+- 该类型是**接口/抽象的可替换默认**、需要测试注入 → `X.Shared` + 注入 setter。
+- 该类型是**具体硬单例**（一份、不可换、有生命周期）→ `X.Instance`。
+- 框架 Manager 经组合根 `GameEntry.X` 暴露为**对外公共 API**，此为第三种、不受本 ADR 改动。
+
+**连带决策（供 3b 门面解耦用）**：给框架 Manager 增 `.Instance` 访问器时用 `.Instance`
+（它们是 GameEntry 拥有的具体单例、不可替换，正落 `.Instance` 语义），经
+`FrameworkComponent<T>` 基类在构造时登记。用途：让"模块内兄弟类取本模块 Manager"从
+`GameEntry.<自己模块>`（依赖 Core 门面）改为 `<Manager>.Instance`（同模块内），
+消除 ADR-002 3a 点名的伪耦合——这是未来沿 DAG 切 asmdef 的强制前置。见该实施记录。
+
+### ADR-003 实施记录：Manager `.Instance` 访问器 + 同模块自引用去门面（2026-07-09）
+
+**状态**：已实施（低成本前置切片；跨模块门面互调的全量 DI 化仍属挂起的 3b）。
+
+**机制**：Kernel 新增 CRTP 基类 `FrameworkComponent<T> : FrameworkComponent`
+（`where T : FrameworkComponent<T>`），构造时登记 `public static T Instance`。组合根
+`GameEntry` 经 `new T()` 造 Manager 时即登记，早于 `OnInit`；`GameEntry.X` 门面属性与
+`X.Instance` 指向同一对象。
+
+**转换范围（仅同模块自引用——兄弟类只为取本模块 Manager 而绕 Core.GameEntry）**：
+4 个 Manager 改继承 `FrameworkComponent<T>`（Resource / Stage / Input / Scene），
+其模块内 6 处调用改直取：
+
+| 文件 | 原 | 现 |
+|---|---|---|
+| `Resource/GameObjectPool` | `GameEntry.Resource` | `ResourceManager.Instance` |
+| `Resource/AddressableGameObjectProvider` | `GameEntry.Resource` | `ResourceManager.Instance` |
+| `Stage/GameStageNavigationManager` | `GameEntry.StageManager` | `GameStageManager.Instance` |
+| `Input/InputBlockScope` | `GameEntry.Input` | `InputManager.Instance` |
+| `Scene/SceneBase`（2 处代码，doc 示例保留） | `GameEntry.Scene` | `SceneManager.Instance` |
+
+**收益**：这四个模块的目录内代码不再为「取自己的 Manager」依赖 `Core.GameEntry`——拆 asmdef
+时这正是会成环的那类边（模块→Core→模块）。保留的 `GameEntry.X` 只剩两类：对外公共 API、
+真实跨模块边（如 `GameStageManager`→`GameEntry.Scene`，属 DAG 的边，留到 3b）。
+
+**未动**：跨模块门面互调（Tips→Network、Audio/UI→Resource 等）——它们是真依赖，
+换 `.Instance` 只是把「经 Core 取」变「直取」，属 3b 全量 DI 的工作量，本切片不含。
+
+**验证**：Kernel/Framework/Tests dotnet build 全绿；自跑 run-ci EditMode + 资源门禁通过。

@@ -91,7 +91,7 @@ namespace Framework
             // 加载预制体模板
             if (_template == null)
             {
-                _template = await GameEntry.Resource.LoadAssetAsync<GameObject>(_address);
+                _template = await ResourceManager.Instance.LoadAssetAsync<GameObject>(_address);
                 if (_template == null)
                 {
                     GameLog.Error($"GameObjectPool.PrewarmAsync: 加载预制体失败 - {_address}");
@@ -145,7 +145,7 @@ namespace Framework
                 // 加载预制体模板
                 if (_template == null)
                 {
-                    _template = await GameEntry.Resource.LoadAssetAsync<GameObject>(_address);
+                    _template = await ResourceManager.Instance.LoadAssetAsync<GameObject>(_address);
                     if (_template == null)
                     {
                         GameLog.Error($"GameObjectPool.GetAsync: 加载预制体失败 - {_address}");
@@ -283,7 +283,7 @@ namespace Framework
             // 释放预制体模板
             if (_template != null)
             {
-                GameEntry.Resource.ReleaseAsset(_address);
+                ResourceManager.Instance.ReleaseAsset(_address);
                 _template = null;
             }
 

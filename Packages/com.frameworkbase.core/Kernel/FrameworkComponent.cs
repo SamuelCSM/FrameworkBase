@@ -73,4 +73,30 @@ namespace Framework.Core
         {
         }
     }
+
+    /// <summary>
+    /// 带 <see cref="Instance"/> 访问器的框架组件基类（CRTP）。
+    ///
+    /// 用途：让「模块内兄弟类取本模块 Manager」从 <c>GameEntry.&lt;自己模块&gt;</c>
+    /// （依赖 Core 门面）改为 <c>&lt;Manager&gt;.Instance</c>（同模块内直取），消除
+    /// ADR-002 3a 点名的伪耦合——这是未来沿 DAG 切 asmdef 的强制前置（见 ADR-003）。
+    ///
+    /// <para>命名遵循 ADR-003：Manager 是 GameEntry 拥有的<b>具体硬单例</b>（不可替换），
+    /// 故用 <c>.Instance</c> 而非 <c>.Shared</c>（后者专指带注入缝的可替换接口默认）。</para>
+    ///
+    /// <para>登记时机：<see cref="GameEntry"/> 经 <c>new T()</c> 构造 Manager 时即登记，
+    /// 早于任何 <c>OnInit</c>。重复构造以最后一次为准（沿用框架单 GameEntry 假设）。</para>
+    /// </summary>
+    /// <typeparam name="T">具体 Manager 类型（自指约束 CRTP）。</typeparam>
+    public abstract class FrameworkComponent<T> : FrameworkComponent where T : FrameworkComponent<T>
+    {
+        /// <summary>本 Manager 单例（由组合根构造时登记）。</summary>
+        public static T Instance { get; private set; }
+
+        /// <summary>构造即登记单例，使同模块兄弟类无需经 GameEntry 门面即可取本模块 Manager。</summary>
+        protected FrameworkComponent()
+        {
+            Instance = (T)this;
+        }
+    }
 }

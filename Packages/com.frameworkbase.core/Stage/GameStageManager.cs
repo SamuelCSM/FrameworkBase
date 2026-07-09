@@ -26,7 +26,7 @@ namespace Framework
     /// await GameEntry.StageManager.ChangeStageAsync(new BattleStage(levelId: 101));
     /// </code>
     /// </summary>
-    public class GameStageManager : Core.FrameworkComponent
+    public class GameStageManager : Core.FrameworkComponent<GameStageManager>
     {
         // ── 内部状态 ─────────────────────────────────────────────────────────
 
