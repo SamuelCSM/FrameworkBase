@@ -18,7 +18,7 @@ namespace Framework
     /// await GameEntry.StageNavigation.GoBackAsync();
     /// </code>
     /// </summary>
-    public class GameStageNavigationManager : Core.FrameworkComponent
+    public class GameStageNavigationManager : Core.FrameworkComponent<GameStageNavigationManager>
     {
         // ── 内部状态 ─────────────────────────────────────────────────────────
 

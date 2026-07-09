@@ -8,7 +8,7 @@ namespace Framework.Core.Auth
     /// 登录流程状态机（无服务端版先行）。
     /// 管理状态迁移、错误码映射、弹窗策略与重试入口。
     /// </summary>
-    public class AuthManager : FrameworkComponent
+    public class AuthManager : FrameworkComponent<AuthManager>
     {
         private IAuthBackend _backend;
         private IAuthPopupPresenter _popupPresenter;

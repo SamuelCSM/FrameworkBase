@@ -3,6 +3,18 @@
 本包遵循 [语义化版本](https://semver.org/lang/zh-CN/)。版本策略：
 `0.x` 为孵化期（API 可能调整）；首个商业项目立项时冻结为 `1.0.0`，此后破坏性变更必须升主版本。
 
+## [0.12.0] - 2026-07-09
+
+### 变更
+
+- **`.Instance` 访问器全量统一**（承 0.11.0，ADR-003）：0.11.0 只转了有同模块自引用的 4 个
+  Manager，留下「部分有 `.Instance`、部分没有」的不一致。复议认定 `.Instance` 是**访问约定**
+  而非投机功能，约定应一致——遂把全部 **17 个** `FrameworkComponent` 派生 Manager 一律改继承
+  `FrameworkComponent<T>`（Analytics / Audio / Auth / Config / Event / HotUpdate / Network /
+  RemoteConfig / Sdk / Timer / Tip / UI / GameStageNavigation 等）。每个仅基类声明改一行、
+  CRTP 零行为改动；此后「Manager 是否有 `.Instance`」可预测（都有）。`GameEntry.X` 仍为对外
+  业务门面，`.Instance` 为框架内部访问。
+
 ## [0.11.0] - 2026-07-09
 
 ### 新增

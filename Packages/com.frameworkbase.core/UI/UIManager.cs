@@ -47,7 +47,7 @@ namespace Framework
     /// 动画由各 UIBase 子类的 AnimConfig 属性决定：
     ///   protected override UIAnimationConfig AnimConfig => UIAnimationConfig.ScalePop();
     /// </summary>
-    public class UIManager : Core.FrameworkComponent
+    public class UIManager : Core.FrameworkComponent<UIManager>
     {
         // ── 内部状态 ─────────────────────────────────────────────────────────
 

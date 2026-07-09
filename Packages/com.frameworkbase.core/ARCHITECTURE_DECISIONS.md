@@ -230,3 +230,11 @@ Boot 提取的对象，本步不动。
 换 `.Instance` 只是把「经 Core 取」变「直取」，属 3b 全量 DI 的工作量，本切片不含。
 
 **验证**：Kernel/Framework/Tests dotnet build 全绿；自跑 run-ci EditMode + 资源门禁通过。
+
+**补充（全量统一，2026-07-09）**：上一切片只转了有同模块自引用的 4 个 Manager，留下
+「部分 Manager 有 `.Instance`、部分没有」的不一致 API 面（违反最小惊讶）。经复议：`.Instance`
+是**访问约定**而非投机功能，约定应统一——遂把全部 **17 个** `FrameworkComponent` 派生 Manager
+一律改继承 `FrameworkComponent<T>`（每个仅基类声明改一行、CRTP 零行为改动）。此后
+「Manager 是否有 `.Instance`」可预测（都有）；`GameEntry.X` 继续作为对外业务门面，`.Instance`
+为框架内部访问——边界靠 ADR-003 约定（`internal` 跨 Kernel→Framework 程序集不可行，故保持
+`public`）。业务侧访问路径不变。

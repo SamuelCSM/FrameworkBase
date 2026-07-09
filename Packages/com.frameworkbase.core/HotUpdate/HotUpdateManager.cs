@@ -17,7 +17,7 @@ namespace Framework.HotUpdate
     /// 热更新管理器
     /// 负责版本检查、补丁下载、程序集加载和热更新启动
     /// </summary>
-    public class HotUpdateManager : FrameworkComponent
+    public class HotUpdateManager : FrameworkComponent<HotUpdateManager>
     {
         private UpdateState _state = UpdateState.None;
 

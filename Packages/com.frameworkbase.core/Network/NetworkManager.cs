@@ -25,7 +25,7 @@ namespace Framework
     ///   OnWaitingEnd                                      — 所有请求等待结束，隐藏转圈
     ///   OnRequestTimeout                                  — 请求超时提示
     /// </summary>
-    public class NetworkManager : FrameworkComponent
+    public class NetworkManager : FrameworkComponent<NetworkManager>
     {
         private TcpClient _client;
         private MessageDispatcher _dispatcher;

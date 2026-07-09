@@ -7,7 +7,7 @@ namespace Framework
     /// <summary>
     /// 事件管理器，提供项目内通用消息订阅、取消订阅和发布能力。
     /// </summary>
-    public class EventManager : FrameworkComponent
+    public class EventManager : FrameworkComponent<EventManager>
     {
         /// <summary>
         /// 事件监听器字典，Key 为统一消息 ID。

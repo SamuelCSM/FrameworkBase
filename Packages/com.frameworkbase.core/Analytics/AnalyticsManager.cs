@@ -20,7 +20,7 @@ namespace Framework.Analytics
     /// 留空用 <see cref="LogAnalyticsBackend"/>（开发期看日志）；
     /// 对接三方平台经 <see cref="SetBackend"/> 注入扩展包实现。
     /// </summary>
-    public class AnalyticsManager : FrameworkComponent
+    public class AnalyticsManager : FrameworkComponent<AnalyticsManager>
     {
         // ── 管道参数（经验默认值，够用且不吃内存）─────────────────────────────
         /// <summary>内存队列上限：超限丢最旧事件（丢弃计数随下批事件补报）。</summary>

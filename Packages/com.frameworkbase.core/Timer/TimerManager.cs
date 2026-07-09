@@ -16,7 +16,7 @@ namespace Framework
     /// 复杂度与 bug 面都更大却无可测收益。若未来定时器数量级显著上升，可在不改动
     /// 公开 API 的前提下替换内部存储为按时基分桶的最小堆。
     /// </summary>
-    public class TimerManager : FrameworkComponent
+    public class TimerManager : FrameworkComponent<TimerManager>
     {
         /// <summary>定时器条目，记录单个定时器的运行状态。</summary>
         private sealed class TimerEntry

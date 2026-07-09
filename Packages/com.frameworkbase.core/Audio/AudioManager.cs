@@ -9,7 +9,7 @@ namespace Framework
     /// 音频管理器
     /// 管理背景音乐和音效播放，支持音量控制、淡入淡出、对象池等功能
     /// </summary>
-    public class AudioManager : Core.FrameworkComponent
+    public class AudioManager : Core.FrameworkComponent<AudioManager>
     {
         // 音频源对象池
         private AudioSourcePool _audioSourcePool;

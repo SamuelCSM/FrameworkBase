@@ -18,7 +18,7 @@ namespace Framework
     /// <summary>
     /// 负责加载和缓存普通表配置以及单例 general 配置。
     /// </summary>
-    public class ConfigManager : Core.FrameworkComponent
+    public class ConfigManager : Core.FrameworkComponent<ConfigManager>
     {
         private const string DefaultDatabaseFileName = "config.db";
         private const string DefaultStreamingConfigPath = "RefData/config.db";

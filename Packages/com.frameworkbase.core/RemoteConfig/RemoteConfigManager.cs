@@ -26,7 +26,7 @@ namespace Framework.RemoteConfig
     /// 后端选择：默认按 AppConfig.RemoteConfigUrl——非空用 <see cref="HttpRemoteConfigBackend"/>，
     /// 留空不拉取（只用缓存与默认值）；对接三方平台经 <see cref="SetBackend"/> 注入扩展包实现。
     /// </summary>
-    public class RemoteConfigManager : FrameworkComponent
+    public class RemoteConfigManager : FrameworkComponent<RemoteConfigManager>
     {
         /// <summary>磁盘缓存文件名（原样保存最近一次拉取成功的 JSON）。</summary>
         private const string CacheFileName = "remote_config_cache.json";

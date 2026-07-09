@@ -8,7 +8,7 @@ namespace Framework
     /// <summary>
     /// 全局轻提示管理器，负责请求去重、排队、限流和展示层派发。
     /// </summary>
-    public sealed class TipManager : FrameworkComponent
+    public sealed class TipManager : FrameworkComponent<TipManager>
     {
         /// <summary>默认同屏最大提示数量。</summary>
         private const int DefaultMaxVisibleCount = 3;

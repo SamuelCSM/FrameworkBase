@@ -19,7 +19,7 @@ namespace Framework.Sdk
     /// 未注册任何渠道时兜底 <see cref="MockSdkProvider"/>（开发期即插即用；
     /// 正式包走到 Mock 会有醒目告警日志）。框架主干不含任何渠道厂商代码。
     /// </summary>
-    public class SdkManager : FrameworkComponent
+    public class SdkManager : FrameworkComponent<SdkManager>
     {
         private ISdkProvider _provider;
         private bool _initialized;
