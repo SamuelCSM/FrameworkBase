@@ -14,7 +14,10 @@ param(
     [string]$UnityPath,
     [switch]$SkipPlayMode,
     [switch]$SkipAssetGate,
-    [switch]$StrictFonts
+    [switch]$StrictFonts,
+    [string]$BuildSizeDir,
+    [switch]$BuildSizeUpdateBaseline,
+    [switch]$BuildSizeWarnOnly
 )
 
 $ErrorActionPreference = "Stop"
@@ -204,6 +207,65 @@ function Invoke-AssetGate {
     if ($procExit -eq 0) { return 1 } else { return $procExit }
 }
 
+# ── 包体门禁（构建后置：需已有产物目录），batchmode 执行 BuildSizeCiGate ─────
+# 仅当传入 -BuildSizeDir 时执行；本仓库 run-ci 不出包，故默认跳过。
+function Invoke-BuildSizeGate([string]$buildDir) {
+    $logPath = Join-Path $artifacts "build-size-gate.log"
+    if (Test-Path $logPath) { Remove-Item $logPath -Force }
+
+    Write-Host ""
+    Write-Host "── 包体回归门禁（产物：$buildDir）──────────────"
+
+    $gateArgs = @(
+        "-batchmode", "-nographics",
+        "-projectPath", $projectPath,
+        "-executeMethod", "Framework.Editor.BuildSize.BuildSizeCiGate.RunBuildSizeGate",
+        "-buildSizeDir", $buildDir,
+        "-logFile", $logPath
+    )
+    if ($BuildSizeUpdateBaseline) { $gateArgs += "-buildSizeUpdateBaseline" }
+    if ($BuildSizeWarnOnly) { $gateArgs += "-buildSizeWarnOnly" }
+
+    & $UnityPath @gateArgs
+    $procExit = $LASTEXITCODE
+
+    # 与资源门禁同款：以 ASCII 结论哨兵为准（batchmode 退出码不可靠），轮询等日志落盘。
+    $verdict = $null
+    for ($i = 0; $i -lt 150; $i++) {
+        if (Test-Path $logPath) {
+            $endLine = Get-Content $logPath -Encoding UTF8 -ErrorAction SilentlyContinue |
+                Where-Object { $_ -match "\[BuildSizeGate\]\s+GATE_RESULT\s+exit=(\d+)" } | Select-Object -Last 1
+            if ($endLine -and $endLine -match "GATE_RESULT\s+exit=(\d+)") {
+                $verdict = [int]$Matches[1]
+                break
+            }
+        }
+        if ($i -gt 0 -and $i % 25 -eq 0) {
+            Write-Host "等待包体门禁结论落盘... $([int]($i / 5))s"
+        }
+        Start-Sleep -Milliseconds 200
+    }
+
+    # 摘关键行（走 Write-Host，避免并入返回值污染 $gateExit）。
+    Get-Content $logPath -Encoding UTF8 -ErrorAction SilentlyContinue |
+        Where-Object { $_ -match "\[BuildSizeGate\]" } |
+        Select-Object -Last 40 |
+        ForEach-Object { Write-Host $_ }
+
+    if ($null -ne $verdict) {
+        if ($verdict -ne 0) {
+            Write-Host "包体门禁未通过（BuildSizeGate exit=$verdict），详见日志: $logPath"
+        }
+        else {
+            Write-Host "包体门禁通过。"
+        }
+        return $verdict
+    }
+
+    Write-Host "包体门禁未产出结论（大概率编译失败或异常），详见日志: $logPath"
+    if ($procExit -eq 0) { return 1 } else { return $procExit }
+}
+
 Write-Host "== FrameworkBase CI =="
 Write-Host "Unity   : $UnityPath"
 Write-Host "Project : $projectPath"
@@ -218,6 +280,15 @@ $finalExit = Invoke-UnityTests "EditMode"
 if ($finalExit -eq 0 -and -not $SkipAssetGate) {
     $gateExit = Invoke-AssetGate
     if ($gateExit -ne 0) { $finalExit = $gateExit }
+}
+
+# 包体门禁：仅当传入 -BuildSizeDir 时执行（构建后置检查，本仓库默认不出包故跳过）。
+# batchmode 的 CWD 不确定，相对目录先解析成绝对路径再传，避免 Unity 侧找不到产物。
+if ($finalExit -eq 0 -and $BuildSizeDir) {
+    $absBuildDir = if ([System.IO.Path]::IsPathRooted($BuildSizeDir)) { $BuildSizeDir }
+                   else { Join-Path $projectPath $BuildSizeDir }
+    $sizeExit = Invoke-BuildSizeGate $absBuildDir
+    if ($sizeExit -ne 0) { $finalExit = $sizeExit }
 }
 
 if ($finalExit -eq 0 -and -not $SkipPlayMode) {

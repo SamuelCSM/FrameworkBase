@@ -3,6 +3,23 @@
 本包遵循 [语义化版本](https://semver.org/lang/zh-CN/)。版本策略：
 `0.x` 为孵化期（API 可能调整）；首个商业项目立项时冻结为 `1.0.0`，此后破坏性变更必须升主版本。
 
+## [0.16.0] - 2026-07-09
+
+### 新增
+
+- **包体回归门禁 `BuildSizeGate`**（补齐"CI 门禁"P1 的包体子缺口，工具层）：拦截"包体一版版胖、
+  难回溯是哪次胖"的运营隐患。属**构建后置**检查（需产物目录），独立于不依赖出包的资源门禁 `CiGate`。
+  - **核心纯逻辑可完全自测**：`BuildSizeGate.Evaluate`（基线+当前快照 → Pass/Warn/Fail）零 Unity 依赖；
+    `BuildSizeSnapshotIO` 目录扫描 / 基线 JSON 读写用临时目录单测。
+  - **双阈策略** `BuildSizePolicy`：总量（百分比 10% + 可选绝对字节）+ 单类（百分比 25%，带 64KB 最小体积
+    门槛防小文件抖动）；只查增长（缩小无害）；`failOnNewEntry` / `warnOnly` 可调。
+  - **基线**默认 `Tools/ci/build-size-baseline.json`（应提交进仓库，"包体涨"= "基线更新"走评审）；
+    首次无基线直接 Pass 并落盘；`-buildSizeUpdateBaseline` 或菜单 **Framework/发布/更新包体基线** 主动更新。
+  - `BuildSizeCiGate.RunBuildSizeGate` batchmode 入口（ASCII 哨兵 `GATE_RESULT exit=N` 收口，同 CiGate）；
+    `run-ci.ps1` 加 `-BuildSizeDir`（仅传入时跑，默认跳过；相对路径自动解析绝对）；`BUILD_SIZE_GATE_GUIDE.md`。
+  - 单测 15 例（裁决矩阵 11 + 扫描/基线往返 4）。真实 Unity batchmode 端到端自测：首次建基线 Pass、
+    回归（+28.6% 总量 / +40% 单类）精确拦截 exit=1。
+
 ## [0.15.1] - 2026-07-09
 
 ### 文档
