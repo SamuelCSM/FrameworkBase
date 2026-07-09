@@ -237,4 +237,47 @@ Boot 提取的对象，本步不动。
 一律改继承 `FrameworkComponent<T>`（每个仅基类声明改一行、CRTP 零行为改动）。此后
 「Manager 是否有 `.Instance`」可预测（都有）；`GameEntry.X` 继续作为对外业务门面，`.Instance`
 为框架内部访问——边界靠 ADR-003 约定（`internal` 跨 Kernel→Framework 程序集不可行，故保持
-`public`）。业务侧访问路径不变。
+`public`）。业务侧访问路径不变。（此处「internal 不可行」仅就 Kernel→Framework 跨程序集的
+`.Instance` 访问而言，勿据此推断「internal 收口整体不可行」——边界硬化的完整讨论见下方
+「ADR-003 补遗」。）
+
+### ADR-003 补遗：边界硬化的正确杠杆是「包边改可见性」而非「拆 asmdef」（2026-07-09）
+
+**背景与纠错**：先前记录（本 ADR 与 ADR-002）把「阻止消费方绕过门面直取
+`NetworkManager.Instance`」的收口手段表述为「留到 3b 独立 asmdef 启用 `internal`」。
+**这个成本估算是错的，特此纠正**：对一个以 UPM 包分发的框架，要守的边界**本就已经是程序集
+边界**（`com.frameworkbase.*` 各编译成独立程序集）。因此收口**无需拆每个 Manager 成独立
+asmdef**，只需在包这一层决定哪些类型 `public`。
+
+**要防的耦合腐烂分两类，别混为一谈**：
+
+1. **跨层反向依赖**（Foundation→Framework）——已由三层 asmdef DAG 编译期挡死（ADR-002）。最重要的一条，已到位。
+2. **消费方绕过门面直取具体单例**——现仅靠「门面 + 约定」，编译器不管。本补遗针对这条。
+
+**正确的收口路径（成本远低于拆 asmdef）**：
+
+- `public` = 对所有消费方的**长期契约**（要管版本）；把 `GameEntry` 门面 + `INetworkService`
+  等接口留 `public`，把 `NetworkManager` 这类具体实现改 `internal`——一刀对**包外**（游戏/热更
+  程序集）消失，对**包内**（CRTP 的 `.Instance`、同门面）无损。仅在**同一** asmdef 内改可见性**即可**，非拆模块。
+- `GameEntry.X return NetworkManager.Instance` 成立的前提是二者同程序集——它们本就同在 `core`
+  包，故天然成立，无需引 DI；真正被挡住的只有**包外**代码。
+- 测试程序集用 `[assembly: InternalsVisibleTo("Framework.Tests")]` 开定向后门，不影响测试。
+
+**为何值得做（服务「公开面小而稳」这一健壮性支撑）**：大厂框架的健壮性核心不是某个关键字，
+而是「对外只暴露接口/门面，具体实现自由重构而不破坏消费方」。把 Manager 从 `public` 收成
+`internal` 是这条路的自然延伸，给未来重构 Manager 内部的自由。这与 .NET 生态（Roslyn /
+ASP.NET Core / .NET runtime 及 Unity 引擎自身 C# 层）普遍的 `internal` +
+`InternalsVisibleTo` 实践一致。
+
+**为何分两步、别今天全改**：改 `internal` 是一次 **breaking change**——任何已直取具体
+`Manager` 的消费方代码会编译失败。故：
+- **新模块即刻遵循**：实现 `internal` / 只暴露接口 + 门面，不欠新债。
+- **存量 Manager 收口**排进一次**带主版本号**的边界整理，给消费方迁移窗口，勿贸然打断当前 P1。
+
+**更稳的过渡选项**：若想要 CI 约束又暂不动可见性，加一条**架构单元测试**（反射扫程序集引用，
+断言「业务命名空间不得引用 `*Manager` 具体类型」，违反即 CI 挂红）。零 breaking、可逆；局限是
+只对**同仓能编到**的代码有效，独立分发出去的消费工程测不到——那一种仍需 `internal`。
+
+**结论修订**：删去「必须等 3b 拆 asmdef 才能收口边界」的旧表述。收口 = **包内改可见性 +
+分两步迁移 + 架构测试兜底**，与是否拆 asmdef（3b/3c）无关，另有其自身 ROI 权衡，见
+ADR-001/002。
