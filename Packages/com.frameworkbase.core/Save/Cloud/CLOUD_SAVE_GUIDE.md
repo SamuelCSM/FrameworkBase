@@ -105,6 +105,81 @@ var r = await CloudSaveSync.SyncAsync("k", null); // → Downloaded
 
 决策核心 `Decide` / `ResolveConflictByTimestamp` 是纯函数，可脱离 Unity 直接断言。
 
+---
+
+## 接入 SaveManager 的设计（决策已定，待第一个真实后端落地时照此开缝）
+
+> 本节固化"云同步如何接进 `SaveManager`"的架构决策。**当前刻意不实现**：这条集成缝没有外部消费者
+> ——业务只调 `SaveManager.SaveAsync`，接了同步该 API 也不变；它纯是 SaveManager 内部管线，
+> `SaveManager` 又是唯一调用者，等有真实 `ICloudSaveBackend` 时再接成本极低（改内部不改门面）。
+> 现在建 = 挂个 NoOp 的投机接线（YAGNI）。对比 `ICloudSaveBackend` 有外部消费者（厂商包/测试按它写契约），
+> 故先建。
+
+### 两条缝在两个高度，别合并
+
+```
+业务  →  SaveManager.SaveAsync / LoadAsync            ← 公开 API，接同步也不变
+              ├─ ISaveKeyProvider  (密钥源，已存在)
+              ├─ AES+HMAC → SaveEnvelope 字节          (加密，已存在)
+              └─ ISaveSync         ← 待开的缝：SaveManager 面向的"同步策略"
+                     └─ NoOpSaveSync (默认关闭，行为不变)
+                     └─ CloudBackedSaveSync
+                            └─ CloudSaveSync (本包，编排+纯决策)
+                                   └─ ICloudSaveBackend  ← 传输缝(哑字节存储)，已存在
+```
+
+- `ICloudSaveBackend` = **传输缝**：字节物理上去哪，厂商包实现。
+- `ISaveSync` = **SaveManager 面向的策略缝**：`SaveManager` 只知道"有个策略要通知"，**不知道云存在**。
+  合并两者会让 `SaveManager` 硬依赖云命名空间，破坏"存档核心不知道云"。
+
+### 缝开在"封包字节层"，不在明文层、不在裸文件层
+
+```
+SaveData(明文)
+  → JSON → AES+HMAC → SaveEnvelope 字节 → 原子写盘+备份
+                        ▲
+                        └── 缝在这里：云拿到的就是磁盘上那份加密+签名 blob
+```
+
+- **开在加密之上（SaveData 层）**：云端见明文，丢掉"后端永不见明文"，且重复造序列化。✗
+- **开在封包字节层**：后端保持哑存储、加密留在框架、完整性码随 blob 走。✓（`CloudSaveRecord.Payload` 即此层）
+- **开在裸文件层**：同步自己做文件 IO，和 `SaveManager` 的 per-file 原子写锁打架。✗
+
+### 与现有加密的衔接：正交，加密代码零改动
+
+- **Push（写后上行）**：本地封包字节 → 云端**逐字节原样**。
+- **Pull（下行）**：云端封包字节 → 本地 `.sav` **逐字节原样写入** → 走**现有** `LoadAsync` 校验 HMAC→解密→迁移。
+
+拉回的 blob 是另一台设备加密+签名的合法封包，流过与本地档**同一条** verify/decrypt/migrate 路径，
+`AesHelper` / `SaveEnvelope` 解析 / `RunMigrationFrom` **全不用改**。
+
+> **唯一硬约束**：密钥源须**账号绑定**（`SetSaveKeyProvider` 传服务端下发的账号密钥，非默认 device-bound），
+> 否则 A 设备封包 B 设备解不开。这是约束，不是改动。
+
+### 落地时只动现有代码两处
+
+1. **`SaveEnvelope` 加同步计数器字段 `s`**（legacy 无此字段→0）。现有 `v` 是 `dataVersion`（**schema 版本**），
+   冲突判定要的是**同步版本**（每次成功写档 +1）——两个概念。放进封包最干净：与写档原子、单一真相源，
+   填充 `CloudSaveMetadata.Version`。
+2. **`SaveManager` 加**：`ISaveSync` 字段 + `SetSaveSync()`；`SaveAsync` 成功后通知 push；
+   一个**显式** `ReconcileAsync<T>(slot)`；一个内部"写裸封包字节"路径（pull 落盘用，复用 `AtomicWriteText`+备份，
+   **跳过再加密**——字节已是封包）。
+
+### 生命周期钩子：push 自动、pull 显式
+
+- **Push**：`SaveAsync` 写盘成功后 fire-and-forget 通知（关键档口可 await）。
+- **Pull / Reconcile**：**只在登录 / 回前台显式调**，**绝不塞进每次 `LoadAsync`**——
+  LoadAsync 频繁调用拉云太吵；更致命的是会话中途自动拉会**覆盖玩家正在改的内存态**。
+  会话内本地权威，同步只在边界做。
+
+### 落地前必须认下的三个利刃
+
+1. **跨 schema 版本**：同步可能把**新版档投给旧客户端**（新包写 `v2`，旧包拉到）。
+   现有 `RunMigrationFrom` 只处理 `saved < current` 前向迁移；`saved > current` 是降级，会被强行按当前版读、
+   `dataVersion` 压回、下次写档丢字段。**必须 min-app-version 门控同步，或拒载 `envelope.v > current` 的封包**。
+2. **写后 push 失败**：需重试/离线队列（`SyncAsync` 返回 `Offline` 即为此留的钩子）。
+3. **account-bound key**（见上）。
+
 ## 相关类型
 
 | 类型 | 职责 |

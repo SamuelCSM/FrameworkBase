@@ -3,6 +3,17 @@
 本包遵循 [语义化版本](https://semver.org/lang/zh-CN/)。版本策略：
 `0.x` 为孵化期（API 可能调整）；首个商业项目立项时冻结为 `1.0.0`，此后破坏性变更必须升主版本。
 
+## [0.15.1] - 2026-07-09
+
+### 文档
+
+- **`CLOUD_SAVE_GUIDE.md` 补"接入 SaveManager 的设计"章节**（固化决策，暂不实现）：明确 `ISaveSync`
+  是 SaveManager 面向的策略缝（与传输缝 `ICloudSaveBackend` 分属两高度、不合并）、缝开在**封包字节层**
+  （非明文层非裸文件层）、与现有 AES+HMAC 加密**正交零改动**（push 逐字节上行 / pull 逐字节下行后复用现有
+  verify→decrypt→migrate）、落地时只动两处（`SaveEnvelope` 加同步计数器 `s`、SaveManager 加 `ISaveSync`+
+  `ReconcileAsync`+写裸封包路径）、push 自动 pull 显式的钩子、以及三个利刃（跨 schema 版本降级、写后 push
+  失败重试、account-bound key）。**当前刻意不实现**：该集成缝无外部消费者，等真实后端落地再接成本极低（YAGNI）。
+
 ## [0.15.0] - 2026-07-09
 
 ### 新增
