@@ -29,6 +29,12 @@ namespace Framework
         /// <summary>当前语言枚举。无法识别存档中的语言字符串时回退到简体中文。</summary>
         public static LanguageType CurrentLanguageType => ToType(CurrentLanguage);
 
+        /// <summary>当前语言的书写方向（供 UI 层决定整体镜像布局与对齐）。</summary>
+        public static TextDirection CurrentDirection => TextDirectionResolver.Of(CurrentLanguage);
+
+        /// <summary>当前语言是否从右到左书写。</summary>
+        public static bool IsCurrentRightToLeft => TextDirectionResolver.IsRightToLeft(CurrentLanguage);
+
         /// <summary>
         /// 切换当前语言并广播刷新事件。
         /// </summary>
@@ -93,6 +99,51 @@ namespace Framework
             catch (FormatException)
             {
                 return value;
+            }
+        }
+
+        /// <summary>
+        /// 按数量取当前语言的复数文案。
+        /// 依当前语言的 CLDR 复数规则选变体 key <c>{keyBase}_{类别}</c>（如 <c>_one</c> / <c>_other</c>），
+        /// 命中即用，缺该变体时回退 <c>{keyBase}_other</c>，仍缺则返回 <paramref name="keyBase"/> 兜底不吐空。
+        /// </summary>
+        /// <param name="keyBase">复数文案 key 前缀，各变体形如 <c>{keyBase}_one</c> / <c>{keyBase}_other</c>。</param>
+        /// <param name="count">数量，参与复数判定并作为默认格式化参数 <c>{0}</c>。</param>
+        /// <returns>选中变体的格式化文案。</returns>
+        public static string GetPlural(string keyBase, double count)
+        {
+            return GetPlural(keyBase, count, null);
+        }
+
+        /// <summary>
+        /// 按数量取当前语言的复数文案，并自定义格式化参数。
+        /// </summary>
+        /// <param name="keyBase">复数文案 key 前缀。</param>
+        /// <param name="count">数量，参与复数判定；未提供 <paramref name="args"/> 时作为默认 <c>{0}</c>。</param>
+        /// <param name="args">格式化参数；为空时默认以 <paramref name="count"/> 填充 <c>{0}</c>。</param>
+        /// <returns>选中变体的格式化文案。</returns>
+        public static string GetPlural(string keyBase, double count, params object[] args)
+        {
+            if (string.IsNullOrEmpty(keyBase))
+                return string.Empty;
+
+            PluralCategory category = PluralRules.Select(CurrentLanguage, count);
+            string suffix = category.KeySuffix();
+
+            bool found = TryGet($"{keyBase}_{suffix}", out string text);
+            if (!found && suffix != "other")
+                found = TryGet($"{keyBase}_other", out text);
+            if (!found)
+                return keyBase; // 变体全缺时返回 keyBase，避免把残缺 key 吐给玩家
+
+            object[] formatArgs = (args != null && args.Length > 0) ? args : new object[] { count };
+            try
+            {
+                return string.Format(text, formatArgs);
+            }
+            catch (FormatException)
+            {
+                return text;
             }
         }
 

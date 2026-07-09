@@ -3,6 +3,23 @@
 本包遵循 [语义化版本](https://semver.org/lang/zh-CN/)。版本策略：
 `0.x` 为孵化期（API 可能调整）；首个商业项目立项时冻结为 `1.0.0`，此后破坏性变更必须升主版本。
 
+## [0.13.0] - 2026-07-09
+
+### 新增
+
+- **本地化 plural / RTL 最小集**（补齐国际化短板）：
+  - `PluralRules`（纯逻辑、零 Unity 依赖）：按 CLDR 基数规则把数量判入 `zero/one/two/few/many/other`
+    六类。内置 6 大规则家族——东亚(仅 other)、日耳曼/多数罗曼语(one/other)、法语(0,1→one)、
+    俄乌东斯拉夫(one/few/many/other)、波兰西斯拉夫、阿拉伯(全 6 类)；**未登记语言安全退化为
+    other**，不给错误形态。追求"规则家族正确"而非"语言全覆盖"，新增语言只需补一条分派。
+  - `TextDirectionResolver`（纯逻辑）：`Of(lang)` / `IsRightToLeft(lang)` 判定语言书写方向
+    （ar/he/iw/fa/ur/ps/… 最小集）；`ContainsRightToLeft(text)` 扫强 RTL Unicode 区段，
+    给用户名/聊天等动态文本自动定向。方向决策归框架，字形整形仍由 TextMeshPro 负责。
+  - `Language` 便捷封装：`GetPlural(keyBase, count[, args])` 依当前语言选 `{keyBase}_{类别}` 变体、
+    缺变体回退 `_other`、仍缺返回 `keyBase` 兜底不吐空；`CurrentDirection` / `IsCurrentRightToLeft`
+    暴露当前语言方向供 UI 镜像布局。
+  - 单测 19 例（复数 10 + 方向 9），覆盖各类别边界、小数退化、负数、区域码解析、强 RTL 检测。
+
 ## [0.12.0] - 2026-07-09
 
 ### 变更
