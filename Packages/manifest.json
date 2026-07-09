@@ -1,6 +1,7 @@
 {
   "testables": [
-    "com.frameworkbase.core"
+    "com.frameworkbase.core",
+    "com.frameworkbase.experiment"
   ],
   "dependencies": {
     "com.code-philosophy.hybridclr": "https://gitee.com/focus-creative-games/hybridclr_unity.git",
