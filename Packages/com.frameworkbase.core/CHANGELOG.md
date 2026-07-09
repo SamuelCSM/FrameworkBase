@@ -3,6 +3,23 @@
 本包遵循 [语义化版本](https://semver.org/lang/zh-CN/)。版本策略：
 `0.x` 为孵化期（API 可能调整）；首个商业项目立项时冻结为 `1.0.0`，此后破坏性变更必须升主版本。
 
+## [0.15.0] - 2026-07-09
+
+### 新增
+
+- **云存档抽象 `ICloudSaveBackend` + 同步编排器 `CloudSaveSync`**（补齐"存档/账号"P1 的云存档子缺口）：
+  框架主干只提供**缝 + 冲突决策**，厂商后端（Google Play Saved Games / iCloud / 自建服务端）进扩展包
+  经 `SetBackend` 注入。遵循与崩溃后端一致的"主干接口 + 默认兜底 + Mock + 平台实现进扩展包"模式。
+  - **离线优先**：本地存档永远权威可玩，云同步是尽力而为叠加层；后端不可用即 `Offline`，不阻断本地读写。
+  - **决策与 IO 分离**：核心 `Decide`（比对两端元数据 → None/Upload/Download/Conflict）是纯函数，
+    零 IO 零 Unity 可直接单测；`SyncAsync` 只透过后端做 IO（不碰文件，下载结果交调用方落盘），
+    故配 `InMemoryCloudSaveBackend` 可整链单测。
+  - **冲突机制**：同步计数器 `Version`（≠结构 `dataVersion`）为首要依据，同版本比 `ContentHash` 判分叉；
+    真冲突交解决器，默认 `ResolveConflictByTimestamp`（新时间戳胜、并列保本地）。文档明示时间戳裁决会丢数据，
+    价值存档应传自定义**字段级合并**解决器（合并规则属业务，框架只保证"检测到冲突并交出裁决权"）。
+  - `NoOpCloudSaveBackend`（默认关闭，没接云也不崩）+ `InMemoryCloudSaveBackend`（测试）+ `CLOUD_SAVE_GUIDE.md`。
+  - 单测 16 例：决策矩阵 7 + 默认裁决 3 + 整链同步 6（离线/上传/下载/一致/自定义解决器/默认关闭）。
+
 ## [0.14.0] - 2026-07-09
 
 ### 新增
