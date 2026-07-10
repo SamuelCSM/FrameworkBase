@@ -62,3 +62,25 @@ Unity.exe -batchmode -nographics -projectPath <工程根> ^
 ## 包体大小门禁
 
 缺少产物目录、产物为空或缺少基线都会失败。只有显式传入 `-buildSizeUpdateBaseline` 才允许创建或更新基线，普通 PR 不会自动接受新基线。
+
+基线引导（首次武装门禁）：
+
+1. 本地或 CI 产出一次 Android 构建产物；
+2. Editor 菜单「Framework/发布/更新包体基线」选择产物目录，或 batchmode 传
+   `-buildSizeUpdateBaseline -buildSizeDir <产物目录>`；
+3. 将生成的 `Tools/ci/build-size-baseline.json` 随 PR 提交评审。
+
+基线入库后，ci.yml 的 android-player job 会自动强制执行包体回归比对；基线缺失期间
+CI 只发醒目告警不阻断，属于引导期的显式豁免，不是门禁默认放行。
+
+## 云端正式发布（release.yml）
+
+正式产物只允许由 `.github/workflows/release.yml`（workflow_dispatch）生成：
+
+- 入口固定为 `ReleaseBatchEntry.PublishHotUpdateForBuilder` / `BuildFullPackageForBuilder`，
+  失败以 BuildFailedException 上抛，不依赖 batchmode 退出码；
+- job 绑定 GitHub Environment（dev/qa/prod）：prod 在 Settings → Environments 配置
+  Required reviewers 即形成发布审批；签名私钥用环境 Secret
+  `MANIFEST_PRIVATE_KEY_XML_BASE64` 注入，按环境隔离；
+- 发布 staging 与 ledger 台账整体作为 workflow artifact 归档 90 天，可回答
+  “谁在哪个 Commit 用什么配置发布了哪些产物”。

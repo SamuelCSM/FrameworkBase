@@ -14,14 +14,42 @@ namespace Framework.Editor.Release
     /// <para>
     /// 热更新入口：<c>-executeMethod Framework.Editor.Release.ReleaseBatchEntry.PublishHotUpdate</c>。
     /// 整包入口：<c>-executeMethod Framework.Editor.Release.ReleaseBatchEntry.BuildFullPackage</c>。
-    /// 成功退出码为 0，参数、门禁、构建或发布任一失败退出码为 1。
+    /// 成功退出码为 0，参数、门禁、构建或发布任一失败退出码为 1；结论哨兵为 <c>RELEASE_RESULT exit=N</c>。
+    /// </para>
+    /// <para>
+    /// GameCI unity-builder 等按进程退出码判定的宿主必须改用 <see cref="PublishHotUpdateForBuilder"/> /
+    /// <see cref="BuildFullPackageForBuilder"/>：失败以 BuildFailedException 上抛，规避 batchmode 退出码不可靠问题。
     /// </para>
     /// </summary>
     public static class ReleaseBatchEntry
     {
         public static void PublishHotUpdate()
         {
-            RunAndExit(() =>
+            RunAndExit(ExecutePublishHotUpdate);
+        }
+
+        public static void BuildFullPackage()
+        {
+            RunAndExit(ExecuteBuildFullPackage);
+        }
+
+        /// <summary>
+        /// GameCI unity-builder 等外部构建器专用热更发布入口：失败以 <see cref="UnityEditor.Build.BuildFailedException"/>
+        /// 上抛让宿主可靠拿到非零结果，不调用 EditorApplication.Exit（batchmode 退出码不可靠）。
+        /// </summary>
+        public static void PublishHotUpdateForBuilder()
+        {
+            RunForBuilder(ExecutePublishHotUpdate);
+        }
+
+        /// <summary>外部构建器专用整包发布入口；失败语义同 <see cref="PublishHotUpdateForBuilder"/>。</summary>
+        public static void BuildFullPackageForBuilder()
+        {
+            RunForBuilder(ExecuteBuildFullPackage);
+        }
+
+        private static void ExecutePublishHotUpdate()
+        {
             {
                 Dictionary<string, string> args = ParseArgs();
                 string releaseId = Get(args, "releaseId", Guid.NewGuid().ToString("N"));
@@ -69,12 +97,11 @@ namespace Framework.Editor.Release
                     new ReleasePublishingSteps.AtomicPublishArtifacts(),
                 }, context);
                 ThrowIfFailed(result);
-            });
+            }
         }
 
-        public static void BuildFullPackage()
+        private static void ExecuteBuildFullPackage()
         {
-            RunAndExit(() =>
             {
                 Dictionary<string, string> args = ParseArgs();
                 string releaseId = Get(args, "releaseId", Guid.NewGuid().ToString("N"));
@@ -126,7 +153,7 @@ namespace Framework.Editor.Release
                     new FullPackageReleaseSteps.SwitchBackHotUpdateRemote(),
                 };
                 ThrowIfFailed(ReleasePipeline.Run(steps, context));
-            });
+            }
         }
 
         private static void RunAndExit(Action action)
@@ -141,6 +168,23 @@ namespace Framework.Editor.Release
             {
                 UnityEngine.Debug.LogError($"[ReleaseBatch] 发布失败：{ex}\n[ReleaseBatch] RELEASE_RESULT exit=1");
                 EditorApplication.Exit(1);
+            }
+        }
+
+        /// <summary>
+        /// 外部构建器收口：成功打印哨兵，失败转 BuildFailedException 上抛，由宿主构建器判定非零。
+        /// </summary>
+        private static void RunForBuilder(Action action)
+        {
+            try
+            {
+                action();
+                UnityEngine.Debug.Log("[ReleaseBatch] RELEASE_RESULT exit=0");
+            }
+            catch (Exception ex)
+            {
+                UnityEngine.Debug.LogError($"[ReleaseBatch] 发布失败：{ex}\n[ReleaseBatch] RELEASE_RESULT exit=1");
+                throw new UnityEditor.Build.BuildFailedException(ex.Message);
             }
         }
 

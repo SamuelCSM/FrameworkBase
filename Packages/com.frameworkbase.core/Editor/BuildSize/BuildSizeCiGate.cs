@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Linq;
 using UnityEditor;
+using UnityEditor.Build;
 using UnityEngine;
 
 namespace Framework.Editor.BuildSize
@@ -28,64 +29,80 @@ namespace Framework.Editor.BuildSize
         /// <summary>菜单：从选定目录更新包体基线。</summary>
         private const string UpdateBaselineMenu = "Framework/发布/更新包体基线";
 
-        /// <summary>batchmode 入口：扫描产物 → 比对基线 → 裁决 → 哨兵 + 退出码收口。</summary>
+        /// <summary>独立 batchmode 入口：裁决后以哨兵 + 退出码收口，供本地脚本按哨兵行判定。</summary>
         public static void RunBuildSizeGate()
         {
+            int exitCode;
             try
             {
-                Debug.Log("[BuildSizeGate] ===== 包体门禁开始 =====");
-
-                string dir = GetArgValue("-buildSizeDir");
-                if (string.IsNullOrEmpty(dir))
-                {
-                    Debug.LogError("[BuildSizeGate] 缺少必需参数 -buildSizeDir，无法执行包体门禁。");
-                    Finish(1);
-                    return;
-                }
-
-                string baselinePath = ResolveBaselinePath(GetArgValue("-buildSizeBaseline"));
-                string label = GetArgValue("-buildSizeLabel") ?? string.Empty;
-                bool warnOnly = HasArg("-buildSizeWarnOnly");
-                bool updateBaseline = HasArg("-buildSizeUpdateBaseline");
-
-                var current = BuildSizeSnapshotIO.FromDirectory(dir, label);
-                if (current.totalBytes == 0 || current.entries == null || current.entries.Count == 0)
-                {
-                    Debug.LogError($"[BuildSizeGate] 产物目录不存在或为空：{dir}。");
-                    Finish(1);
-                    return;
-                }
-
-                var baseline = BuildSizeSnapshotIO.LoadBaseline(baselinePath);
-                if (baseline == null && !updateBaseline)
-                {
-                    Debug.LogError($"[BuildSizeGate] 缺少包体基线：{baselinePath}。只有显式传入 -buildSizeUpdateBaseline 才允许创建基线。");
-                    Finish(1);
-                    return;
-                }
-                if (updateBaseline)
-                {
-                    BuildSizeSnapshotIO.SaveBaseline(baselinePath, current);
-                    Debug.Log($"[BuildSizeGate] 已显式更新基线：{baselinePath}");
-                    Finish(0);
-                    return;
-                }
-
-                var policy = new BuildSizePolicy { warnOnly = warnOnly };
-                var verdict = BuildSizeGate.Evaluate(baseline, current, policy);
-
-                Debug.Log($"[BuildSizeGate] 产物总量 {BuildSizeGate.Human(current.totalBytes)}，条目 {current.entries.Count} 个");
-                Debug.Log($"[BuildSizeGate] {verdict.Summary}");
-                foreach (var v in verdict.Violations)
-                    Debug.LogWarning($"[BuildSizeGate]   · {v.reason}");
-
-                Finish(verdict.IsBlocking ? 1 : 0);
+                exitCode = EvaluateGate();
             }
             catch (Exception ex)
             {
                 Debug.LogError($"[BuildSizeGate] 门禁执行异常: {ex.Message}\n{ex.StackTrace}");
-                Finish(1);
+                exitCode = 1;
             }
+            Finish(exitCode);
+        }
+
+        /// <summary>
+        /// 外部构建器（GameCI unity-builder 等）入口：失败以 <see cref="BuildFailedException"/> 上抛，
+        /// 绕开 batchmode 进程退出码不可靠问题；本方法不调用 EditorApplication.Exit。
+        /// </summary>
+        public static void RunBuildSizeGateForBuilder()
+        {
+            int exitCode = EvaluateGate();
+            Debug.Log($"[BuildSizeGate] GATE_RESULT exit={exitCode}");
+            if (exitCode != 0)
+                throw new BuildFailedException("包体门禁未通过，请查看上方 [BuildSizeGate] 逐项报告。");
+        }
+
+        /// <summary>执行扫描、基线比对与裁决，返回 0/1；不负责进程收口。</summary>
+        private static int EvaluateGate()
+        {
+            Debug.Log("[BuildSizeGate] ===== 包体门禁开始 =====");
+
+            string dir = GetArgValue("-buildSizeDir");
+            if (string.IsNullOrEmpty(dir))
+            {
+                Debug.LogError("[BuildSizeGate] 缺少必需参数 -buildSizeDir，无法执行包体门禁。");
+                return 1;
+            }
+
+            string baselinePath = ResolveBaselinePath(GetArgValue("-buildSizeBaseline"));
+            string label = GetArgValue("-buildSizeLabel") ?? string.Empty;
+            bool warnOnly = HasArg("-buildSizeWarnOnly");
+            bool updateBaseline = HasArg("-buildSizeUpdateBaseline");
+
+            var current = BuildSizeSnapshotIO.FromDirectory(dir, label);
+            if (current.totalBytes == 0 || current.entries == null || current.entries.Count == 0)
+            {
+                Debug.LogError($"[BuildSizeGate] 产物目录不存在或为空：{dir}。");
+                return 1;
+            }
+
+            var baseline = BuildSizeSnapshotIO.LoadBaseline(baselinePath);
+            if (baseline == null && !updateBaseline)
+            {
+                Debug.LogError($"[BuildSizeGate] 缺少包体基线：{baselinePath}。只有显式传入 -buildSizeUpdateBaseline 才允许创建基线。");
+                return 1;
+            }
+            if (updateBaseline)
+            {
+                BuildSizeSnapshotIO.SaveBaseline(baselinePath, current);
+                Debug.Log($"[BuildSizeGate] 已显式更新基线：{baselinePath}");
+                return 0;
+            }
+
+            var policy = new BuildSizePolicy { warnOnly = warnOnly };
+            var verdict = BuildSizeGate.Evaluate(baseline, current, policy);
+
+            Debug.Log($"[BuildSizeGate] 产物总量 {BuildSizeGate.Human(current.totalBytes)}，条目 {current.entries.Count} 个");
+            Debug.Log($"[BuildSizeGate] {verdict.Summary}");
+            foreach (var v in verdict.Violations)
+                Debug.LogWarning($"[BuildSizeGate]   · {v.reason}");
+
+            return verdict.IsBlocking ? 1 : 0;
         }
 
         private static void Finish(int exitCode)

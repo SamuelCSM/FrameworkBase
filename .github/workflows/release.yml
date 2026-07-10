@@ -1,0 +1,110 @@
+# FrameworkBase 正式发布流水线（P0-5 闭环）。
+#
+# 设计约束：
+#   - 正式产物只允许由本 workflow 经 ReleaseBatchEntry 生成，本地出包一律视为调试产物；
+#   - job 绑定 GitHub Environment（dev/qa/prod）：审批人、保护规则与签名私钥都按环境隔离，
+#     prod 环境请在仓库 Settings → Environments 配置 Required reviewers 形成发布审批；
+#   - 签名私钥经环境 Secret MANIFEST_PRIVATE_KEY_XML_BASE64 注入
+#     （对应 UpdateManifestSigner 的 FRAMEWORKBASE_MANIFEST_PRIVATE_KEY_XML_BASE64），绝不入库；
+#   - ReleaseBatchEntry 默认要求干净 Git 工作副本，checkout 即满足；
+#   - *ForBuilder 入口失败以 BuildFailedException 上抛，unity-builder 可靠拿到非零结果。
+name: FrameworkBase Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      kind:
+        description: 发布类型
+        type: choice
+        options: [hotupdate, fullpackage]
+        required: true
+      releaseEnv:
+        description: 目标环境（决定审批链与签名密钥）
+        type: choice
+        options: [dev, qa, prod]
+        required: true
+      buildTarget:
+        description: Unity BuildTarget（Android / iOS / StandaloneWindows64 / StandaloneLinux64）
+        type: string
+        required: true
+        default: Android
+      appVersion:
+        description: 整包版本（须与目标玩家 Application.version 一致）
+        type: string
+        required: true
+      resourceVersion:
+        description: 资源版本号（同 AppVersion 内严格递增）
+        type: string
+        required: true
+      codeVersion:
+        description: 代码版本号（同 AppVersion 内严格递增）
+        type: string
+        required: true
+      publishResource:
+        description: 发布资源热更
+        type: boolean
+        default: true
+      publishCode:
+        description: 发布代码热更
+        type: boolean
+        default: true
+      grayPercent:
+        description: 灰度百分比（1~99 灰度，100 全量）
+        type: string
+        default: "100"
+      description:
+        description: 版本说明（进入清单 Description；unity-builder 参数按空格切分，请勿包含空格）
+        type: string
+        default: ""
+
+concurrency:
+  group: frameworkbase-release
+  cancel-in-progress: false
+
+env:
+  UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+  UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+  UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+
+jobs:
+  release:
+    name: ${{ inputs.kind }} → ${{ inputs.releaseEnv }} / ${{ inputs.buildTarget }}
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.releaseEnv }}
+    steps:
+      - name: Checkout 干净发布副本
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 执行唯一发布入口（ReleaseBatchEntry）
+        uses: game-ci/unity-builder@v4
+        env:
+          FRAMEWORKBASE_MANIFEST_PRIVATE_KEY_XML_BASE64: ${{ secrets.MANIFEST_PRIVATE_KEY_XML_BASE64 }}
+        with:
+          targetPlatform: ${{ inputs.buildTarget }}
+          allowDirtyBuild: false
+          buildMethod: ${{ inputs.kind == 'hotupdate' && 'Framework.Editor.Release.ReleaseBatchEntry.PublishHotUpdateForBuilder' || 'Framework.Editor.Release.ReleaseBatchEntry.BuildFullPackageForBuilder' }}
+          customParameters: >-
+            -releaseId ${{ github.run_id }}-${{ github.run_attempt }}
+            -releaseEnv ${{ inputs.releaseEnv }}
+            -buildTarget ${{ inputs.buildTarget }}
+            -appVersion ${{ inputs.appVersion }}
+            -resourceVersion ${{ inputs.resourceVersion }}
+            -codeVersion ${{ inputs.codeVersion }}
+            -publishResource ${{ inputs.publishResource }}
+            -publishCode ${{ inputs.publishCode }}
+            -grayPercent ${{ inputs.grayPercent }}
+            -description "${{ inputs.description }}"
+            -buildOutput build/Release/${{ inputs.buildTarget }}
+
+      - name: 上传发布产物与台账（staging + ledger）
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ inputs.releaseEnv }}-${{ inputs.kind }}-${{ github.run_id }}
+          path: |
+            Artifacts/ReleaseStaging/
+            build/Release/
+          if-no-files-found: error
+          retention-days: 90

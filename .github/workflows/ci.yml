@@ -97,6 +97,26 @@ jobs:
           path: build/Android
           if-no-files-found: error
 
+      # 包体回归门禁：基线（Tools/ci/build-size-baseline.json）已提交时强制执行；
+      # 门禁本身失败关闭（缺基线即失败），此处仅在仓库尚未生成基线的引导期跳过并高亮提示。
+      # 基线生成：Editor 菜单「Framework/发布/更新包体基线」或 batchmode 传 -buildSizeUpdateBaseline，
+      # 生成后必须随代码评审一起提交，禁止 CI 隐式落盘。
+      - name: 包体回归门禁（BuildSizeGate，required）
+        if: hashFiles('Tools/ci/build-size-baseline.json') != ''
+        uses: game-ci/unity-builder@v4
+        with:
+          targetPlatform: Android
+          allowDirtyBuild: true
+          buildMethod: Framework.Editor.BuildSize.BuildSizeCiGate.RunBuildSizeGateForBuilder
+          customParameters: -buildSizeDir build/Android -buildSizeLabel ${{ github.sha }}
+
+      - name: 包体基线缺失提示
+        if: hashFiles('Tools/ci/build-size-baseline.json') == ''
+        run: |
+          echo "::warning title=BuildSizeGate 未武装::Tools/ci/build-size-baseline.json 不存在，包体回归门禁被跳过。请从本次 android-player 产物生成基线并提交入库。"
+          echo "### ⚠️ 包体门禁未武装" >> "$GITHUB_STEP_SUMMARY"
+          echo "缺少 Tools/ci/build-size-baseline.json，本次未执行包体回归比对。生成方式见 Tools/ci/README.md。" >> "$GITHUB_STEP_SUMMARY"
+
   ios-xcode-project:
     name: iOS Xcode 工程生成验证
     needs: android-player
