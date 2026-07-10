@@ -14,6 +14,32 @@
       "dependencies": {},
       "hash": "e5acc106ee196bc5a32fb14cdf2987b0f96d11e0"
     },
+    "com.frameworkbase.core": {
+      "version": "file:com.frameworkbase.core",
+      "depth": 0,
+      "source": "embedded",
+      "dependencies": {
+        "com.unity.addressables": "1.28.2",
+        "com.unity.textmeshpro": "3.0.7",
+        "com.unity.ugui": "1.0.0"
+      }
+    },
+    "com.frameworkbase.experiment": {
+      "version": "file:com.frameworkbase.experiment",
+      "depth": 0,
+      "source": "embedded",
+      "dependencies": {
+        "com.frameworkbase.core": "0.10.0"
+      }
+    },
+    "com.frameworkbase.telemetry.bugly": {
+      "version": "file:com.frameworkbase.telemetry.bugly",
+      "depth": 0,
+      "source": "embedded",
+      "dependencies": {
+        "com.frameworkbase.core": "0.8.0"
+      }
+    },
     "com.github-glitchenzo.nugetforunity": {
       "version": "https://github.com/GlitchEnzo/NuGetForUnity.git?path=/src/NuGetForUnity",
       "depth": 0,

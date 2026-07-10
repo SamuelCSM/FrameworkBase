@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 
@@ -83,7 +84,7 @@ namespace Framework.Editor
         public long MaxGroupSourceBytes = 256L * 1024 * 1024;
 
         /// <summary>本地组白名单：仅这些组允许（且必须）走 Local 路径随包内置，其余一律 Remote。</summary>
-        public HashSet<string> LocalGroups = new HashSet<string> { "Framework" };
+        public HashSet<string> LocalGroups = new HashSet<string> { "Framework", "Default Local Group" };
 
         /// <summary>远端条目必须携带的下载 label（热更下载按它聚合）。</summary>
         public string RemoteLabel = "remote";
@@ -123,6 +124,10 @@ namespace Framework.Editor
             AddressablesValidationThresholds th,
             List<AddressablesValidationIssue> issues)
         {
+            // Addressables 自动生成的 Built In Data 是引擎元数据组，不参与普通 Bundle 路径和 Schema 规则。
+            if (string.Equals(group.Name, "Built In Data", StringComparison.Ordinal))
+                return;
+
             // 规则 1：必须挂 BundledAssetGroupSchema，否则组内资源根本不会被打进任何 bundle
             if (!group.HasBundledSchema)
             {

@@ -51,6 +51,12 @@ namespace Framework.Editor
         {
             errorSummary = string.Empty;
 
+            if (AddressableAssetSettingsDefaultObject.Settings == null)
+            {
+                errorSummary = "Addressables Settings missing. FrameworkBase always initializes Addressables at launch; run Framework/Setup Addressables before build.";
+                return false;
+            }
+
             List<AddressablesValidationIssue> issues = RunAndReport();
             List<AddressablesValidationIssue> errors =
                 issues.Where(i => i.Severity == AddressablesIssueSeverity.Error).ToList();

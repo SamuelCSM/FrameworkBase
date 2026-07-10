@@ -273,6 +273,13 @@ Write-Host ("步骤    : 编译 + EditMode 测试" + `
     $(if ($SkipAssetGate) { "" } else { " + 资源门禁" }) + `
     $(if ($SkipPlayMode) { "" } else { " + PlayMode 冒烟" }) + "（产物 $artifacts）")
 
+# ── 干净副本可复现性预检：关键输入缺失或未纳入 Git 时直接阻断 ──────────
+& (Join-Path $PSScriptRoot "check-reproducibility.ps1")
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "工程可复现性预检未通过，跳过 Unity 测试。"
+    exit 1
+}
+
 # ── 依次跑（EditMode 先行：编译失败/逻辑用例挂了就不必再起后续）──
 $finalExit = Invoke-UnityTests "EditMode"
 

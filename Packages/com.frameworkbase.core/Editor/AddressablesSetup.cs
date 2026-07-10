@@ -291,14 +291,23 @@ namespace Framework.Editor
         // ─── 内部：初始化 Settings 并确保 Framework 分组存在 ──────
         private static AddressableAssetSettings GetOrInitSettings()
         {
-            var settings = AddressableAssetSettingsDefaultObject.Settings;
+            AddressableAssetSettings settings = AddressableAssetSettingsDefaultObject.Settings;
             if (settings == null)
             {
-                settings = AddressableAssetSettings.Create(
-                    AddressableAssetSettingsDefaultObject.kDefaultConfigFolder,
-                    AddressableAssetSettingsDefaultObject.kDefaultConfigAssetName,
-                    true, true);
-                Debug.Log("[Addressables] Settings 初始化完成");
+                // 干净工作副本可能已有 Settings 资产，但缺少 DefaultObject 包装器或 EditorBuildSettings 引用。
+                // 先尝试加载现有资产，再显式赋给 Settings 属性，由 Addressables 官方 API 创建并持久化 DefaultObject.asset。
+                settings = AssetDatabase.LoadAssetAtPath<AddressableAssetSettings>(
+                    AddressableAssetSettingsDefaultObject.DefaultAssetPath);
+                if (settings == null)
+                {
+                    settings = AddressableAssetSettings.Create(
+                        AddressableAssetSettingsDefaultObject.kDefaultConfigFolder,
+                        AddressableAssetSettingsDefaultObject.kDefaultConfigAssetName,
+                        true,
+                        true);
+                }
+                AddressableAssetSettingsDefaultObject.Settings = settings;
+                Debug.Log("[Addressables] Settings 与 DefaultObject 持久化初始化完成");
             }
 
             // 确保 Framework 本地分组存在（唯一的特殊分组，随包内置）

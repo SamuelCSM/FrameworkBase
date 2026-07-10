@@ -116,8 +116,8 @@ omnisharp.json
 # Addressables build output
 /[Aa]ssets/AddressableAssetsData/Windows/
 
-# Build outputs
-ProjectSettings/
+# Unity ProjectSettings 必须纳入版本控制，确保干净工作副本能够确定性还原构建输入。
+# 机器本地配置应存放在 UserSettings 或 EditorPrefs，不得混入 ProjectSettings。
 
 .cursor/
 
