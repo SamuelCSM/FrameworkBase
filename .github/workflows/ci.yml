@@ -1,67 +1,118 @@
-# FrameworkBase 质量门禁：编译 + EditMode 测试 + PlayMode 冒烟 + 资源门禁。
-# 与 Tools/ci/run-ci.ps1 等价，push / PR 自动执行。
-#
-# 首次启用需要在仓库 Settings → Secrets and variables → Actions 配置 Unity 授权：
-#   UNITY_LICENSE  个人版 .ulf 许可文件内容（获取方式见 Tools/ci/README.md）
-#   UNITY_EMAIL    Unity 账号邮箱
-#   UNITY_PASSWORD Unity 账号密码
-name: CI
+name: FrameworkBase CI
 
 on:
   push:
     branches: [master]
   pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: frameworkbase-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+  UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+  UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
 
 jobs:
-  tests:
-    name: 编译 + EditMode/PlayMode 测试
+  reproducibility:
+    name: 干净副本可复现性预检
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Checkout 完整工作副本
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 校验关键工程输入均已纳入版本控制
+        shell: pwsh
+        run: ./Tools/ci/check-reproducibility.ps1
+
+  tests:
+    name: 编译与 EditMode/PlayMode 测试
+    needs: reproducibility
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Cache Library
         uses: actions/cache@v4
         with:
           path: Library
-          key: Library-${{ hashFiles('Packages/manifest.json', 'Packages/packages-lock.json') }}
+          key: test-library-${{ runner.os }}-${{ hashFiles('ProjectSettings/ProjectVersion.txt', 'Packages/manifest.json', 'Packages/packages-lock.json') }}
           restore-keys: |
-            Library-
+            test-library-${{ runner.os }}-
 
-      # unityVersion 默认从 ProjectSettings/ProjectVersion.txt 读取（2022.3.62f3）。
-      # 编译错误会导致本步骤失败，天然充当编译门禁。
-      # testMode: all = EditMode + PlayMode 两条跑道（单 job 串行，避免个人版许可并发冲突）。
-      - name: Run EditMode + PlayMode tests
+      - name: 运行全部 Unity 测试
         uses: game-ci/unity-test-runner@v4
-        env:
-          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
-          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
-          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
         with:
           testMode: all
-          checkName: Test Results
+          checkName: FrameworkBase Test Results
+          artifactsPath: artifacts/test-results
 
-      # 资源门禁：batchmode 执行 CiGate.RunAssetGate（Addressables 校验 + 字体缺字）。
-      # 复用同一 Unity 许可；CiGate 落 ASCII 结论行 "[CiGate] GATE_RESULT exit=N"。
-      # advisory（continue-on-error）：unity-builder 以进程退出码判定，而 batchmode 下即便
-      # EditorApplication.Exit(0) 进程码仍可能非 0（本地跑道已证实），直接判定会误红卡 PR。
-      # 强制门禁以本地 run-ci.ps1 为准（它按 GATE_RESULT 结论判定）；此步先做可见性，
-      # 待日后换成「跑 editor + 解析 GATE_RESULT」的自定义步骤后再转强制。
-      - name: 资源门禁（Addressables + 字体缺字，advisory）
-        continue-on-error: true
+      - name: 上传测试报告
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unity-test-results
+          path: artifacts/test-results
+          if-no-files-found: error
+
+  asset-gate:
+    name: 资源与工程质量门禁
+    needs: tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 执行 required 资源门禁
         uses: game-ci/unity-builder@v4
-        env:
-          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
-          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
-          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
         with:
           targetPlatform: StandaloneLinux64
-          buildMethod: Framework.Editor.CiGate.RunAssetGate
-          allowDirtyBuild: true
+          buildMethod: Framework.Editor.CiGate.RunAssetGateForBuilder
+          allowDirtyBuild: false
+          customParameters: -strictFonts
 
-      - name: Upload test results
-        uses: actions/upload-artifact@v4
-        if: always()
+  android-player:
+    name: Android Player/IL2CPP 构建验证
+    needs: asset-gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 构建 Android Player
+        uses: game-ci/unity-builder@v4
         with:
-          name: test-results
-          path: artifacts
+          targetPlatform: Android
+          androidExportType: androidPackage
+          allowDirtyBuild: false
+
+      - name: 上传 Android 构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-player
+          path: build/Android
+          if-no-files-found: error
+
+  ios-xcode-project:
+    name: iOS Xcode 工程生成验证
+    needs: android-player
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 生成 iOS Xcode 工程
+        uses: game-ci/unity-builder@v4
+        with:
+          targetPlatform: iOS
+          allowDirtyBuild: false
+
+      - name: 上传 iOS Xcode 工程
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-xcode-project
+          path: build/iOS
+          if-no-files-found: error

@@ -38,8 +38,8 @@ namespace Framework.Editor.BuildSize
                 string dir = GetArgValue("-buildSizeDir");
                 if (string.IsNullOrEmpty(dir))
                 {
-                    Debug.LogWarning("[BuildSizeGate] 未提供 -buildSizeDir，跳过（无产物可查）。");
-                    Finish(0);
+                    Debug.LogError("[BuildSizeGate] 缺少必需参数 -buildSizeDir，无法执行包体门禁。");
+                    Finish(1);
                     return;
                 }
 
@@ -49,14 +49,28 @@ namespace Framework.Editor.BuildSize
                 bool updateBaseline = HasArg("-buildSizeUpdateBaseline");
 
                 var current = BuildSizeSnapshotIO.FromDirectory(dir, label);
-                if (current.totalBytes == 0)
+                if (current.totalBytes == 0 || current.entries == null || current.entries.Count == 0)
                 {
-                    Debug.LogWarning($"[BuildSizeGate] 产物目录为空或不存在：{dir}，跳过。");
-                    Finish(0);
+                    Debug.LogError($"[BuildSizeGate] 产物目录不存在或为空：{dir}。");
+                    Finish(1);
                     return;
                 }
 
                 var baseline = BuildSizeSnapshotIO.LoadBaseline(baselinePath);
+                if (baseline == null && !updateBaseline)
+                {
+                    Debug.LogError($"[BuildSizeGate] 缺少包体基线：{baselinePath}。只有显式传入 -buildSizeUpdateBaseline 才允许创建基线。");
+                    Finish(1);
+                    return;
+                }
+                if (updateBaseline)
+                {
+                    BuildSizeSnapshotIO.SaveBaseline(baselinePath, current);
+                    Debug.Log($"[BuildSizeGate] 已显式更新基线：{baselinePath}");
+                    Finish(0);
+                    return;
+                }
+
                 var policy = new BuildSizePolicy { warnOnly = warnOnly };
                 var verdict = BuildSizeGate.Evaluate(baseline, current, policy);
 
@@ -64,13 +78,6 @@ namespace Framework.Editor.BuildSize
                 Debug.Log($"[BuildSizeGate] {verdict.Summary}");
                 foreach (var v in verdict.Violations)
                     Debug.LogWarning($"[BuildSizeGate]   · {v.reason}");
-
-                // 首次无基线，或显式要求，落盘为新基线
-                if (baseline == null || updateBaseline)
-                {
-                    BuildSizeSnapshotIO.SaveBaseline(baselinePath, current);
-                    Debug.Log($"[BuildSizeGate] 已写入基线：{baselinePath}");
-                }
 
                 Finish(verdict.IsBlocking ? 1 : 0);
             }
