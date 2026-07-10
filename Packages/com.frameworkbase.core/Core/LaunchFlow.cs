@@ -135,7 +135,11 @@ namespace Framework.Core
                     serverVersion = await GameEntry.HotUpdate.CheckUpdateAsync(updateUrl);
 
                     if (serverVersion == null)
-                        Debug.LogWarning("[LaunchFlow] Step 3  获取服务器版本失败，使用本地版本继续");
+                    {
+                        if (!AllowLaunchWhenUpdateCheckFails())
+                            throw new InvalidOperationException("更新清单获取、验签或安全准入失败，当前环境禁止使用本地版本继续启动。");
+                        Debug.LogWarning("[LaunchFlow] Step 3  获取服务器版本失败，配置允许降级为本地版本启动。");
+                    }
                     else
                         Debug.Log($"[LaunchFlow] Step 3  Server: App={serverVersion.AppVersion} " +
                                   $"Resource={serverVersion.ResourceVersion} Type={serverVersion.Type}");
@@ -156,6 +160,17 @@ namespace Framework.Core
                     : $"server_app={serverVersion.AppVersion},server_res={serverVersion.ResourceVersion},type={serverVersion.Type},gray={serverVersion.GrayPercent}");
 
                 // ── Step 4: 资源热更 ──────────────────────────────
+                // 整包更新是不可绕过的启动硬闸门。在目标 AppVersion 尚未安装前，禁止修改 Catalog、配置、代码槽或持久化内容状态。
+                var fullUpdateGate = LaunchTelemetryHelper.BeginPhaseMetric(
+                    runMetric, LaunchPhase.FullUpdateGate, "step04_full_update_gate");
+                if (LaunchFlowUpdateExecutor.ExecuteFullUpdateGate(loading, serverVersion))
+                {
+                    LaunchTelemetryHelper.EndPhaseMetric(fullUpdateGate, true, "full_update_required=true");
+                    LaunchTelemetryHelper.FinalizeRunMetric(runMetric, true, TelemetryErrorCodes.Launch.FullUpdateGateBlocked);
+                    return LaunchFlowOutcome.BlockedOnForceUpdate;
+                }
+                LaunchTelemetryHelper.EndPhaseMetric(fullUpdateGate, true, "full_update_required=false");
+
                 var step4 = LaunchTelemetryHelper.BeginPhaseMetric(runMetric, LaunchPhase.ResourceUpdate, "step04_resource_update");
                 bool resourceUpdated = LaunchFlowUpdateExecutor.ShouldUpdateResources(serverVersion, localVersion);
                 var resourceUpdateResult = await LaunchFlowUpdateExecutor.ExecuteResourceUpdateAsync(loading, resourceUpdated);
@@ -167,9 +182,6 @@ namespace Framework.Core
                 }
 
                 // 资源热更成功后写回 ResourceVersion，避免下次启动重复检查/下载。
-                if (resourceUpdateResult.ResourceUpdated && serverVersion != null)
-                    HotUpdate.VersionManager.CommitResourceUpdate(serverVersion);
-
                 LaunchTelemetryHelper.EndPhaseMetric(step4, true,
                     resourceUpdateResult.ResourceUpdated ? "resource_updated=true" : "resource_updated=false");
 
@@ -186,17 +198,6 @@ namespace Framework.Core
                 LaunchTelemetryHelper.EndPhaseMetric(step5, true, codeUpdated ? "code_updated=true" : "code_updated=false");
 
                 // ── Step 6: 整包更新检测 ──────────────────────────
-                var step6 = LaunchTelemetryHelper.BeginPhaseMetric(runMetric, LaunchPhase.FullUpdateGate, "step06_full_update_gate");
-                if (LaunchFlowUpdateExecutor.ExecuteFullUpdateGate(loading, serverVersion))
-                {
-                    LaunchTelemetryHelper.EndPhaseMetric(step6, true, "full_update_required=true");
-                    LaunchTelemetryHelper.FinalizeRunMetric(runMetric, true, TelemetryErrorCodes.Launch.FullUpdateGateBlocked);
-                    // 强更闸门：不销毁 Loading，也不进入登录。
-                    return LaunchFlowOutcome.BlockedOnForceUpdate;
-                }
-                LaunchTelemetryHelper.EndPhaseMetric(step6, true, "full_update_required=false");
-
-                // ── Step 6b: 准备配置数据库 ───────────────────────
                 var step6b = LaunchTelemetryHelper.BeginPhaseMetric(runMetric, LaunchPhase.ConfigPrepare, "step06b_config_prepare");
                 bool configReady = await LaunchFlowUpdateExecutor.ExecuteConfigPrepareAsync(loading);
                 LaunchTelemetryHelper.EndPhaseMetric(step6b, true, $"config_ready={configReady}");
@@ -217,6 +218,10 @@ namespace Framework.Core
                     loading.SetStatus("正在进入游戏...");
                     loading.SetProgress(0.95f);
                     Debug.Log("[LaunchFlow] 热更已关闭（AppConfig.EnableHotUpdate=false），跳过 AOT 元数据 / 热更程序集 / StartHotfix");
+                    HotUpdate.VersionManager.CommitHotUpdate(
+                        serverVersion,
+                        resourceUpdateResult.ResourceUpdated,
+                        codeUpdated: false);
                     await loading.HideAsync();
                     Debug.Log("[LaunchFlow] ========== 启动流程完成（纯框架模式）==========");
                     LaunchTelemetryHelper.FinalizeRunMetric(runMetric, true, TelemetryErrorCodes.Launch.Ok);
@@ -231,6 +236,7 @@ namespace Framework.Core
                 if (!metadataOk)
                 {
                     LaunchTelemetryHelper.EndPhaseMetric(step7, false, "metadata_load_failed");
+                    GameEntry.HotUpdate.MarkPendingUpdateFailed("metadata_load_failed");
                     LaunchTelemetryHelper.FinalizeRunMetric(runMetric, false, TelemetryErrorCodes.Launch.MetadataLoadFailed);
                     return LaunchFlowOutcome.Failed;
                 }
@@ -245,6 +251,7 @@ namespace Framework.Core
                 if (!assemblyOk)
                 {
                     LaunchTelemetryHelper.EndPhaseMetric(step8, false, "assembly_load_failed");
+                    GameEntry.HotUpdate.MarkPendingUpdateFailed("assembly_load_failed");
                     LaunchTelemetryHelper.FinalizeRunMetric(runMetric, false, TelemetryErrorCodes.Launch.HotUpdateAssemblyLoadFailed);
                     return LaunchFlowOutcome.Failed;
                 }
@@ -255,7 +262,17 @@ namespace Framework.Core
                 var step9 = LaunchTelemetryHelper.BeginPhaseMetric(runMetric, LaunchPhase.HotfixStart, "step09_hotfix_start");
                 loading.SetStatus("正在进入游戏...");
                 loading.SetProgress(0.95f);
-                GameEntry.HotUpdate.StartHotfix();
+                if (!GameEntry.HotUpdate.StartHotfix())
+                {
+                    GameEntry.HotUpdate.MarkPendingUpdateFailed("hotfix_start_returned_false");
+                    LaunchTelemetryHelper.EndPhaseMetric(step9, false, "hotfix_start_failed");
+                    return LaunchFlowOutcome.Failed;
+                }
+                GameEntry.HotUpdate.ConfirmPendingUpdate();
+                HotUpdate.VersionManager.CommitHotUpdate(
+                    serverVersion,
+                    resourceUpdateResult.ResourceUpdated,
+                    codeUpdated);
                 Debug.Log("[LaunchFlow] Step 9  游戏逻辑启动完成");
                 LaunchTelemetryHelper.EndPhaseMetric(step9, true);
 
@@ -266,6 +283,7 @@ namespace Framework.Core
             }
             catch (Exception ex)
             {
+                GameEntry.HotUpdate?.MarkPendingUpdateFailed(ex.Message);
                 Debug.LogError($"[LaunchFlow] 启动流程异常: {ex.Message}\n{ex.StackTrace}");
                 LaunchTelemetryHelper.FinalizeRunMetric(runMetric, false, TelemetryErrorCodes.Launch.UnhandledException);
                 return LaunchFlowOutcome.Failed;
@@ -302,8 +320,7 @@ namespace Framework.Core
             string appEnv = config != null ? config.AppEnv : string.Empty;
             if (!HotUpdate.UpdateSecurity.ValidateUpdateServerUrl(url, appEnv, out string reason))
             {
-                Debug.LogError($"[LaunchFlow] 更新服务器 URL 未通过安全准入，本次跳过热更: {reason}");
-                return string.Empty;
+                throw new InvalidOperationException($"更新服务器 URL 未通过安全准入：{reason}");
             }
 
             return url;
@@ -314,6 +331,15 @@ namespace Framework.Core
         /// 读 AppConfig.EnableHotUpdate；无配置时默认启用（保持既有项目行为不变）。
         /// 无热更业务程序集的项目须置 false，否则 Step 8 加载热更 DLL 失败会卡在重试循环。
         /// </summary>
+        /// <summary>
+        /// 更新检查失败时是否允许降级启动。默认失败关闭；只有明确配置的离线/开发场景才允许继续。
+        /// </summary>
+        private static bool AllowLaunchWhenUpdateCheckFails()
+        {
+            AppConfigAsset config = AppConfig.Load();
+            return config != null && config.AllowLaunchWhenUpdateCheckFails;
+        }
+
         private static bool IsHotUpdateEnabled()
         {
             var config = AppConfig.Load();

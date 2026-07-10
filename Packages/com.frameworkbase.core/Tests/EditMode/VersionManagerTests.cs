@@ -28,6 +28,16 @@ namespace Framework.Tests
             Assert.Greater(VersionManager.CompareVersion("1.0.10", "1.0.9"), 0, "按数值而非字典序比较");
         }
 
+        [Test]
+        public void 安全版本比较_非法格式返回失败()
+        {
+            Assert.IsFalse(VersionManager.TryCompareVersion("1.bad.0", "1.0.0", out _));
+            Assert.IsFalse(VersionManager.TryCompareVersion("1..0", "1.0.0", out _));
+            Assert.IsFalse(VersionManager.TryCompareVersion(" 1.0.0", "1.0.0", out _));
+            Assert.IsTrue(VersionManager.TryCompareVersion("1.0", "1.0.0", out int result));
+            Assert.AreEqual(0, result);
+        }
+
         // ── 更新类型判定 ─────────────────────────────────────────────────────
 
         [Test]

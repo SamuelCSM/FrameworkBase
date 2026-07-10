@@ -1,89 +1,133 @@
+using System;
 using UnityEngine;
 
 namespace Framework.Core
 {
     /// <summary>
-    /// 应用全局配置（ScriptableObject）。
-    /// 在 Project 中创建：右键 → Create → Framework → App Config，
-    /// 或菜单 Framework → App Config → Create AppConfig Asset。
-    /// 须放在 Resources 下且命名为 AppConfig，以便运行时 Load。
+    /// 热更新清单验签公钥条目。
+    /// <para>
+    /// 公钥可以安全地随客户端发布，用于验证发布系统持有的私钥所生成的签名。
+    /// <see cref="KeyId"/> 必须与清单中的 KeyId 精确匹配，从而支持新旧公钥并存、分阶段轮换和审计定位。
+    /// </para>
+    /// </summary>
+    [Serializable]
+    public sealed class UpdateManifestPublicKeyEntry
+    {
+        /// <summary>
+        /// 公钥稳定标识，例如 prod_manifest_2026_q3；不得复用同一标识承载不同密钥材料。
+        /// </summary>
+        public string KeyId = string.Empty;
+
+        /// <summary>
+        /// .NET RSA XML 格式公钥，只允许包含公开参数，严禁把私钥内容序列化到 Unity 资源。
+        /// </summary>
+        [TextArea(3, 8)]
+        public string PublicKeyXml = string.Empty;
+    }
+
+    /// <summary>
+    /// 框架运行时应用配置。
+    /// <para>
+    /// 默认从 <c>Resources/AppConfig.asset</c> 加载，在各 Manager 初始化和 LaunchFlow 启动阶段提供
+    /// 环境、热更新、网络、观测及远程配置等底层参数。它定义的是基础设施接入点，不应承载具体游戏业务配置。
+    /// </para>
+    /// <para>
+    /// 该资产会进入客户端包体，因此只能保存公开配置和公钥，不能保存签名私钥、上传密钥、服务端 Token 等 Secret。
+    /// 敏感值必须由 CI 密钥系统、平台安全存储或服务端短期凭证注入。
+    /// </para>
     /// </summary>
     [CreateAssetMenu(fileName = "AppConfig", menuName = "Framework/App Config")]
     public class AppConfigAsset : ScriptableObject
     {
-        [Header("环境")]
-        [Tooltip("dev / staging / prod")]
+        [Header("运行环境")]
+        [Tooltip("dev / qa / staging / prod。prod 环境会启用更严格的热更新与传输安全门禁。")]
         public string AppEnv = "dev";
 
-        [Header("热更 HTTP")]
-        [Tooltip("version.json 与热更程序集组根 URL；留空跳过热更检查。AppEnv=prod 时必须为 HTTPS，否则运行时拒绝热更")]
+        [Tooltip("发行渠道稳定标识，用于隔离渠道包、审核包和灰度清单；必须与发布清单 Channel 一致。")]
+        public string AppChannel = "default";
+
+        [Header("热更新")]
+        [Tooltip("version.json 所在更新服务根 URL。prod 环境必须使用 HTTPS，且应指向受控 CDN 或发布域名。")]
         public string UpdateServerUrl = "http://127.0.0.1:80/Updates";
 
-        [Tooltip("热更清单（version.json）验签公钥，.NET RSA XML 格式（<RSAKeyValue>…）。" +
-                 "非空时强制校验 version.json.sig 签名，验签失败拒绝本次热更；留空跳过验签（仅限开发期）。" +
-                 "密钥对经菜单 Framework → Hot Update Security → Generate Signing Key Pair 生成，私钥保存在工程外供发布工具使用")]
+        [Tooltip("旧版单公钥兼容字段。新项目应使用带 KeyId 的公钥环；保留该字段仅用于平滑迁移。")]
         [TextArea(3, 8)]
         public string UpdateManifestPublicKey = string.Empty;
 
-        [Header("游戏服 TCP（当前 GS 一体登录）")]
-        [Tooltip("勾选后 Login 走 NetworkAuthBackend；未勾选则使用 MockAuthBackend")]
+        [Tooltip("热更新 RSA 验签公钥环。通过 KeyId 选择密钥，prod 构建至少配置一个有效公钥。")]
+        public UpdateManifestPublicKeyEntry[] UpdateManifestPublicKeys = Array.Empty<UpdateManifestPublicKeyEntry>();
+
+        [Tooltip("是否启用 AOT 元数据补充、HybridCLR 程序集加载与 HotfixEntry 启动流程。")]
+        public bool EnableHotUpdate = true;
+
+        [Tooltip("更新清单下载、验签或准入失败时是否仍允许使用本地版本启动。强联网生产环境必须关闭。")]
+        public bool AllowLaunchWhenUpdateCheckFails;
+
+        [Tooltip("热更新程序集完整文件名白名单。安装槽只允许出现这里声明的程序集，禁止清单写入任意文件。")]
+        public string[] HotUpdateAssemblyFiles = Array.Empty<string>();
+
+        [Header("登录与连接")]
+        [Tooltip("是否使用真实网络登录链路；关闭时仅允许开发或自动化测试环境使用 Mock 实现。")]
         public bool UseNetworkLogin = true;
 
-        [Tooltip("勾选后启动完成自动以访客身份登录，跳过登录界面；内网测试包用，正式包关闭")]
-        public bool AutoGuestLogin = false;
+        [Tooltip("是否在无持久账号凭据时自动执行游客登录；账号语义和游客合并策略由上层模板实现。")]
+        public bool AutoGuestLogin;
 
+        /// <summary>
+        /// 游戏长连接服务器域名或地址。生产环境建议使用域名，以便 DNS 同时下发 IPv6 和 IPv4 地址并支持迁移。
+        /// </summary>
         public string GameServerHost = "127.0.0.1";
+
+        /// <summary>
+        /// 游戏长连接 TCP 端口。
+        /// </summary>
         public int GameServerPort = 9000;
 
-        [Header("网络")]
-        [Tooltip("登录/HTTP 超时（秒）")]
+        [Tooltip("DNS、TCP 连接及 TLS 握手的统一超时上限（秒）；必须为正数。")]
         public int NetworkTimeoutSeconds = 30;
 
-        [Header("传输加密 TLS（自签名证书 + 指纹固定）")]
-        [Tooltip("对 GS 的 TCP 连接启用 TLS；服务端须以 GS_TLS_CERT 指向同一证书启动。本机开发默认关闭，生产必须开启")]
-        public bool UseTls = false;
+        [Header("网络 TLS")]
+        [Tooltip("是否为游戏长连接启用 TLS。正式强联网项目应启用，并结合证书 Pin 与轮换策略。")]
+        public bool UseTls;
 
-        [Tooltip("TLS 握手目标名（SNI），须与服务端证书 CN 一致；gen_gs_tls_cert.ps1 默认生成 clientbase-gs")]
+        [Tooltip("TLS SNI 与证书主机名校验所使用的服务端名称，不应直接填写临时 IP。")]
         public string TlsServerName = "clientbase-gs";
 
-        [Tooltip("服务端证书 SHA-256 指纹（gen_gs_tls_cert.ps1 生成证书时打印，服务端启动日志也会输出）；" +
-                 "自签名证书靠此指纹放行，留空则只接受 CA 链校验通过的证书")]
+        [Tooltip("旧版单证书 SHA-256 Pin 兼容字段；新项目应使用下方 Pin 集合完成新旧证书并行轮换。")]
         public string TlsCertSha256 = string.Empty;
 
-        [Header("崩溃回捞")]
-        [Tooltip("崩溃/未捕获异常记录的上报端点（HTTP POST，body 为 JSON Lines）；留空仅本地缓存 persistentDataPath/crash_reports.jsonl")]
+        [Tooltip("服务端证书 SHA-256 Pin 集合。证书轮换时先同时配置新旧 Pin，服务端切换完成后再移除旧 Pin。")]
+        public string[] TlsCertSha256Pins = Array.Empty<string>();
+
+        [Tooltip("仅允许开发环境对自签名证书启用；开启后 Pin 匹配可绕过系统证书链和主机名错误，生产构建会强制失败。")]
+        public bool AllowPinnedCertificateWithoutSystemTrust;
+
+        [Header("可观测性")]
+        [Tooltip("崩溃报告上传地址。正式项目通常由平台 Crash SDK 或统一观测扩展包接管。")]
         public string CrashReportUrl = string.Empty;
 
-        [Header("埋点")]
-        [Tooltip("埋点采集端点（HTTP POST，body 为事件 JSON 数组）；留空走日志后端（事件不出设备，开发期看 Console）。" +
-                 "对接三方平台时忽略此项，经 AnalyticsManager.SetBackend 注入扩展包实现")]
+        [Tooltip("通用 HTTP 埋点上传地址；也可由 Analytics Backend 扩展包替换为厂商 SDK。")]
         public string AnalyticsUrl = string.Empty;
 
-        [Header("隐私合规")]
-        [Tooltip("开启后 AnalyticsManager 初始化时会按 PrivacyPolicyVersion 检查 PrivacyConsent；未同意前不采集、不补报。")]
-        public bool RequirePrivacyConsentForAnalytics = false;
+        [Tooltip("是否必须取得隐私授权后才允许启动埋点和设备标识采集。")]
+        public bool RequirePrivacyConsentForAnalytics;
 
-        [Tooltip("当前隐私协议版本号。协议改版时 +1；RequirePrivacyConsentForAnalytics 开启后用于判定采集闸门。")]
+        [Tooltip("当前客户端认可的隐私政策版本；版本升级后上层应重新触发授权流程。")]
         public int PrivacyPolicyVersion = 1;
 
         [Header("远程配置")]
-        [Tooltip("远程配置端点（HTTP GET 返回扁平 JSON 对象，可为 CDN 静态文件；请求附带 device_id/app_version/channel/env 查询参数供服务端定向）。" +
-                 "留空不拉取，仅用磁盘缓存与代码默认值。对接三方平台经 RemoteConfigManager.SetBackend 注入")]
+        [Tooltip("远程配置服务地址。运行时应使用本地 Last-Known-Good 快照应对网络或服务端异常。")]
         public string RemoteConfigUrl = string.Empty;
 
-        [Header("热更总开关")]
-        [Tooltip("关闭后启动流程跳过 AOT 元数据 / HybridCLR 程序集加载 / StartHotfix（LaunchFlow Step 7-9），直接进入登录。" +
-                 "无热更业务程序集的项目（纯框架壳 / 单机项目）须关闭，否则 Step 8 找不到热更 DLL 会启动失败并重试卡死。")]
-        public bool EnableHotUpdate = true;
-
-        [Header("热更程序集（新项目在此改表，Framework 不写死项目专属程序集名）")]
-        [Tooltip("可热更程序集 bytes 文件名，按「依赖在前、被依赖方在后」的加载顺序排列；" +
-                 "留空使用 VersionManager 内置默认（GameProtocol → HotUpdate）")]
-        public string[] HotUpdateAssemblyFiles = System.Array.Empty<string>();
-
-        /// <summary>供将来 LS 扩展：若不为空则优先于 GameServerHost（当前未使用）。</summary>
-        [Header("扩展预留（暂不使用）")]
+        [Header("登录服务")]
+        /// <summary>
+        /// 登录服务地址；留空时由项目模板决定是否复用游戏服务器地址或通过服务发现获得。
+        /// </summary>
         public string LoginServerHost = string.Empty;
+
+        /// <summary>
+        /// 登录服务端口；为 0 时表示尚未配置独立登录服务。
+        /// </summary>
         public int LoginServerPort;
     }
 }

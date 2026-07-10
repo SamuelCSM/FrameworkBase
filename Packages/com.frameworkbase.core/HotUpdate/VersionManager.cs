@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using Framework.Serialization;
 using Framework.Storage;
 using UnityEngine;
@@ -70,52 +71,89 @@ namespace Framework.HotUpdate
             return name;
         }
 
+        /// <summary>仅当文件名属于配置中声明的不可变热更新程序集载荷白名单时返回 true。</summary>
+        public static bool IsAllowedHotUpdateAssemblyFile(string fileName)
+        {
+            if (!UpdateSecurity.IsSafeLeafFileName(fileName))
+                return false;
+
+            foreach (string configured in HotUpdateAssemblyFileNames)
+            {
+                if (string.Equals(configured, fileName, StringComparison.Ordinal))
+                    return true;
+            }
+            return false;
+        }
+
         /// <summary>
-        /// 比较两个版本号
+        /// 尝试比较两个仅由非负整数和点分隔符组成的版本号。
+        /// <para>
+        /// 该方法不接受空段、负数、前后空白、预发布标签或整数溢出。安全准入必须调用本方法并在解析失败时拒绝清单，
+        /// 不能把格式错误当作“版本相同”，否则攻击者可能利用异常回退绕过整包边界或防降级判断。
+        /// </para>
         /// </summary>
-        /// <param name="version1">版本1（如"1.0.0"）</param>
-        /// <param name="version2">版本2（如"1.0.1"）</param>
-        /// <returns>
-        /// 返回值 > 0: version1 > version2
-        /// 返回值 = 0: version1 = version2
-        /// 返回值 < 0: version1 < version2
-        /// </returns>
+        /// <param name="version1">左侧版本号，例如 1.0.0。</param>
+        /// <param name="version2">右侧版本号，例如 1.0.1。</param>
+        /// <param name="comparison">解析成功时返回比较结果：大于 0、等于 0 或小于 0。</param>
+        /// <returns>两个版本号均满足格式约束时返回 true。</returns>
+        public static bool TryCompareVersion(string version1, string version2, out int comparison)
+        {
+            comparison = 0;
+            if (!TryParseVersionParts(version1, out int[] left) ||
+                !TryParseVersionParts(version2, out int[] right))
+            {
+                return false;
+            }
+
+            int maxLength = Math.Max(left.Length, right.Length);
+            for (int i = 0; i < maxLength; i++)
+            {
+                int leftPart = i < left.Length ? left[i] : 0;
+                int rightPart = i < right.Length ? right[i] : 0;
+                if (leftPart == rightPart) continue;
+                comparison = leftPart.CompareTo(rightPart);
+                return true;
+            }
+            return true;
+        }
+
+        /// <summary>
+        /// 比较两个数字点分版本号。该兼容入口在格式错误时记录错误并返回 0；
+        /// 安全、发布和构建门禁代码必须改用 <see cref="TryCompareVersion"/> 以实现失败关闭。
+        /// </summary>
         public static int CompareVersion(string version1, string version2)
         {
-            if (string.IsNullOrEmpty(version1) && string.IsNullOrEmpty(version2))
-                return 0;
-            
-            if (string.IsNullOrEmpty(version1))
-                return -1;
-            
-            if (string.IsNullOrEmpty(version2))
-                return 1;
-            
-            try
+            if (TryCompareVersion(version1, version2, out int comparison))
+                return comparison;
+
+            GameLog.Error($"[VersionManager] 版本格式无效，无法可靠比较：{version1} vs {version2}");
+            return 0;
+        }
+
+        /// <summary>
+        /// 将数字点分版本解析为整数段；最多允许 8 段，避免异常输入造成不必要分配和比较开销。
+        /// </summary>
+        private static bool TryParseVersionParts(string version, out int[] parts)
+        {
+            parts = null;
+            if (string.IsNullOrEmpty(version) || !string.Equals(version, version.Trim(), StringComparison.Ordinal))
+                return false;
+
+            string[] tokens = version.Split('.');
+            if (tokens.Length == 0 || tokens.Length > 8)
+                return false;
+
+            parts = new int[tokens.Length];
+            for (int i = 0; i < tokens.Length; i++)
             {
-                string[] parts1 = version1.Split('.');
-                string[] parts2 = version2.Split('.');
-                
-                int maxLength = Math.Max(parts1.Length, parts2.Length);
-                
-                for (int i = 0; i < maxLength; i++)
+                if (tokens[i].Length == 0 || !int.TryParse(tokens[i], out int value) || value < 0)
                 {
-                    int num1 = i < parts1.Length ? int.Parse(parts1[i]) : 0;
-                    int num2 = i < parts2.Length ? int.Parse(parts2[i]) : 0;
-                    
-                    if (num1 != num2)
-                    {
-                        return num1.CompareTo(num2);
-                    }
+                    parts = null;
+                    return false;
                 }
-                
-                return 0;
+                parts[i] = value;
             }
-            catch (Exception ex)
-            {
-                GameLog.Error($"[VersionManager] 版本比较失败: {version1} vs {version2}, 错误: {ex.Message}");
-                return 0;
-            }
+            return true;
         }
         
         /// <summary>
@@ -186,24 +224,22 @@ namespace Framework.HotUpdate
             if (DetermineUpdateType(localVersion, serverVersion) == UpdateType.FullUpdate)
                 return false;
 
-            return serverVersion.CodeVersion != localVersion.CodeVersion;
+            return serverVersion.CodeVersion > localVersion.CodeVersion;
         }
 
         /// <summary>
-        /// 解析代码热更补丁列表：只接受服务端清单 PatchFiles（可包含多个 DLL），且逐项必须携带
-        /// FileName / Url / 非空 MD5（<see cref="UpdateSecurity.ValidateCodePatchFile"/>）。
+        /// 解析代码热更补丁列表：只接受已验签清单中的完整程序集快照，且逐项必须携带
+        /// FileName / Url / Size / SHA-256（<see cref="UpdateSecurity.ValidateCompleteCodePatchSet"/>）。
         /// <para>
-        /// 安全约束：代码补丁（DLL）是远程代码执行通道，其完整性锚点是（已验签的）清单里的 MD5。
-        /// 因此 CodeVersion 已变更但清单为空 / 补丁缺 MD5 时<b>拒绝更新</b>，不再按约定 URL 补全
-        /// 无校验补丁——发布工具（HotUpdatePublisher）生成的 version.json 天然带全量哈希，
+        /// 安全约束：代码补丁（DLL）是远程代码执行通道，其完整性锚点是已验签清单中的 Size + SHA-256。
+        /// 因此 CodeVersion 已变更但清单为空、文件集不完整或补丁缺 SHA-256 时<b>拒绝更新</b>，不再按约定 URL 补全
+        /// 无校验补丁；发布工具生成的 version.json 必须包含完整程序集快照，
         /// 手写清单必须补齐 PatchFiles 才能下发代码热更。
         /// </para>
         /// <para>
-        /// 下载地址收口：补丁的实际下载 URL 由客户端信任的 <paramref name="updateServerUrl"/> 与补丁
-        /// FileName 派生（与 version.json / version.json.sig <b>同源</b>，已过 prod-HTTPS 门禁），
-        /// <b>忽略清单内自带 host</b>——被投毒的清单无法把 DLL 重定向到明文链路或第三方服务器；
-        /// 同时一份签名清单在 dev/qa/prod 任意环境通用，换 CDN 无需重签。<paramref name="updateServerUrl"/>
-        /// 为空（本地无热更服务器）时回退清单自带 Url，供本机联调。
+        /// 下载地址收口：使用已签名清单中的不可变 URL，但必须与 <paramref name="updateServerUrl"/> 同源且位于其路径根下。
+        /// 这样既能为每个代码版本保留不可变对象，避免旧清单在发布窗口读到新文件，又能阻止清单把 DLL 重定向到第三方域名。
+        /// 切换 CDN 或环境会改变签名清单中的 URL，因此必须按环境重新生成并签名清单。
         /// </para>
         /// </summary>
         public static bool TryResolveCodePatchFiles(
@@ -216,26 +252,26 @@ namespace Framework.HotUpdate
             if (serverVersion?.PatchFiles == null || serverVersion.PatchFiles.Count == 0)
             {
                 GameLog.Error("[VersionManager] CodeVersion 已变更但服务端清单未提供 PatchFiles，" +
-                              "拒绝代码热更（禁止按约定 URL 下发无校验 DLL，请用发布工具生成带 MD5 的 version.json）");
+                              "拒绝代码热更（禁止按约定 URL 下发无校验 DLL，请使用发布工具生成完整 SHA-256 清单）。");
+                return false;
+            }
+
+            string appEnv = Core.AppConfig.Load()?.AppEnv;
+            if (!UpdateSecurity.ValidateCompleteCodePatchSet(serverVersion.PatchFiles, appEnv, out string reason))
+            {
+                GameLog.Error($"[VersionManager] 代码补丁快照未通过安全准入，拒绝代码热更：{reason}");
                 return false;
             }
 
             var resolved = new List<PatchFile>(serverVersion.PatchFiles.Count);
             foreach (PatchFile patch in serverVersion.PatchFiles)
             {
-                if (!UpdateSecurity.ValidateCodePatchFile(patch, out string reason))
-                {
-                    GameLog.Error($"[VersionManager] 补丁清单未通过安全准入，拒绝代码热更: {reason}");
-                    return false;
-                }
-
                 resolved.Add(new PatchFile
                 {
                     FileName = patch.FileName,
-                    Url = string.IsNullOrEmpty(updateServerUrl)
-                        ? patch.Url
-                        : CombinePatchUrl(updateServerUrl, patch.FileName),
+                    Url = ResolveTrustedPatchUrl(updateServerUrl, patch.Url),
                     Size = patch.Size,
+                    SHA256 = patch.SHA256,
                     MD5 = patch.MD5
                 });
             }
@@ -245,12 +281,35 @@ namespace Framework.HotUpdate
         }
 
         /// <summary>
-        /// 拼接补丁下载 URL：更新服务器根地址 + 补丁文件名（规整重复的斜杠）。
-        /// 与 <c>{updateServerUrl}/version.json</c> 的取法保持同源同规则。
+        /// 解析已签名清单中的不可变补丁 URL，并强制其与 version.json 更新根同源且位于同一路径根下。
+        /// <para>
+        /// 不能再按 FileName 拼接稳定地址，否则发布新 DLL 时会覆盖旧清单仍在引用的对象，造成部署窗口内哈希不一致。
+        /// </para>
         /// </summary>
-        private static string CombinePatchUrl(string updateServerUrl, string fileName)
+        private static string ResolveTrustedPatchUrl(string updateServerUrl, string manifestUrl)
         {
-            return $"{updateServerUrl.TrimEnd('/')}/{fileName}";
+            if (!Uri.TryCreate(manifestUrl, UriKind.Absolute, out Uri patchUri))
+            {
+                if (string.IsNullOrWhiteSpace(updateServerUrl) ||
+                    !Uri.TryCreate(updateServerUrl.TrimEnd('/') + "/" + manifestUrl.TrimStart('/'), UriKind.Absolute, out patchUri))
+                {
+                    throw new InvalidDataException($"补丁 URL 无法解析：{manifestUrl}");
+                }
+            }
+
+            if (string.IsNullOrWhiteSpace(updateServerUrl))
+                return patchUri.AbsoluteUri;
+            if (!Uri.TryCreate(updateServerUrl, UriKind.Absolute, out Uri baseUri))
+                throw new InvalidDataException($"更新服务根 URL 无法解析：{updateServerUrl}");
+
+            bool sameOrigin = string.Equals(baseUri.Scheme, patchUri.Scheme, StringComparison.OrdinalIgnoreCase) &&
+                              string.Equals(baseUri.Host, patchUri.Host, StringComparison.OrdinalIgnoreCase) &&
+                              baseUri.Port == patchUri.Port;
+            string basePath = baseUri.AbsolutePath.TrimEnd('/') + "/";
+            bool underBasePath = patchUri.AbsolutePath.StartsWith(basePath, StringComparison.Ordinal);
+            if (!sameOrigin || !underBasePath)
+                throw new InvalidDataException($"补丁 URL 不属于受信任更新根：{patchUri}");
+            return patchUri.AbsoluteUri;
         }
         
         /// <summary>
@@ -288,67 +347,66 @@ namespace Framework.HotUpdate
         /// <returns>本地版本信息</returns>
         public static UpdateInfo GetLocalVersion()
         {
-            // 优先读取 persistentDataPath（热更后保存的最新版本）
+            UpdateInfo packaged = ReadPackagedVersion() ?? new UpdateInfo
+            {
+                AppVersion = Application.version,
+                ResourceVersion = 1,
+                CodeVersion = 1,
+                MinCompatibleVersion = Application.version,
+                PatchFiles = new List<PatchFile>(),
+                Type = UpdateType.None,
+            };
+
+            packaged.AppVersion = Application.version;
+            packaged.PatchFiles ??= new List<PatchFile>();
+            packaged.PatchFiles.Clear();
+            packaged.Type = UpdateType.None;
+
             string persistentPath = System.IO.Path.Combine(Application.persistentDataPath, "version.json");
             if (FileStorages.Shared.FileExists(persistentPath))
             {
                 try
                 {
-                    string json = FileStorages.Shared.ReadText(persistentPath);
-                    UpdateInfo versionInfo = JsonSerializers.Shared.FromJson<UpdateInfo>(json);
-                    if (versionInfo != null && !string.IsNullOrEmpty(versionInfo.AppVersion))
+                    UpdateInfo persisted = JsonSerializers.Shared.FromJson<UpdateInfo>(
+                        FileStorages.Shared.ReadText(persistentPath));
+                    if (persisted != null &&
+                        string.Equals(persisted.AppVersion, Application.version, StringComparison.Ordinal))
                     {
-                        // 避免旧安装残留的 persistent/version.json 污染新整包版本判断。
-                        // 若 AppVersion 与当前安装包不一致，忽略该缓存并回退读取 StreamingAssets 出厂版本。
-                        if (!string.Equals(versionInfo.AppVersion, Application.version, StringComparison.Ordinal))
-                        {
-                            GameLog.Warning($"[VersionManager] 忽略旧本地版本（persistent）：{versionInfo.AppVersion}，当前安装包版本：{Application.version}");
-                        }
-                        else
-                        {
-                            GameLog.Log($"[VersionManager] 读取本地版本（persistent）: " +
-                                       $"App={versionInfo.AppVersion} Resource={versionInfo.ResourceVersion} Code={versionInfo.CodeVersion}");
-                            return versionInfo;
-                        }
+                        // 资源状态可以独立于整包 Catalog 持续演进；代码状态绝不能来自该可变文件，已验证的 ActiveSlot 才是代码版本唯一事实源。
+                        if (persisted.ResourceVersion >= packaged.ResourceVersion)
+                            packaged.ResourceVersion = persisted.ResourceVersion;
+                        if (!string.IsNullOrEmpty(persisted.MinCompatibleVersion))
+                            packaged.MinCompatibleVersion = persisted.MinCompatibleVersion;
                     }
                 }
                 catch (Exception ex)
                 {
-                    GameLog.Error($"[VersionManager] 读取本地版本文件失败: {ex.Message}");
+                    GameLog.Error($"[VersionManager] Failed to read persisted version: {ex.Message}");
                 }
             }
 
-            // 其次读取 StreamingAssets（打包时同步进去的出厂版本）
+            if (HotUpdateSlotManager.TryGetActiveCodeVersion(out int activeCodeVersion))
+                packaged.CodeVersion = activeCodeVersion;
+
+            GameLog.Log($"[VersionManager] Effective local version App={packaged.AppVersion} Resource={packaged.ResourceVersion} Code={packaged.CodeVersion}");
+            return packaged;
+        }
+
+        private static UpdateInfo ReadPackagedVersion()
+        {
             string streamingPath = System.IO.Path.Combine(Application.streamingAssetsPath, "version.json");
-            if (FileStorages.Shared.FileExists(streamingPath))
-            {
-                try
-                {
-                    string json = FileStorages.Shared.ReadText(streamingPath);
-                    UpdateInfo versionInfo = JsonSerializers.Shared.FromJson<UpdateInfo>(json);
-                    GameLog.Log($"[VersionManager] 读取出厂版本（StreamingAssets）: " +
-                               $"Resource={versionInfo.ResourceVersion} Code={versionInfo.CodeVersion}");
-                    return versionInfo;
-                }
-                catch (Exception ex)
-                {
-                    GameLog.Error($"[VersionManager] 读取 StreamingAssets 版本失败: {ex.Message}");
-                }
-            }
+            if (!FileStorages.Shared.FileExists(streamingPath))
+                return null;
 
-            // 最后兜底（理论上不应走到这里）
-            GameLog.Warning("[VersionManager] 未找到任何版本文件，使用硬编码默认值 Resource=1 Code=1");
-            return new UpdateInfo
+            try
             {
-                AppVersion           = Application.version,
-                ResourceVersion      = 1,
-                CodeVersion          = 1,
-                ForceUpdate          = false,
-                MinCompatibleVersion = Application.version,
-                PatchFiles           = new System.Collections.Generic.List<PatchFile>(),
-                Description          = "初始版本",
-                Type                 = UpdateType.None
-            };
+                return JsonSerializers.Shared.FromJson<UpdateInfo>(FileStorages.Shared.ReadText(streamingPath));
+            }
+            catch (Exception ex)
+            {
+                GameLog.Error($"[VersionManager] Failed to read packaged version: {ex.Message}");
+                return null;
+            }
         }
         
         /// <summary>
@@ -357,30 +415,7 @@ namespace Framework.HotUpdate
         /// </summary>
         public static void CommitResourceUpdate(UpdateInfo serverVersion)
         {
-            if (serverVersion == null)
-            {
-                GameLog.Warning("[VersionManager] CommitResourceUpdate 跳过: serverVersion 为空");
-                return;
-            }
-
-            UpdateInfo local = GetLocalVersion();
-            local.ResourceVersion = serverVersion.ResourceVersion;
-
-            if (!string.IsNullOrEmpty(serverVersion.AppVersion))
-                local.AppVersion = serverVersion.AppVersion;
-
-            if (!string.IsNullOrEmpty(serverVersion.MinCompatibleVersion))
-                local.MinCompatibleVersion = serverVersion.MinCompatibleVersion;
-
-            // 本地持久化文件不保留补丁列表，避免过期 URL 干扰下次启动判断。
-            local.Type = UpdateType.None;
-            if (local.PatchFiles == null)
-                local.PatchFiles = new System.Collections.Generic.List<PatchFile>();
-            else
-                local.PatchFiles.Clear();
-
-            SaveLocalVersion(local);
-            GameLog.Log($"[VersionManager] 资源热更版本已落盘: Resource={local.ResourceVersion}, Code={local.CodeVersion}");
+            CommitHotUpdate(serverVersion, resourceUpdated: true, codeUpdated: false);
         }
 
         /// <summary>
@@ -388,47 +423,52 @@ namespace Framework.HotUpdate
         /// </summary>
         public static void CommitCodeUpdate(UpdateInfo serverVersion)
         {
-            if (serverVersion == null)
-            {
-                GameLog.Warning("[VersionManager] CommitCodeUpdate 跳过: serverVersion 为空");
-                return;
-            }
-
-            UpdateInfo local = GetLocalVersion();
-            local.CodeVersion = serverVersion.CodeVersion;
-
-            if (!string.IsNullOrEmpty(serverVersion.AppVersion))
-                local.AppVersion = serverVersion.AppVersion;
-
-            if (!string.IsNullOrEmpty(serverVersion.MinCompatibleVersion))
-                local.MinCompatibleVersion = serverVersion.MinCompatibleVersion;
-
-            local.Type = UpdateType.None;
-            if (local.PatchFiles == null)
-                local.PatchFiles = new List<PatchFile>();
-            else
-                local.PatchFiles.Clear();
-
-            SaveLocalVersion(local);
-            GameLog.Log($"[VersionManager] 代码热更版本已落盘: Resource={local.ResourceVersion}, Code={local.CodeVersion}");
+            CommitHotUpdate(serverVersion, resourceUpdated: false, codeUpdated: true);
         }
 
         /// <summary>
         /// 保存版本信息到本地
         /// </summary>
         /// <param name="versionInfo">版本信息</param>
+        /// <summary>仅在新运行时成功启动后提交资源与代码版本，避免把未验证安装提前标记为已生效。</summary>
+        public static void CommitHotUpdate(UpdateInfo serverVersion, bool resourceUpdated, bool codeUpdated)
+        {
+            if (serverVersion == null || (!resourceUpdated && !codeUpdated))
+                return;
+            if (!string.Equals(serverVersion.AppVersion, Application.version, StringComparison.Ordinal))
+            {
+                GameLog.Error($"[VersionManager] Refusing to commit content for non-installed AppVersion {serverVersion.AppVersion}");
+                return;
+            }
+
+            UpdateInfo local = GetLocalVersion();
+            local.AppVersion = Application.version;
+            if (resourceUpdated)
+                local.ResourceVersion = serverVersion.ResourceVersion;
+            if (codeUpdated && HotUpdateSlotManager.TryGetActiveCodeVersion(out int activeCodeVersion))
+                local.CodeVersion = activeCodeVersion;
+            if (!string.IsNullOrEmpty(serverVersion.MinCompatibleVersion))
+                local.MinCompatibleVersion = serverVersion.MinCompatibleVersion;
+            local.Type = UpdateType.None;
+            local.PatchFiles = new List<PatchFile>();
+            SaveLocalVersion(local);
+            GameLog.Log($"[VersionManager] Content commit complete Resource={local.ResourceVersion} Code={local.CodeVersion}");
+        }
+
         public static void SaveLocalVersion(UpdateInfo versionInfo)
         {
+            if (versionInfo == null) return;
             try
             {
+                versionInfo.AppVersion = Application.version;
+                versionInfo.PatchFiles ??= new List<PatchFile>();
                 string versionFilePath = System.IO.Path.Combine(Application.persistentDataPath, "version.json");
                 string json = JsonSerializers.Shared.ToJson(versionInfo, true);
-                FileStorages.Shared.WriteText(versionFilePath, json);
-                GameLog.Log($"[VersionManager] 保存本地版本: {versionInfo.AppVersion}");
+                FileStorages.Shared.AtomicWriteText(versionFilePath, json, versionFilePath + ".bak");
             }
             catch (Exception ex)
             {
-                GameLog.Error($"[VersionManager] 保存本地版本文件失败: {ex.Message}");
+                GameLog.Error($"[VersionManager] Failed to save local version: {ex.Message}");
             }
         }
         

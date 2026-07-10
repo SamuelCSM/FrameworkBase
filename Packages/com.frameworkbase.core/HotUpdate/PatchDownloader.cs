@@ -1,203 +1,252 @@
 using System;
-using UnityEngine;
-using UnityEngine.Networking;
+using System.IO;
+using System.Threading;
 using Cysharp.Threading.Tasks;
 using Framework.Storage;
+using UnityEngine.Networking;
 
 namespace Framework.HotUpdate
 {
     /// <summary>
-    /// 补丁下载器
-    /// 负责从服务器下载补丁文件，支持断点续传和重试机制
+    /// 面向移动端热更新文件的流式下载器。
+    /// <para>
+    /// 网络响应始终先写入同目录的 <c>.download</c> 临时文件，成功后再替换正式路径，
+    /// 避免进程被杀、磁盘写满或网络中断时留下被误判为可安装的半文件。断点续传只有在服务端明确返回
+    /// 206 Partial Content 时才允许追加；若服务端忽略 Range 并返回 200，则必须按完整文件整体替换。
+    /// </para>
+    /// <para>
+    /// 本类型只负责可靠传输，不把 HTTP 成功等同于文件可信。文件长度与 SHA-256 必须由
+    /// HotUpdateManager 或 HotUpdateSlotManager 在提交事务槽之前基于已验签清单再次校验。
+    /// </para>
     /// </summary>
-    public class PatchDownloader
+    public sealed class PatchDownloader
     {
         private UnityWebRequest _currentRequest;
-        private bool _isCancelled;
+        private volatile bool _isCancelled;
         private long _downloadedSize;
         private long _totalSize;
-        private int _maxRetryCount = 3;
-        private float _retryDelay = 2.0f;
-        
+
         /// <summary>
-        /// 已下载大小
+        /// 首次请求失败后的最大重试次数；总尝试次数为该值加一，负数按零处理。
+        /// </summary>
+        public int MaxRetryCount { get; set; } = 3;
+
+        /// <summary>
+        /// 重试基础延迟（秒）。实际延迟会加入小幅随机抖动，避免大量客户端在服务恢复瞬间同步重试。
+        /// </summary>
+        public float RetryDelay { get; set; } = 2f;
+
+        /// <summary>
+        /// 单次 UnityWebRequest 超时上限（秒），小于 1 的配置按 1 秒处理。
+        /// </summary>
+        public int RequestTimeoutSeconds { get; set; } = 30;
+
+        /// <summary>
+        /// 最近一次成功下载后正式文件的已下载字节数。
         /// </summary>
         public long DownloadedSize => _downloadedSize;
-        
+
         /// <summary>
-        /// 总大小
+        /// 最近一次成功下载后已知的总字节数。当前实现未信任 Content-Length，成功前仅作本地统计。
         /// </summary>
         public long TotalSize => _totalSize;
-        
+
         /// <summary>
-        /// 最大重试次数
+        /// 下载文件到指定正式路径，支持有限重试、显式取消及受控的 HTTP Range 续传。
         /// </summary>
-        public int MaxRetryCount
-        {
-            get => _maxRetryCount;
-            set => _maxRetryCount = Math.Max(0, value);
-        }
-        
-        /// <summary>
-        /// 重试延迟（秒）
-        /// </summary>
-        public float RetryDelay
-        {
-            get => _retryDelay;
-            set => _retryDelay = Math.Max(0, value);
-        }
-        
-        /// <summary>
-        /// 下载文件（带重试 + 断点续传）
-        /// </summary>
-        /// <param name="url">下载 URL</param>
-        /// <param name="savePath">保存路径</param>
-        /// <param name="onProgress">进度回调 0~1</param>
-        /// <param name="forceRefresh">
-        /// true  = 强制全新下载，下载前删除本地文件（适用于版本号已变的小文件，如 version.json / HotUpdate.dll）
-        /// false = 优先断点续传，服务器返回 416 时自动回退全量下载（适用于大资源包）
-        /// </param>
+        /// <param name="url">补丁下载 URL；正式环境应在清单准入阶段验证 HTTPS 与受信域名。</param>
+        /// <param name="savePath">下载成功后的正式文件路径。</param>
+        /// <param name="onProgress">单次 HTTP 请求进度回调，取值通常为 0～1；重试时可能重新从较小值开始。</param>
+        /// <param name="forceRefresh">为 true 时先删除旧正式文件，首次尝试禁止基于旧文件续传。</param>
+        /// <param name="cancellationToken">调用方生命周期取消令牌；取消后不再继续重试。</param>
+        /// <returns>文件已完整落到正式路径时返回 <see langword="true"/>；网络失败或主动取消返回 <see langword="false"/>。</returns>
         public async UniTask<bool> DownloadFileAsync(
-            string url, string savePath,
+            string url,
+            string savePath,
             Action<float> onProgress = null,
-            bool forceRefresh = false)
+            bool forceRefresh = false,
+            CancellationToken cancellationToken = default)
         {
-            // forceRefresh：直接删除本地文件，跳过断点续传判断
-            if (forceRefresh && FileStorages.Shared.FileExists(savePath))
-            {
-                FileStorages.Shared.DeleteFile(savePath);
-                GameLog.Log($"[PatchDownloader] forceRefresh=true，已清除旧文件: {savePath}");
-            }
+            if (string.IsNullOrWhiteSpace(url) || string.IsNullOrWhiteSpace(savePath))
+                return false;
 
-            int retryCount = 0;
-            while (retryCount <= _maxRetryCount)
-            {
-                bool success = await DownloadFileInternalAsync(url, savePath, onProgress);
-                if (success || _isCancelled)
-                    return success;
+            _isCancelled = false;
+            string transferPath = savePath + ".download";
+            FileStorages.Shared.TryDeleteFile(transferPath);
+            if (forceRefresh)
+                FileStorages.Shared.TryDeleteFile(savePath);
 
-                retryCount++;
-                if (retryCount <= _maxRetryCount)
+            int attempts = Math.Max(1, MaxRetryCount + 1);
+            for (int attempt = 1; attempt <= attempts; attempt++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                bool success = await DownloadAttemptAsync(
+                    url,
+                    savePath,
+                    transferPath,
+                    onProgress,
+                    cancellationToken,
+                    allowRange: !forceRefresh || attempt > 1);
+                if (success) return true;
+                if (_isCancelled || cancellationToken.IsCancellationRequested) return false;
+
+                if (attempt < attempts)
                 {
-                    GameLog.Warning($"[PatchDownloader] 下载失败，{_retryDelay}秒后重试 ({retryCount}/{_maxRetryCount})");
-                    await UniTask.Delay(TimeSpan.FromSeconds(_retryDelay));
+                    // 在基础延迟上加入约 ±15% 抖动，降低 CDN 故障恢复或网络切换时的客户端惊群效应。
+                    double jitter = 0.85 + new Random(unchecked(Environment.TickCount * 31 + attempt)).NextDouble() * 0.3;
+                    await UniTask.Delay(
+                        TimeSpan.FromSeconds(Math.Max(0, RetryDelay) * jitter),
+                        cancellationToken: cancellationToken);
                 }
             }
 
-            GameLog.Error($"[PatchDownloader] 已达到最大重试次数，放弃下载: {url}");
+            FileStorages.Shared.TryDeleteFile(transferPath);
             return false;
         }
 
         /// <summary>
-        /// 下载文件（内部实现）
-        /// 支持断点续传，收到 416（Range 超出）时自动清除本地文件并回退全量下载
+        /// 执行一次 HTTP 下载尝试，并严格区分 200、206 与 416 对本地文件的处理语义。
         /// </summary>
-        private async UniTask<bool> DownloadFileInternalAsync(string url, string savePath, Action<float> onProgress)
+        private async UniTask<bool> DownloadAttemptAsync(
+            string url,
+            string savePath,
+            string transferPath,
+            Action<float> onProgress,
+            CancellationToken cancellationToken,
+            bool allowRange)
         {
-            _isCancelled = false;
-            _downloadedSize = 0;
+            long startPosition = allowRange && File.Exists(savePath) ? new FileInfo(savePath).Length : 0;
+            FileStorages.Shared.EnsureParentDirectory(savePath);
+            FileStorages.Shared.TryDeleteFile(transferPath);
 
             try
             {
-                GameLog.Log($"[PatchDownloader] 开始下载: {url} -> {savePath}");
-
-                FileStorages.Shared.EnsureParentDirectory(savePath);
-
-                // 断点续传：读取本地已有大小
-                long startPosition = 0;
-                if (FileStorages.Shared.FileExists(savePath))
+                using (var request = UnityWebRequest.Get(url))
                 {
-                    startPosition = FileStorages.Shared.GetFileSize(savePath);
-                    _downloadedSize = startPosition;
-                    GameLog.Log($"[PatchDownloader] 检测到已下载 {startPosition} 字节，尝试断点续传");
-                }
+                    _currentRequest = request;
+                    request.timeout = Math.Max(1, RequestTimeoutSeconds);
 
-                _currentRequest = UnityWebRequest.Get(url);
-                if (startPosition > 0)
-                    _currentRequest.SetRequestHeader("Range", $"bytes={startPosition}-");
+                    // DownloadHandlerFile 将响应体直接流式写入磁盘，避免大型 DLL 或资源补丁整体进入托管堆。
+                    request.downloadHandler = new DownloadHandlerFile(transferPath, false);
+                    if (startPosition > 0)
+                        request.SetRequestHeader("Range", $"bytes={startPosition}-");
 
-                var operation = _currentRequest.SendWebRequest();
-                while (!operation.isDone)
-                {
-                    if (_isCancelled)
+                    UnityWebRequestAsyncOperation operation = request.SendWebRequest();
+                    while (!operation.isDone)
                     {
-                        _currentRequest.Abort();
-                        GameLog.Warning("[PatchDownloader] 下载已取消");
+                        if (_isCancelled || cancellationToken.IsCancellationRequested)
+                        {
+                            request.Abort();
+                            FileStorages.Shared.TryDeleteFile(transferPath);
+                            return false;
+                        }
+
+                        onProgress?.Invoke(operation.progress);
+                        await UniTask.Yield();
+                    }
+
+                    // 416 表示本地续传基线与服务端对象不再一致。删除旧基线，让下一次重试执行全量下载。
+                    if (request.responseCode == 416 && startPosition > 0)
+                    {
+                        FileStorages.Shared.TryDeleteFile(savePath);
+                        FileStorages.Shared.TryDeleteFile(transferPath);
                         return false;
                     }
-                    onProgress?.Invoke(operation.progress);
-                    await UniTask.Yield();
-                }
 
-                // 416：服务器文件已更新，本地缓存失效 → 清除后由外层重试全量下载
-                if (_currentRequest.responseCode == 416)
-                {
-                    GameLog.Warning($"[PatchDownloader] 收到 416，服务器文件已变更，清除本地缓存后重试全量下载");
-                    _currentRequest.Dispose();
-                    _currentRequest = null;
-                    FileStorages.Shared.TryDeleteFile(savePath);
-                    // 直接递归一次全量下载（startPosition = 0）
-                    return await DownloadFileInternalAsync(url, savePath, onProgress);
-                }
+                    if (request.result != UnityWebRequest.Result.Success)
+                    {
+                        GameLog.Warning($"[PatchDownloader] 下载失败，HTTP={request.responseCode}：{request.error}");
+                        FileStorages.Shared.TryDeleteFile(transferPath);
+                        return false;
+                    }
 
-                if (_currentRequest.result != UnityWebRequest.Result.Success)
-                {
-                    GameLog.Error($"[PatchDownloader] 下载失败: {_currentRequest.error}");
-                    return false;
-                }
-
-                byte[] data = _currentRequest.downloadHandler.data;
-                if (startPosition > 0)
-                {
-                    // 断点续传追加写入
-                    FileStorages.Shared.AppendBytes(savePath, data);
-                }
-                else
-                {
-                    FileStorages.Shared.WriteBytes(savePath, data);
+                    if (startPosition > 0 && request.responseCode == 206)
+                    {
+                        // 只有明确的 206 Partial Content 才能把响应体追加到旧文件，防止把完整 200 响应拼接到旧内容尾部。
+                        AppendFile(transferPath, savePath);
+                        FileStorages.Shared.TryDeleteFile(transferPath);
+                    }
+                    else
+                    {
+                        // 未请求续传或服务端忽略 Range 返回 200 时，响应体代表完整对象，必须整体替换旧文件。
+                        AtomicMoveReplace(transferPath, savePath);
+                    }
                 }
 
                 _downloadedSize = FileStorages.Shared.GetFileSize(savePath);
                 _totalSize = _downloadedSize;
-                GameLog.Log($"[PatchDownloader] 下载完成: {savePath} ({_downloadedSize} 字节)");
-                onProgress?.Invoke(1.0f);
+                onProgress?.Invoke(1f);
                 return true;
+            }
+            catch (OperationCanceledException)
+            {
+                FileStorages.Shared.TryDeleteFile(transferPath);
+                return false;
             }
             catch (Exception ex)
             {
-                GameLog.Error($"[PatchDownloader] 下载异常: {ex.Message}");
+                GameLog.Warning($"[PatchDownloader] 下载过程异常：{ex.Message}");
+                FileStorages.Shared.TryDeleteFile(transferPath);
                 return false;
             }
             finally
             {
-                _currentRequest?.Dispose();
                 _currentRequest = null;
             }
         }
-        
+
         /// <summary>
-        /// 取消下载
+        /// 将临时响应文件顺序追加到已有续传基线；调用方必须已确认服务端返回 206。
+        /// </summary>
+        private static void AppendFile(string sourcePath, string destinationPath)
+        {
+            using (FileStream source = File.OpenRead(sourcePath))
+            using (FileStream destination = new FileStream(destinationPath, FileMode.Append, FileAccess.Write, FileShare.Read))
+                source.CopyTo(destination);
+        }
+
+        /// <summary>
+        /// 尽可能使用 <see cref="File.Replace(string,string,string,bool)"/> 原子替换同卷目标；
+        /// 平台不支持时退化为删除后移动。正式安装的最终原子边界仍由不可变 staging 槽目录提交保证。
+        /// </summary>
+        private static void AtomicMoveReplace(string sourcePath, string destinationPath)
+        {
+            string backup = destinationPath + ".bak";
+            FileStorages.Shared.TryDeleteFile(backup);
+            if (File.Exists(destinationPath))
+            {
+                try
+                {
+                    File.Replace(sourcePath, destinationPath, backup, true);
+                    FileStorages.Shared.TryDeleteFile(backup);
+                    return;
+                }
+                catch (PlatformNotSupportedException) { }
+                catch (IOException) { }
+            }
+
+            FileStorages.Shared.TryDeleteFile(destinationPath);
+            File.Move(sourcePath, destinationPath);
+        }
+
+        /// <summary>
+        /// 主动取消当前下载。该调用可来自其他线程，因此仅设置易失标志并尽力中止当前 UnityWebRequest。
         /// </summary>
         public void CancelDownload()
         {
             _isCancelled = true;
-            GameLog.Log("[PatchDownloader] 请求取消下载");
+            try { _currentRequest?.Abort(); }
+            catch { }
         }
-        
+
         /// <summary>
-        /// 获取已下载大小
+        /// 获取最近一次成功下载后的本地文件字节数。
         /// </summary>
-        public long GetDownloadedSize()
-        {
-            return _downloadedSize;
-        }
-        
+        public long GetDownloadedSize() => _downloadedSize;
+
         /// <summary>
-        /// 获取总大小
+        /// 获取最近一次成功下载后记录的总字节数。
         /// </summary>
-        public long GetTotalSize()
-        {
-            return _totalSize;
-        }
+        public long GetTotalSize() => _totalSize;
     }
 }

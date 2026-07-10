@@ -4,6 +4,9 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Runtime.ExceptionServices;
+using System.Security.Cryptography;
+using System.Text;
+using System.Threading;
 using UnityEngine;
 using Cysharp.Threading.Tasks;
 using Framework;
@@ -19,6 +22,20 @@ namespace Framework.HotUpdate
     /// </summary>
     public class HotUpdateManager : FrameworkComponent<HotUpdateManager>
     {
+        private const long MaxManifestBytes = 1024 * 1024;
+        private const long MaxSignatureBytes = 16 * 1024;
+
+        /// <summary>
+        /// 未验签阶段只允许解析的最小信封。该类型只用于选择客户端本地信任根，不承载任何更新决策。
+        /// </summary>
+        [Serializable]
+        private sealed class ManifestKeyEnvelope
+        {
+            public string KeyId = string.Empty;
+        }
+
+        private readonly SemaphoreSlim _checkGate = new SemaphoreSlim(1, 1);
+        private readonly SemaphoreSlim _installGate = new SemaphoreSlim(1, 1);
         private UpdateState _state = UpdateState.None;
 
         /// <summary>承载 HotfixEntry 的热更入口程序集（即 HotUpdate）；StartHotfix 通过它反射启动。</summary>
@@ -53,9 +70,10 @@ namespace Framework.HotUpdate
         public override void OnInit()
         {
             base.OnInit();
+            HotUpdateSlotManager.PrepareForLaunch();
             _patchDownloader = new PatchDownloader();
             _fileVerifier = new FileVerifier();
-            GameLog.Log("[HotUpdateManager] 热更新管理器初始化");
+            GameLog.Log("[HotUpdateManager] 已初始化事务代码槽与强制验签链路。");
         }
         
         /// <summary>
@@ -63,138 +81,163 @@ namespace Framework.HotUpdate
         /// </summary>
         /// <param name="updateUrl">更新服务器URL</param>
         /// <returns>更新信息</returns>
-        public async UniTask<UpdateInfo> CheckUpdateAsync(string updateUrl)
+        public async UniTask<UpdateInfo> CheckUpdateAsync(
+            string updateUrl,
+            CancellationToken cancellationToken = default)
         {
+            await _checkGate.WaitAsync(cancellationToken);
             _state = UpdateState.CheckingUpdate;
-            GameLog.Log($"[HotUpdateManager] 开始检查更新: {updateUrl}");
-            
             try
             {
-                // 获取本地版本
+                Core.AppConfigAsset config = Core.AppConfig.Load();
+                if (!UpdateSecurity.ValidateUpdateServerUrl(updateUrl, config?.AppEnv, out string urlRejectReason))
+                    throw new InvalidDataException(urlRejectReason);
+
                 UpdateInfo localVersion = VersionManager.GetLocalVersion();
-                GameLog.Log($"[HotUpdateManager] 本地版本: {localVersion.AppVersion}, 资源版本: {localVersion.ResourceVersion}, 代码版本: {localVersion.CodeVersion}");
-                
-                // 从服务器下载version.json
-                // version.json：每次必须拿最新，forceRefresh=true 跳过断点续传
-                string versionUrl = $"{updateUrl}/version.json";
+                string versionUrl = $"{updateUrl.TrimEnd('/')}/version.json";
                 string tempPath = Path.Combine(Application.temporaryCachePath, "version_temp.json");
-                bool downloadSuccess = await _patchDownloader.DownloadFileAsync(
-                    versionUrl, tempPath, forceRefresh: true);
-                
-                if (!downloadSuccess)
+                if (!await _patchDownloader.DownloadFileAsync(
+                        versionUrl,
+                        tempPath,
+                        forceRefresh: true,
+                        cancellationToken: cancellationToken))
                 {
-                    GameLog.Error("[HotUpdateManager] 下载版本文件失败");
-                    _state = UpdateState.Error;
-                    OnUpdateError?.Invoke("下载版本文件失败");
-                    return null;
+                    throw new IOException("下载热更新清单失败。");
                 }
 
-                // 清单验签：AppConfig 配置了公钥即强制校验 version.json.sig。
-                // 验签失败按"清单不可信"处理——本次不做任何热更（宁可停更，不执行可疑补丁）。
-                if (!await VerifyManifestSignatureAsync(updateUrl, tempPath))
+                long manifestLength = FileStorages.Shared.GetFileSize(tempPath);
+                if (manifestLength <= 0 || manifestLength > MaxManifestBytes)
+                    throw new InvalidDataException($"热更新清单大小非法：{manifestLength} 字节。");
+
+                byte[] manifestBytes = FileStorages.Shared.ReadBytes(tempPath);
+                string json = Encoding.UTF8.GetString(manifestBytes);
+
+                // 未验签阶段只解析 KeyId 信封，用于从本地公钥环选择信任根；其他字段一律不参与决策。
+                ManifestKeyEnvelope envelope = JsonSerializers.Shared.FromJson<ManifestKeyEnvelope>(json);
+                if (envelope == null || string.IsNullOrWhiteSpace(envelope.KeyId))
+                    throw new InvalidDataException("热更新清单缺少可用于选择验签公钥的 KeyId。");
+
+                if (!await VerifyManifestSignatureAsync(
+                        updateUrl,
+                        manifestBytes,
+                        envelope.KeyId,
+                        cancellationToken))
                 {
-                    _state = UpdateState.Error;
-                    OnUpdateError?.Invoke("版本清单签名校验失败");
-                    return null;
+                    throw new CryptographicException("热更新清单签名验证失败。");
                 }
 
-                // 解析版本信息
-                string json = FileStorages.Shared.ReadText(tempPath);
+                // 只有原始字节验签通过后，才允许反序列化完整清单并执行版本、平台、渠道及文件集准入。
                 UpdateInfo serverVersion = JsonSerializers.Shared.FromJson<UpdateInfo>(json);
-                
-                GameLog.Log($"[HotUpdateManager] 服务器版本: {serverVersion.AppVersion}, 资源版本: {serverVersion.ResourceVersion}, 代码版本: {serverVersion.CodeVersion}");
-                
-                // 判断更新类型
+                if (serverVersion == null)
+                    throw new InvalidDataException("热更新清单反序列化失败。");
+                if (!UpdateSecurity.ValidateManifest(
+                        serverVersion,
+                        localVersion,
+                        config?.AppEnv,
+                        config?.AppChannel,
+                        out string rejectReason))
+                {
+                    GameLog.Error($"[HotUpdateManager] Manifest rejected: {rejectReason}");
+                    _state = UpdateState.Error;
+                    OnUpdateError?.Invoke(rejectReason);
+                    return null;
+                }
+
                 UpdateType updateType = VersionManager.DetermineUpdateType(localVersion, serverVersion);
                 serverVersion.Type = updateType;
-                
-                // 检查版本兼容性
-                if (!string.IsNullOrEmpty(serverVersion.MinCompatibleVersion))
+                if (!string.IsNullOrEmpty(serverVersion.MinCompatibleVersion) &&
+                    !VersionManager.CheckCompatibility(Application.version, serverVersion.MinCompatibleVersion))
                 {
-                    bool isCompatible = VersionManager.CheckCompatibility(localVersion.AppVersion, serverVersion.MinCompatibleVersion);
-                    
-                    if (!isCompatible)
-                    {
-                        GameLog.Warning("[HotUpdateManager] 版本不兼容，需要强制更新");
-                        serverVersion.ForceUpdate = true;
-                        serverVersion.Type = UpdateType.FullUpdate;
-                    }
+                    serverVersion.ForceUpdate = true;
+                    serverVersion.Type = UpdateType.FullUpdate;
                 }
-                
-                // 触发更新可用事件
-                if (updateType != UpdateType.None)
-                {
+
+                if (serverVersion.Type != UpdateType.None)
                     OnUpdateAvailable?.Invoke(serverVersion);
-                    GameLog.Log($"[HotUpdateManager] 发现更新: {updateType}, 补丁数量: {serverVersion.PatchFiles.Count}");
-                }
-                else
-                {
-                    GameLog.Log("[HotUpdateManager] 版本检查完成，无需更新");
-                }
-                
+
                 _state = UpdateState.None;
                 return serverVersion;
             }
+            catch (OperationCanceledException)
+            {
+                _state = UpdateState.None;
+                throw;
+            }
             catch (Exception ex)
             {
-                GameLog.Error($"[HotUpdateManager] 检查更新失败: {ex.Message}");
+                GameLog.Error($"[HotUpdateManager] 检查更新失败：{ex}");
                 _state = UpdateState.Error;
                 OnUpdateError?.Invoke(ex.Message);
-                throw;
+                return null;
+            }
+            finally
+            {
+                _checkGate.Release();
             }
         }
         
         /// <summary>
-        /// 校验已下载清单的 RSA 签名。
-        /// AppConfig.UpdateManifestPublicKey 为空时跳过（开发期）；非空时下载伴生 version.json.sig
-        /// 并对清单原始字节验签，签名缺失或不匹配一律判失败。
+        /// 校验已下载清单的 RSA-SHA256 签名。
+        /// 所有环境都必须按 KeyId 从客户端公钥环选择信任根，并对清单原始字节验签；
+        /// 公钥、签名文件缺失或签名不匹配一律失败，开发环境也不得绕过远程代码信任边界。
         /// </summary>
         /// <param name="updateUrl">更新服务器根 URL。</param>
-        /// <param name="manifestPath">已下载到本地的 version.json 路径。</param>
-        /// <returns>验签通过（或未启用验签）返回 true。</returns>
-        private async UniTask<bool> VerifyManifestSignatureAsync(string updateUrl, string manifestPath)
+        /// <param name="manifestBytes">网络下载并限制大小后的 version.json 原始字节。</param>
+        /// <param name="keyId">未验签信封中声明的公钥标识，只用于本地密钥选择。</param>
+        /// <param name="cancellationToken">清单检查生命周期取消令牌。</param>
+        /// <returns>签名文件存在、大小合法且原始字节验签通过时返回 true。</returns>
+        private async UniTask<bool> VerifyManifestSignatureAsync(
+            string updateUrl,
+            byte[] manifestBytes,
+            string keyId,
+            CancellationToken cancellationToken)
         {
-            string publicKeyPem = AppConfig.Load()?.UpdateManifestPublicKey;
-            if (string.IsNullOrWhiteSpace(publicKeyPem))
+            Core.AppConfigAsset config = Core.AppConfig.Load();
+            string publicKey = UpdateSecurity.ResolvePublicKey(
+                keyId,
+                config?.UpdateManifestPublicKey,
+                config?.UpdateManifestPublicKeys);
+
+            // 任何环境的远程代码清单都必须验签。开发环境应使用独立 development 密钥，而不是跳过信任边界。
+            if (string.IsNullOrWhiteSpace(publicKey))
             {
-                if (UpdateSecurity.IsProductionEnv(AppConfig.Load()?.AppEnv))
-                    GameLog.Warning("[HotUpdateManager] 生产环境未配置清单验签公钥（UpdateManifestPublicKey），" +
-                                    "热更清单处于无签名保护状态，正式发布前必须补齐");
-                return true;
+                GameLog.Error($"[HotUpdateManager] 未找到 KeyId={keyId} 对应的清单验签公钥，更新已拒绝。");
+                return false;
             }
 
-            string signatureUrl = $"{updateUrl}/version.json{UpdateSecurity.ManifestSignatureSuffix}";
+            string signatureUrl = $"{updateUrl.TrimEnd('/')}/version.json{UpdateSecurity.ManifestSignatureSuffix}";
             string signaturePath = Path.Combine(Application.temporaryCachePath, "version_temp.json.sig");
-
-            bool signatureDownloaded = await _patchDownloader.DownloadFileAsync(
-                signatureUrl, signaturePath, forceRefresh: true);
-            if (!signatureDownloaded)
+            if (!await _patchDownloader.DownloadFileAsync(
+                    signatureUrl,
+                    signaturePath,
+                    forceRefresh: true,
+                    cancellationToken: cancellationToken))
             {
-                GameLog.Error("[HotUpdateManager] 已启用清单验签但下载 version.json.sig 失败，按验签失败处理");
                 return false;
             }
 
-            byte[] manifestBytes = FileStorages.Shared.ReadBytes(manifestPath);
-            string signatureBase64 = FileStorages.Shared.ReadText(signaturePath);
-
-            if (!UpdateSecurity.VerifyManifestSignature(manifestBytes, signatureBase64, publicKeyPem))
+            long signatureLength = FileStorages.Shared.GetFileSize(signaturePath);
+            if (signatureLength <= 0 || signatureLength > MaxSignatureBytes)
             {
-                GameLog.Error("[HotUpdateManager] version.json 签名校验失败，清单不可信，本次热更中止");
+                GameLog.Error($"[HotUpdateManager] 清单签名文件大小非法：{signatureLength} 字节。");
                 return false;
             }
 
-            GameLog.Log("[HotUpdateManager] version.json 签名校验通过");
-            return true;
+            return UpdateSecurity.VerifyManifestSignature(
+                manifestBytes,
+                FileStorages.Shared.ReadText(signaturePath),
+                publicKey);
         }
 
         /// <summary>
-        /// 按 CodeVersion 下载代码热更补丁（PatchFiles 必须由服务端清单提供且逐项带 MD5）。
+        /// 按 CodeVersion 下载完整代码槽快照；PatchFiles 必须与客户端程序集白名单完全一致并逐项携带 Size + SHA-256。
         /// </summary>
         public async UniTask<bool> DownloadCodePatchAsync(
             UpdateInfo serverVersion,
             UpdateInfo localVersion,
             string updateServerUrl,
-            Action<float> onProgress = null)
+            Action<float> onProgress = null,
+            CancellationToken cancellationToken = default)
         {
             if (!VersionManager.ShouldUpdateCode(serverVersion, localVersion))
             {
@@ -205,7 +248,7 @@ namespace Framework.HotUpdate
             if (!VersionManager.TryResolveCodePatchFiles(serverVersion, updateServerUrl, out var patchFiles))
                 return false;
 
-            return await DownloadPatchAsync(serverVersion, patchFiles, onProgress);
+            return await DownloadPatchAsync(serverVersion, patchFiles, onProgress, cancellationToken);
         }
 
         /// <summary>
@@ -215,99 +258,92 @@ namespace Framework.HotUpdate
         public async UniTask<bool> DownloadPatchAsync(
             UpdateInfo updateInfo,
             IReadOnlyList<PatchFile> patchFiles,
-            Action<float> onProgress = null)
+            Action<float> onProgress = null,
+            CancellationToken cancellationToken = default)
         {
-            _state = UpdateState.Downloading;
-
             if (updateInfo == null || patchFiles == null || patchFiles.Count == 0)
             {
-                GameLog.Log("[HotUpdateManager] 没有需要下载的补丁文件");
-                _state = UpdateState.None;
+                _state = UpdateState.Error;
                 return false;
             }
 
-            GameLog.Log($"[HotUpdateManager] 开始下载补丁，共{patchFiles.Count}个文件");
-
+            await _installGate.WaitAsync(cancellationToken);
+            _state = UpdateState.Downloading;
+            string stagingDirectory = null;
             try
             {
+                stagingDirectory = HotUpdateSlotManager.PrepareStagingSlot(updateInfo);
                 long totalSize = VersionManager.CalculateTotalSize(patchFiles);
-                long downloadedSize = 0;
-
-                GameLog.Log($"[HotUpdateManager] 总下载大小: {VersionManager.FormatFileSize(totalSize)}");
-
-                string downloadDir = Application.persistentDataPath;
+                long completedSize = 0;
 
                 for (int i = 0; i < patchFiles.Count; i++)
                 {
-                    PatchFile patchFile = patchFiles[i];
-                    string savePath = Path.Combine(downloadDir, patchFile.FileName);
+                    PatchFile patch = patchFiles[i];
+                    if (!UpdateSecurity.ValidateCodePatchFile(patch, out string rejectReason))
+                        throw new InvalidDataException(rejectReason);
 
-                    GameLog.Log($"[HotUpdateManager] 下载文件 ({i + 1}/{patchFiles.Count}): {patchFile.FileName}");
-
-                    bool success = await _patchDownloader.DownloadFileAsync(
-                        patchFile.Url, savePath,
+                    string savePath = HotUpdateSlotManager.GetSafeStagingFilePath(stagingDirectory, patch.FileName);
+                    bool downloaded = await _patchDownloader.DownloadFileAsync(
+                        patch.Url,
+                        savePath,
                         progress =>
                         {
                             float totalProgress = totalSize > 0
-                                ? (downloadedSize + progress * patchFile.Size) / (float)totalSize
+                                ? (completedSize + progress * patch.Size) / totalSize
                                 : (i + progress) / patchFiles.Count;
                             onProgress?.Invoke(totalProgress);
                         },
-                        forceRefresh: true);
+                        forceRefresh: true,
+                        cancellationToken: cancellationToken);
 
-                    if (!success)
-                    {
-                        GameLog.Error($"[HotUpdateManager] 下载文件失败: {patchFile.FileName}");
-                        _state = UpdateState.Error;
-                        OnUpdateError?.Invoke($"下载文件失败: {patchFile.FileName}");
-                        return false;
-                    }
+                    if (!downloaded || !await _fileVerifier.VerifyPatchFileAsync(savePath, patch))
+                        throw new InvalidDataException($"补丁下载或完整性校验失败：{patch.FileName}");
 
-                    // 补丁哈希为强制项：清单缺 MD5 在 TryResolveCodePatchFiles 已被拒绝，
-                    // 此处兜底再拦一次（其它调用方直接传入清单时同样不允许旁路校验）。
-                    if (string.IsNullOrWhiteSpace(patchFile.MD5))
-                    {
-                        GameLog.Error($"[HotUpdateManager] 补丁 {patchFile.FileName} 未携带 MD5，拒绝安装（代码补丁禁止无校验下发）");
-
-                        if (FileStorages.Shared.FileExists(savePath))
-                            FileStorages.Shared.TryDeleteFile(savePath);
-
-                        _state = UpdateState.Error;
-                        OnUpdateError?.Invoke($"补丁缺少校验哈希: {patchFile.FileName}");
-                        return false;
-                    }
-
-                    bool verified = await _fileVerifier.VerifyFileAsync(savePath, patchFile.MD5);
-                    if (!verified)
-                    {
-                        GameLog.Error($"[HotUpdateManager] 文件校验失败: {patchFile.FileName}");
-
-                        if (FileStorages.Shared.FileExists(savePath))
-                            FileStorages.Shared.TryDeleteFile(savePath);
-
-                        _state = UpdateState.Error;
-                        OnUpdateError?.Invoke($"文件校验失败: {patchFile.FileName}");
-                        return false;
-                    }
-
-                    downloadedSize += patchFile.Size > 0 ? patchFile.Size : 0;
+                    completedSize += patch.Size;
                 }
 
-                VersionManager.CommitCodeUpdate(updateInfo);
-                GameLog.Log("[HotUpdateManager] 补丁下载完成");
-                onProgress?.Invoke(1.0f);
+                _state = UpdateState.Installing;
+                if (!HotUpdateSlotManager.CommitStagingSlot(updateInfo, stagingDirectory, out string commitError))
+                    throw new IOException(commitError);
+
+                onProgress?.Invoke(1f);
                 _state = UpdateState.Complete;
                 return true;
             }
+            catch (OperationCanceledException)
+            {
+                CleanupStagingDirectory(stagingDirectory);
+                _state = UpdateState.None;
+                throw;
+            }
             catch (Exception ex)
             {
-                GameLog.Error($"[HotUpdateManager] 下载补丁失败: {ex.Message}");
+                GameLog.Error($"[HotUpdateManager] 事务补丁安装失败：{ex}");
+                CleanupStagingDirectory(stagingDirectory);
                 _state = UpdateState.Error;
                 OnUpdateError?.Invoke(ex.Message);
-                throw;
+                return false;
+            }
+            finally
+            {
+                _installGate.Release();
             }
         }
         
+        /// <summary>
+        /// 尽力清理由本次安装创建、但尚未提交为正式槽的 staging 目录。清理失败只记录告警，不能覆盖原始失败原因。
+        /// </summary>
+        private static void CleanupStagingDirectory(string stagingDirectory)
+        {
+            if (string.IsNullOrEmpty(stagingDirectory) || !Directory.Exists(stagingDirectory))
+                return;
+            try { Directory.Delete(stagingDirectory, true); }
+            catch (Exception cleanupEx)
+            {
+                GameLog.Warning($"[HotUpdateManager] 清理 staging 目录失败：{cleanupEx.Message}");
+            }
+        }
+
         /// <summary>
         /// 加载 AOT 泛型补充元数据（须在 <see cref="LoadHotUpdateAssemblyAsync"/> 之前调用）。
         /// </summary>
@@ -415,65 +451,59 @@ namespace Framework.HotUpdate
         /// <summary>读取指定热更 DLL：优先 persistent（已下载补丁），回退 StreamingAssets 首包。</summary>
         private static async UniTask<byte[]> ReadHotUpdateDllBytesAsync(string fileName)
         {
-            string persistentPath = Path.Combine(Application.persistentDataPath, fileName);
-            if (FileStorages.Shared.FileExists(persistentPath))
-                return await FileStorages.Shared.ReadBytesAsync(persistentPath);
+            if (HotUpdateSlotManager.TryGetActiveCodeVersion(out _))
+            {
+                if (!HotUpdateSlotManager.TryResolveActiveFile(fileName, out string activePath))
+                    throw new FileNotFoundException($"活动代码槽缺少必需程序集，禁止回退并混用整包基线：{fileName}");
+                return await FileStorages.Shared.ReadBytesAsync(activePath);
+            }
 
-            GameLog.Warning($"[HotUpdateManager] persistent 无热更 DLL，回退 StreamingAssets: {fileName}");
+            GameLog.Log($"[HotUpdateManager] 当前没有已验证活动槽，使用整包程序集基线：{fileName}");
             return await StreamingAssetsBytesReader.ReadAsync(fileName);
         }
         
         /// <summary>
         /// 启动热更新逻辑
         /// </summary>
-        public void StartHotfix()
+        public bool StartHotfix()
         {
-            GameLog.Log("[HotUpdateManager] 启动热更新逻辑");
-            
             try
             {
                 if (_hotUpdateAssembly == null)
-                {
-                    GameLog.Error("[HotUpdateManager] 热更新程序集未加载，无法启动");
-                    return;
-                }
-                
-                // 通过反射创建HotfixEntry实例并调用Start方法
+                    throw new InvalidOperationException("热更新入口程序集尚未加载。");
+
                 Type entryType = _hotUpdateAssembly.GetType("HotUpdate.Entry.HotfixEntry");
                 if (entryType == null)
-                {
-                    GameLog.Error("[HotUpdateManager] 找不到HotfixEntry类型");
-                    return;
-                }
-                
+                    throw new MissingMemberException("未找到热更新入口类型 HotUpdate.Entry.HotfixEntry。");
+
                 object entryInstance = Activator.CreateInstance(entryType);
                 MethodInfo startMethod = entryType.GetMethod("Start");
-                
                 if (startMethod == null)
-                {
-                    GameLog.Error("[HotUpdateManager] 找不到Start方法");
-                    return;
-                }
-                
+                    throw new MissingMethodException(entryType.FullName, "Start");
+
                 startMethod.Invoke(entryInstance, null);
-                
-                GameLog.Log("[HotUpdateManager] 热更新逻辑启动成功");
+                GameLog.Log("[HotUpdateManager] 热更新入口启动成功。");
                 OnUpdateComplete?.Invoke();
+                return true;
             }
             catch (TargetInvocationException ex) when (ex.InnerException != null)
             {
-                GameLog.Error($"[HotUpdateManager] 启动热更新逻辑失败: {ex.InnerException.Message}\n{ex.InnerException}");
+                HotUpdateSlotManager.MarkPendingSlotFailed(ex.InnerException.Message);
                 OnUpdateError?.Invoke(ex.InnerException.Message);
                 ExceptionDispatchInfo.Capture(ex.InnerException).Throw();
                 throw;
             }
             catch (Exception ex)
             {
-                GameLog.Error($"[HotUpdateManager] 启动热更新逻辑失败: {ex.Message}");
+                HotUpdateSlotManager.MarkPendingSlotFailed(ex.Message);
                 OnUpdateError?.Invoke(ex.Message);
                 throw;
             }
         }
+
+        public void ConfirmPendingUpdate() => HotUpdateSlotManager.ConfirmPendingSlot();
+
+        public void MarkPendingUpdateFailed(string reason) => HotUpdateSlotManager.MarkPendingSlotFailed(reason);
         
         public override void OnShutdown()
         {

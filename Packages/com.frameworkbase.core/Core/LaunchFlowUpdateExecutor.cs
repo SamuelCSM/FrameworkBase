@@ -27,7 +27,10 @@ namespace Framework.Core
         /// <summary>判断是否需要做资源更新。</summary>
         public static bool ShouldUpdateResources(HotUpdate.UpdateInfo serverVersion, HotUpdate.UpdateInfo localVersion)
         {
-            return serverVersion != null && serverVersion.ResourceVersion != localVersion.ResourceVersion;
+            return serverVersion != null
+                && localVersion != null
+                && string.Equals(serverVersion.AppVersion, Application.version, System.StringComparison.Ordinal)
+                && serverVersion.ResourceVersion > localVersion.ResourceVersion;
         }
 
         /// <summary>判断是否需要做代码热更（以 CodeVersion 为准）。</summary>

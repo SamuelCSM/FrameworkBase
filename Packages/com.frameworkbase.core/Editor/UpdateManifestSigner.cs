@@ -32,9 +32,13 @@ namespace Framework.Editor
             set => EditorPrefs.SetString(PrivateKeyPathPrefsKey, value ?? string.Empty);
         }
 
-        /// <summary>是否已配置可用的私钥（路径非空且文件存在）。</summary>
-        public static bool HasUsablePrivateKey =>
-            !string.IsNullOrEmpty(PrivateKeyPath) && File.Exists(PrivateKeyPath);
+        private const string PrivateKeyPathEnv = "FRAMEWORKBASE_MANIFEST_PRIVATE_KEY_PATH";
+        private const string PrivateKeyBase64Env = "FRAMEWORKBASE_MANIFEST_PRIVATE_KEY_XML_BASE64";
+
+        /// <summary>
+        /// 是否存在可用签名私钥。优先识别 CI 环境变量，其次使用本机 EditorPrefs 路径；不会输出或记录私钥内容。
+        /// </summary>
+        public static bool HasUsablePrivateKey => TryResolvePrivateKeyXml(out _, out _);
 
         // ── 菜单 ──────────────────────────────────────────────────────────────
 
@@ -127,16 +131,12 @@ namespace Framework.Editor
                 return false;
             }
 
-            if (!HasUsablePrivateKey)
-            {
-                error = "未配置签名私钥（菜单 Framework → Hot Update Security → Generate Signing Key Pair / Set Private Key Path）";
+            if (!TryResolvePrivateKeyXml(out string privateKeyXml, out error))
                 return false;
-            }
 
             try
             {
                 byte[] manifestBytes = File.ReadAllBytes(manifestPath);
-                string privateKeyXml = File.ReadAllText(PrivateKeyPath);
                 string signature = UpdateSecurity.SignManifest(manifestBytes, privateKeyXml);
                 File.WriteAllText(manifestPath + UpdateSecurity.ManifestSignatureSuffix, signature, new UTF8Encoding(false));
                 return true;
@@ -172,6 +172,41 @@ namespace Framework.Editor
         }
 
         // ── 工具 ──────────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// 按“Base64 内联环境变量 → 路径环境变量 → EditorPrefs 本机路径”的优先级解析私钥。
+        /// CI 推荐使用密钥系统注入环境变量，避免修改工程文件或依赖交互式 EditorPrefs。
+        /// </summary>
+        private static bool TryResolvePrivateKeyXml(out string privateKeyXml, out string error)
+        {
+            privateKeyXml = null;
+            error = null;
+            try
+            {
+                string base64 = Environment.GetEnvironmentVariable(PrivateKeyBase64Env);
+                if (!string.IsNullOrWhiteSpace(base64))
+                {
+                    privateKeyXml = Encoding.UTF8.GetString(Convert.FromBase64String(base64.Trim()));
+                    return !string.IsNullOrWhiteSpace(privateKeyXml);
+                }
+
+                string envPath = Environment.GetEnvironmentVariable(PrivateKeyPathEnv);
+                string path = !string.IsNullOrWhiteSpace(envPath) ? envPath : PrivateKeyPath;
+                if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
+                {
+                    error = $"未配置签名私钥；请设置 {PrivateKeyBase64Env}、{PrivateKeyPathEnv}，或在 Editor 菜单登记本机路径。";
+                    return false;
+                }
+                privateKeyXml = File.ReadAllText(path);
+                return !string.IsNullOrWhiteSpace(privateKeyXml);
+            }
+            catch (Exception ex)
+            {
+                error = $"读取签名私钥失败：{ex.GetType().Name} - {ex.Message}";
+                privateKeyXml = null;
+                return false;
+            }
+        }
 
         /// <summary>路径是否位于当前 Unity 工程目录内。</summary>
         private static bool IsInsideProject(string path)
