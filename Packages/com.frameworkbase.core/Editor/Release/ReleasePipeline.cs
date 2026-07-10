@@ -20,6 +20,17 @@ namespace Framework.Editor.Release
         void Execute(ReleaseContext context);
     }
 
+    /// <summary>
+    /// 带失败补偿的发布步骤（Saga 语义）：本步骤成功执行后、流水线后续步骤失败时，
+    /// <see cref="Compensate"/> 会被逆序调用，用于恢复被本步骤改变的共享状态
+    /// （如 Addressables Profile 切换、临时产物清理）。补偿应尽力而为，异常只记日志不再中断。
+    /// </summary>
+    public interface ICompensableStep : IReleaseStep
+    {
+        /// <summary>撤销本步骤对共享状态的改动（仅在本步骤已成功、后续步骤失败时调用）。</summary>
+        void Compensate(ReleaseContext context);
+    }
+
     /// <summary>单个步骤的执行结果。</summary>
     [Serializable]
     public class ReleaseStepResult
@@ -29,6 +40,8 @@ namespace Framework.Editor.Release
         public bool Skipped;
         public long DurationMs;
         public string Error;
+        /// <summary>流水线失败后本步骤的补偿是否被执行（仅 ICompensableStep 且已成功的步骤）。</summary>
+        public bool Compensated;
     }
 
     /// <summary>整条流水线的执行结果（发布报告的骨架）。</summary>
@@ -48,8 +61,9 @@ namespace Framework.Editor.Release
     public static class ReleasePipeline
     {
         /// <summary>
-        /// 顺序执行步骤列表。任一步骤抛异常即中断，后续步骤不执行；
-        /// 无论成败都返回完整结果（已执行步骤的耗时与错误全部在内）。
+        /// 顺序执行步骤列表。任一步骤抛异常即中断，后续步骤不执行，并对已成功的
+        /// <see cref="ICompensableStep"/> <b>逆序</b>执行补偿（补偿异常只记日志）；
+        /// 无论成败都返回完整结果（已执行步骤的耗时、错误与补偿情况全部在内）。
         /// </summary>
         public static ReleasePipelineResult Run(IReadOnlyList<IReleaseStep> steps, ReleaseContext context)
         {
@@ -80,6 +94,8 @@ namespace Framework.Editor.Release
                     result.FailedStep = step.Name;
                     result.Error = ex.Message;
                     context.Log?.Invoke($"[ERROR] 步骤 {step.Name} 失败：{ex.Message}");
+
+                    CompensateExecutedSteps(steps, result, i, context);
                     return result;
                 }
                 finally
@@ -90,6 +106,29 @@ namespace Framework.Editor.Release
             }
 
             return result;
+        }
+
+        /// <summary>对失败步骤之前已成功的可补偿步骤逆序执行补偿（Saga 语义）。</summary>
+        private static void CompensateExecutedSteps(
+            IReadOnlyList<IReleaseStep> steps, ReleasePipelineResult result, int failedIndex, ReleaseContext context)
+        {
+            for (int i = failedIndex - 1; i >= 0; i--)
+            {
+                if (steps[i] is not ICompensableStep compensable)
+                    continue;
+
+                try
+                {
+                    context.Log?.Invoke($"[补偿] {steps[i].Name}");
+                    compensable.Compensate(context);
+                    result.Steps[i].Compensated = true;
+                }
+                catch (Exception ex)
+                {
+                    // 补偿尽力而为：一个补偿失败不阻止其余补偿执行。
+                    context.Log?.Invoke($"[WARN] 步骤 {steps[i].Name} 补偿失败：{ex.Message}");
+                }
+            }
         }
     }
 }

@@ -51,34 +51,6 @@ namespace Framework.Editor
         }
 
         [Serializable]
-        private class LaunchPhaseMetricSnapshot
-        {
-            // 字段由 JsonUtility.FromJson 反射赋值，编译器无法静态识别，故局部关闭 CS0649（字段从未赋值）误报。
-#pragma warning disable CS0649
-            public string Phase;
-            public string DisplayName;
-            public bool Success;
-            public long DurationMs;
-            public string Detail;
-            public string Error;
-            public long StartTicksUtc;
-#pragma warning restore CS0649
-        }
-
-        [Serializable]
-        private class LaunchRunMetricSnapshot
-        {
-            // 字段由 JsonUtility.FromJson 反射赋值，编译器无法静态识别，故局部关闭 CS0649（字段从未赋值）误报。
-#pragma warning disable CS0649
-            public string RunId;
-            public string StartedAtUtc;
-            public bool Success;
-            public string EndReason;
-#pragma warning restore CS0649
-            public List<LaunchPhaseMetricSnapshot> Phases = new List<LaunchPhaseMetricSnapshot>();
-        }
-
-        [Serializable]
         private class BuildArtifactSnapshot
         {
             public string Path;
@@ -108,8 +80,6 @@ namespace Framework.Editor
 
         private static string ServerDataDir =>
             Path.Combine(Directory.GetParent(Application.dataPath).FullName, "ServerData", "Updates");
-        private static string LaunchMetricPath =>
-            Path.Combine(Application.persistentDataPath, "launch_metrics_last.json");
 
         private string _excelFolder = "Assets/RefData_Excel";
         private string _streamingDbPath = "Assets/StreamingAssets/RefData/config.db";
@@ -126,10 +96,8 @@ namespace Framework.Editor
         private PipelineState _state = PipelineState.Idle;
         // 是否有流水线动作正在执行（含已登记待执行）。用于防止 OnGUI 期间连点重复触发构建。
         private bool _isRunning;
-        private string _profileBeforeRun = string.Empty;
-        private readonly List<string> _validationResults = new List<string>();
-        private string _lastTelemetryEndReason = string.Empty;
-        private bool _lastTelemetrySuccess = false;
+        // 最近一次流水线的上下文（报告数据来源：Profile 现场/遥测结论/校验结果由步骤回写）。
+        private FullPackageReleaseContext _lastRunContext;
         private Vector2 _scroll;
         private string _log = string.Empty;
 
@@ -264,22 +232,24 @@ namespace Framework.Editor
             EditorGUILayout.BeginVertical("box");
 
             if (GUILayout.Button("0) 写入整包版本号（version.json + PlayerSettings）", GUILayout.Height(30)))
-                Dispatch(RunWriteFullUpdateVersion);
+                Dispatch(() => RunSingle(
+                    new HotUpdateReleaseSteps.ValidateReleaseEnvironment(),
+                    new FullPackageReleaseSteps.WriteFullPackageVersion(_writeFullUpdateVersion)));
 
             if (GUILayout.Button("1) 准备整包资源（Setup + Switch + Build）", GUILayout.Height(30)))
-                Dispatch(RunPrepareFullPackage);
+                Dispatch(() => RunSingle(new FullPackageReleaseSteps.PrepareFullPackageAddressables()));
 
             if (GUILayout.Button("2) 导出首包 RefData（Batch + StreamingAssetsOnly）", GUILayout.Height(30)))
-                Dispatch(RunExportRefData);
+                Dispatch(() => RunSingle(new FullPackageReleaseSteps.ExportRefData()));
 
             if (GUILayout.Button("3) 同步热更程序集 + HybridCLR AOT -> StreamingAssets", GUILayout.Height(30)))
-                Dispatch(RunSyncHotUpdate);
+                Dispatch(() => RunSingle(new FullPackageReleaseSteps.SyncStreamingAssetsAndVerify()));
 
             if (GUILayout.Button("4) 打开 Build Settings", GUILayout.Height(30)))
                 Dispatch(() => OpenBuildSettingsWindow(_autoSwitchBackAfterBuild));
 
             if (GUILayout.Button("5) 切回 HotUpdateRemote", GUILayout.Height(30)))
-                Dispatch(RunSwitchBackRemote);
+                Dispatch(() => RunSingle(new FullPackageReleaseSteps.SwitchBackHotUpdateRemote()));
 
             EditorGUILayout.Space(4);
             if (GUILayout.Button("一键执行 0->4（自动打开 Build Settings）", GUILayout.Height(36)))
@@ -300,315 +270,119 @@ namespace Framework.Editor
             EditorGUILayout.EndScrollView();
         }
 
-        private void RunPrepareFullPackage()
+        /// <summary>
+        /// 用当前窗口参数组装整包流水线上下文。
+        /// 流程逻辑全部在 FullPackageReleaseSteps；窗口只负责收集参数、编排步骤与展示结果。
+        /// </summary>
+        private FullPackageReleaseContext BuildContext()
         {
-            AddressablesSetup.PrepareFullPackage();
-            AppendLog("完成：Prepare Full Package");
-        }
-
-        private void RunWriteFullUpdateVersion()
-        {
-            if (string.IsNullOrEmpty(_appVersion))
-                throw new Exception("AppVersion 不能为空");
-
-            // 发布前环境校验（prod 明文 / 要求签名却无私钥等）：不达标直接阻断，避免产出半成品清单。
-            if (!ReleaseProfileStore.TryResolveActive(out ReleaseProfile profile, out string profileReport))
-            {
-                AppendLog("[环境校验] " + profileReport);
-                throw new Exception("发布环境校验未通过：\n" + profileReport);
-            }
-            AppendLog("[环境校验] " + profileReport);
-
-            PlayerSettings.bundleVersion = _appVersion;
-            AppendLog($"完成：PlayerSettings.bundleVersion = {_appVersion}");
-
-            if (!_writeFullUpdateVersion)
-            {
-                AppendLog("跳过：未写入 version.json（按当前开关设置）");
-                return;
-            }
-
-            // 统一契约：ReleaseManifestWriter 序列化 UpdateInfo 本体，与热更发布/客户端解析同一类型。
-            string json = ReleaseManifestWriter.ToJson(new UpdateInfo
+            return new FullPackageReleaseContext
             {
                 AppVersion = _appVersion,
-                ResourceVersion = 1,
-                CodeVersion = 1,
-                ForceUpdate = true,
-                MinCompatibleVersion = string.IsNullOrEmpty(_minCompatibleVersion) ? _appVersion : _minCompatibleVersion,
-                Description = "",
-                PatchFiles = new List<PatchFile>(),
+                MinCompatibleVersion = _minCompatibleVersion,
                 UpdateUrl = _fullPackageUpdateUrl ?? string.Empty,
-                GrayPercent = 0
-            });
-
-            // ServerData 侧清单会被部署到更新服务器，签名伴生下发；
-            // StreamingAssets 侧仅作为出厂版本随包内置，客户端不对其验签，无需签名。
-            Directory.CreateDirectory(ServerDataDir);
-            string serverDataManifest = Path.Combine(ServerDataDir, "version.json");
-            File.WriteAllText(serverDataManifest, json, Encoding.UTF8);
-            if (!UpdateManifestSigner.SignManifestForPublish(serverDataManifest, AppendLog, profile.RequireManifestSignature))
-                throw new Exception($"清单签名失败（环境 {profile.Name} 要求签名），已中止发布");
-
-            string streamingDir = Path.Combine(Application.dataPath, "StreamingAssets");
-            Directory.CreateDirectory(streamingDir);
-            File.WriteAllText(Path.Combine(streamingDir, "version.json"), json, Encoding.UTF8);
-
-            AssetDatabase.Refresh();
-            AppendLog($"完成：整包 version.json 已写入（App={_appVersion}, ForceUpdate=true）");
+                ForceUpdate = true,
+                ServerDataDir = ServerDataDir,
+                ExcelFolder = _excelFolder,
+                StreamingDbPath = _streamingDbPath,
+                OverwriteTables = _overwriteTables,
+                EnableValidation = _enableValidation,
+                RequireHealthyTelemetry = _requireHealthyLaunchTelemetry,
+                BuildOutputPath = _buildOutputPath,
+                Log = AppendLog
+            };
         }
 
-        private static readonly string[] BootstrapRequiredTables = { "language", "loading_tips" };
-
-        private void RunExportRefData()
+        /// <summary>单步按钮共用：跑一个只含指定步骤的迷你流水线，失败弹窗提示。</summary>
+        private void RunSingle(params IReleaseStep[] steps)
         {
-            if (string.IsNullOrEmpty(_excelFolder) || !Directory.Exists(_excelFolder))
-                throw new Exception($"Excel 文件夹无效：{_excelFolder}");
-
-            var excelFiles = Directory.GetFiles(_excelFolder, "*.xlsx", SearchOption.AllDirectories)
-                .Where(f => !Path.GetFileName(f).StartsWith("~$", StringComparison.Ordinal))
-                .ToList();
-
-            if (excelFiles.Count == 0)
-                throw new Exception($"目录中未找到 xlsx：{_excelFolder}");
-
-            var config = new ExcelExporter.ExportConfig
-            {
-                OutputDbPath = _streamingDbPath,
-                AddressableBytesOutputPath = "Assets/ResourcesOut/RefData/config.db.bytes",
-                OutputTarget = ExcelExporter.DatabaseOutputTarget.StreamingAssetsOnly,
-                OverwriteExistingTables = _overwriteTables,
-                PruneMissingTablesOnBatch = true,
-                EnableValidation = _enableValidation,
-                VerboseLogging = false
-            };
-
-            var exporter = new ExcelExporter(config);
-            var results = exporter.ExportBatch(excelFiles);
-
-            int success = results.Count(r => r.Success);
-            int fail = results.Count(r => !r.Success);
-            if (fail > 0)
-            {
-                string errors = string.Join("\n\n", results.Where(r => !r.Success).Select(r => $"{r.TableName}: {r.ErrorMessage}"));
-                throw new Exception($"RefData 导出失败 {fail} 项：\n{errors}");
-            }
-
-            var exportedTables = results.Where(r => r.Success).Select(r => r.TableName).ToList();
-            AppendLog($"批量导出 {success} 张表：{string.Join(", ", exportedTables)}");
-
-            // 批量模式偶发只导出首包配表的第一个工作表时，按表名补导 language / loading_tips
-            EnsureBootstrapConfigTables(exporter, excelFiles);
-
-            string dbPath = ToAbsoluteProjectPath(_streamingDbPath);
-            ValidateRequiredConfigTables(dbPath);
-
-            AppendLog($"完成：RefData 已写入 {_streamingDbPath}");
+            var ctx = BuildContext();
+            _lastRunContext = ctx;
+            var result = ReleasePipeline.Run(steps, ctx);
+            if (!result.Success)
+                EditorUtility.DisplayDialog("执行失败", $"{result.FailedStep}：{result.Error}", "OK");
         }
 
         /// <summary>
-        /// 首包启动依赖表缺失时，从「首包配表」工作簿按表名显式补导（避免仅导出第一个 sheet）。
+        /// 整包公共步骤序列（不含 BuildPlayer）：环境门禁 → 输入校验 → 写版本 →
+        /// 整包资源（可补偿：失败自动切回原 Profile）→ RefData 导出 → StreamingAssets 同步与校验。
         /// </summary>
-        private void EnsureBootstrapConfigTables(ExcelExporter exporter, List<string> excelFiles)
+        private List<IReleaseStep> BuildCommonSteps(bool requireBuildOutputPath)
         {
-            string dbPath = ToAbsoluteProjectPath(_streamingDbPath);
-            var missing = GetMissingRequiredTables(dbPath, BootstrapRequiredTables);
-            if (missing.Count == 0)
-                return;
-
-            string bootstrapPath = excelFiles.FirstOrDefault(IsBootstrapWorkbookPath);
-            if (string.IsNullOrEmpty(bootstrapPath))
+            return new List<IReleaseStep>
             {
-                throw new Exception(
-                    $"首包 config.db 缺少表：{string.Join(", ", missing)}。\n" +
-                    $"请在 Excel 目录放置含 language、loading_tips 工作表的「首包配表.xlsx」。");
-            }
-
-            AppendLog(
-                $"缺少首包表 {string.Join(", ", missing)}，从 {Path.GetFileName(bootstrapPath)} 按工作表名补导…");
-
-            foreach (string table in missing)
-            {
-                var result = exporter.ExportExcel(bootstrapPath, table);
-                if (!result.Success)
-                    throw new Exception($"补导首包表「{table}」失败：{result.ErrorMessage}");
-
-                AppendLog($"补导成功：{table}（{result.RowCount} 行）");
-            }
+                new HotUpdateReleaseSteps.ValidateReleaseEnvironment(),
+                new FullPackageReleaseSteps.ValidateFullPackageInputs(requireBuildOutputPath),
+                new FullPackageReleaseSteps.WriteFullPackageVersion(_writeFullUpdateVersion),
+                new FullPackageReleaseSteps.PrepareFullPackageAddressables(),
+                new FullPackageReleaseSteps.ExportRefData(),
+                new FullPackageReleaseSteps.SyncStreamingAssetsAndVerify()
+            };
         }
 
-        private static bool IsBootstrapWorkbookPath(string path)
-        {
-            string name = Path.GetFileNameWithoutExtension(path) ?? string.Empty;
-            return name.Contains("首包", StringComparison.Ordinal) && name.Contains("配表", StringComparison.Ordinal);
-        }
-
-        private static List<string> GetMissingRequiredTables(string dbPath, string[] requiredTables)
-        {
-            var missing = new List<string>();
-            using (var db = new SQLiteConnection(dbPath))
-            {
-                foreach (string table in requiredTables)
-                {
-                    int count = db.ExecuteScalar<int>(
-                        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?",
-                        table);
-                    if (count == 0)
-                        missing.Add(table);
-                }
-            }
-
-            return missing;
-        }
-
-        private void RunSyncHotUpdate()
-        {
-            HotUpdatePublisher.SyncToStreamingAssetsForBuild(showDialog: false);
-            AppendLog("完成：热更程序集 / HybridCLR AOT / version.json 已同步到 StreamingAssets");
-        }
-
-        private void RunSwitchBackRemote()
-        {
-            AddressablesSetup.SwitchToHotUpdateRemote();
-            AppendLog("完成：已切回 HotUpdateRemote");
-        }
-
+        /// <summary>一键执行 0→4：跑公共步骤后打开 Build Settings，由人工执行 Build。</summary>
         private void RunAll()
         {
-            BeginPipeline();
-            try
+            _state = PipelineState.Validating;
+            var ctx = BuildContext();
+            _lastRunContext = ctx;
+
+            var result = ReleasePipeline.Run(BuildCommonSteps(requireBuildOutputPath: false), ctx);
+
+            if (!result.Success)
             {
-                SetState(PipelineState.Validating);
-                ValidatePipelineInputs(requireBuildOutputPath: false);
-
-                SetState(PipelineState.WritingVersion);
-                RunWriteFullUpdateVersion();
-
-                SetState(PipelineState.PreparingAddressables);
-                RunPrepareFullPackage();
-
-                SetState(PipelineState.ExportingRefData);
-                RunExportRefData();
-
-                SetState(PipelineState.SyncingStreamingAssets);
-                RunSyncHotUpdate();
-                VerifyRequiredStreamingAssetsOutputs();
-
-                OpenBuildSettingsWindow(_autoSwitchBackAfterBuild);
-                SetState(PipelineState.Completed);
-                EditorUtility.DisplayDialog("整包流程完成",
-                    _autoSwitchBackAfterBuild
-                        ? "1~4 步骤已执行完成，请立即在 Build Settings 执行 Build。\n\nBuild 成功后将自动切回 HotUpdateRemote。"
-                        : "1~4 步骤已执行完成，请立即在 Build Settings 执行 Build。\n\n⚠ Build 完成后，再回到面板手动点「5) 切回 HotUpdateRemote」。",
-                    "OK");
+                _state = PipelineState.Failed;
+                WriteFullPackageBuildReport(ctx, success: false, errorMessage: result.Error);
+                EditorUtility.DisplayDialog("整包流程中断", $"{result.FailedStep}：{result.Error}", "OK");
+                return;
             }
-            catch (Exception ex)
-            {
-                SetState(PipelineState.Failed);
-                RollbackProfileIfNeeded();
-                AppendLog($"[ERROR] {ex.Message}");
-                WriteFullPackageBuildReport(success: false, errorMessage: ex.Message);
-                EditorUtility.DisplayDialog("整包流程中断", ex.Message, "OK");
-            }
-            finally
-            {
-                EndPipeline();
-            }
+
+            _state = PipelineState.Completed;
+            OpenBuildSettingsWindow(_autoSwitchBackAfterBuild);
+            EditorUtility.DisplayDialog("整包流程完成",
+                _autoSwitchBackAfterBuild
+                    ? "1~4 步骤已执行完成，请立即在 Build Settings 执行 Build。\n\nBuild 成功后将自动切回 HotUpdateRemote。"
+                    : "1~4 步骤已执行完成，请立即在 Build Settings 执行 Build。\n\n⚠ Build 完成后，再回到面板手动点「5) 切回 HotUpdateRemote」。",
+                "OK");
         }
 
+        /// <summary>一键整包构建：公共步骤 + BuildPlayer +（按开关）切回 HotUpdateRemote，最后落盘构建报告。</summary>
         private void RunBuildFullPackageOneClick()
         {
-            bool shouldRestoreProfile = _autoSwitchBackAfterBuild;
-            BeginPipeline();
-            try
-            {
-                SetState(PipelineState.Validating);
-                ValidatePipelineInputs(requireBuildOutputPath: true);
-
-                SetState(PipelineState.WritingVersion);
-                RunWriteFullUpdateVersion();
-
-                SetState(PipelineState.PreparingAddressables);
-                RunPrepareFullPackage();
-
-                SetState(PipelineState.ExportingRefData);
-                RunExportRefData();
-
-                SetState(PipelineState.SyncingStreamingAssets);
-                RunSyncHotUpdate();
-                VerifyRequiredStreamingAssetsOutputs();
-
-                SetState(PipelineState.BuildingPlayer);
-                RunBuildPlayer();
-                SetState(PipelineState.Completed);
-
-                if (shouldRestoreProfile)
-                    RunSwitchBackRemote();
-
-                EditorUtility.DisplayDialog("整包构建完成",
-                    "整包构建已完成：\n" +
-                    "1) 全量资源（FullPackageLocal）\n" +
-                    "2) StreamingAssets/RefData/config.db\n" +
-                    "3) StreamingAssets/热更程序集 *.dll.bytes\n" +
-                    "4) StreamingAssets/HybridCLRMetadata/*.dll.bytes\n" +
-                    "5) version.json\n" +
-                    (shouldRestoreProfile ? "6) 已自动切回 HotUpdateRemote" : "6) 请手动切回 HotUpdateRemote"),
-                    "OK");
-                WriteFullPackageBuildReport(success: true);
-            }
-            catch (Exception ex)
-            {
-                SetState(PipelineState.Failed);
-                RollbackProfileIfNeeded();
-                AppendLog($"[ERROR] {ex.Message}");
-                WriteFullPackageBuildReport(success: false, errorMessage: ex.Message);
-                EditorUtility.DisplayDialog("整包构建失败", ex.Message, "OK");
-            }
-            finally
-            {
-                // 兜底：若开启了自动回切，确保直接 BuildPlayer 路径也能恢复到 HotUpdateRemote。
-                if (shouldRestoreProfile)
-                {
-                    try
-                    {
-                        AddressablesSetup.SwitchToHotUpdateRemote();
-                    }
-                    catch (Exception restoreEx)
-                    {
-                        AppendLog($"[WARN] 自动切回 HotUpdateRemote 失败：{restoreEx.Message}");
-                    }
-                }
-
-                EndPipeline();
-            }
-        }
-
-        private void RunBuildPlayer()
-        {
-            string outputPath = EnsureBuildOutputPath();
+            EnsureBuildOutputPath();
             SavePrefs();
 
-            string[] scenes = EditorBuildSettings.scenes
-                .Where(s => s.enabled)
-                .Select(s => s.path)
-                .ToArray();
-            if (scenes.Length == 0)
-                throw new Exception("Build Settings 中没有启用的场景，无法构建整包。");
+            _state = PipelineState.Validating;
+            var ctx = BuildContext();
+            _lastRunContext = ctx;
 
-            var options = new BuildPlayerOptions
+            var steps = BuildCommonSteps(requireBuildOutputPath: true);
+            steps.Add(new FullPackageReleaseSteps.BuildPlayer());
+            if (_autoSwitchBackAfterBuild)
+                steps.Add(new FullPackageReleaseSteps.SwitchBackHotUpdateRemote());
+
+            var result = ReleasePipeline.Run(steps, ctx);
+
+            if (!result.Success)
             {
-                scenes = scenes,
-                locationPathName = outputPath,
-                target = EditorUserBuildSettings.activeBuildTarget,
-                options = BuildOptions.None
-            };
+                // 失败路径的 Profile 恢复由 PrepareFullPackageAddressables 的补偿逆序完成。
+                _state = PipelineState.Failed;
+                WriteFullPackageBuildReport(ctx, success: false, errorMessage: result.Error);
+                EditorUtility.DisplayDialog("整包构建失败", $"{result.FailedStep}：{result.Error}", "OK");
+                return;
+            }
 
-            AppendLog($"开始 BuildPlayer -> {outputPath}");
-            BuildReport report = BuildPipeline.BuildPlayer(options);
-            if (report.summary.result != BuildResult.Succeeded)
-                throw new Exception($"BuildPlayer 失败：{report.summary.result}");
-
-            AppendLog($"完成：BuildPlayer 成功，输出：{outputPath}");
+            _state = PipelineState.Completed;
+            WriteFullPackageBuildReport(ctx, success: true);
+            EditorUtility.DisplayDialog("整包构建完成",
+                "整包构建已完成：\n" +
+                "1) 全量资源（FullPackageLocal）\n" +
+                "2) StreamingAssets/RefData/config.db\n" +
+                "3) StreamingAssets/热更程序集 *.dll.bytes\n" +
+                "4) StreamingAssets/HybridCLRMetadata/*.dll.bytes\n" +
+                "5) version.json\n" +
+                (_autoSwitchBackAfterBuild ? "6) 已自动切回 HotUpdateRemote" : "6) 请手动切回 HotUpdateRemote"),
+                "OK");
         }
 
         private void AppendLog(string message)
@@ -690,116 +464,6 @@ namespace Framework.Editor
             EditorPrefs.SetString(BuildOutputPathPrefsKey, _buildOutputPath ?? string.Empty);
         }
 
-        private void ValidatePipelineInputs(bool requireBuildOutputPath)
-        {
-            if (string.IsNullOrEmpty(_appVersion))
-                throw new Exception("AppVersion 不能为空。");
-
-            if (string.IsNullOrEmpty(_excelFolder) || !Directory.Exists(_excelFolder))
-                throw new Exception($"Excel 源目录无效：{_excelFolder}");
-
-            if (!HasExcelFiles(_excelFolder))
-                throw new Exception($"Excel 源目录下未找到 .xlsx：{_excelFolder}");
-
-            if (string.IsNullOrEmpty(_streamingDbPath))
-                throw new Exception("首包数据库路径不能为空。");
-
-            if (!_streamingDbPath.Replace('\\', '/').StartsWith("Assets/StreamingAssets/", StringComparison.OrdinalIgnoreCase))
-                throw new Exception("首包数据库路径必须位于 Assets/StreamingAssets 下。");
-
-            if (requireBuildOutputPath && string.IsNullOrEmpty(_buildOutputPath))
-                throw new Exception("请先设置 Build 输出路径（用于一键整包构建）。");
-
-            Il2CppToolchainValidator.ValidateForActiveBuildTarget();
-
-            ValidateLaunchTelemetryIfNeeded();
-        }
-
-        private static bool HasExcelFiles(string excelFolder)
-        {
-            return Directory.GetFiles(excelFolder, "*.xlsx", SearchOption.AllDirectories)
-                .Any(f => !Path.GetFileName(f).StartsWith("~$", StringComparison.Ordinal));
-        }
-
-        private void VerifyRequiredStreamingAssetsOutputs()
-        {
-            string streamingDir = Path.Combine(Application.dataPath, "StreamingAssets");
-            string localDbPath = ToAbsoluteProjectPath(_streamingDbPath);
-
-            string[] mustExist =
-            {
-                localDbPath,
-                Path.Combine(streamingDir, "version.json"),
-                Path.Combine(ServerDataDir, "version.json")
-            };
-
-            var missing = new List<string>();
-            foreach (string file in mustExist)
-            {
-                if (!File.Exists(file))
-                    missing.Add(file);
-            }
-
-            foreach (string bytesFileName in VersionManager.HotUpdateAssemblyFileNames)
-            {
-                string file = Path.Combine(streamingDir, bytesFileName);
-                if (!File.Exists(file))
-                    missing.Add(file);
-            }
-
-            foreach (string file in HybridCLRStreamingAssetsSync.GetRequiredStreamingAssetsMetadataPaths())
-            {
-                if (!File.Exists(file))
-                    missing.Add(file);
-            }
-
-            if (missing.Count > 0)
-                throw new Exception("关键产物缺失：\n" + string.Join("\n", missing));
-
-            ValidateRequiredConfigTables(localDbPath);
-            ValidateUiAddressMappings(localDbPath);
-        }
-
-        private static string ToAbsoluteProjectPath(string projectPath)
-        {
-            if (Path.IsPathRooted(projectPath))
-                return projectPath;
-
-            string normalized = projectPath.Replace('\\', '/');
-            if (normalized.StartsWith("Assets/", StringComparison.OrdinalIgnoreCase))
-                return Path.Combine(Directory.GetParent(Application.dataPath).FullName, normalized);
-
-            return Path.GetFullPath(projectPath);
-        }
-
-        /// <summary>
-        /// 记录流程起始状态（当前 active profile），便于失败时回滚。
-        /// </summary>
-        private void BeginPipeline()
-        {
-            _profileBeforeRun = GetActiveProfileName();
-            _validationResults.Clear();
-            _lastTelemetryEndReason = string.Empty;
-            _lastTelemetrySuccess = false;
-            AppendLog($"流程开始，当前Profile={_profileBeforeRun}");
-        }
-
-        /// <summary>
-        /// 结束流程并清理临时状态。
-        /// </summary>
-        private void EndPipeline()
-        {
-            _profileBeforeRun = string.Empty;
-            if (_state != PipelineState.Failed && _state != PipelineState.Completed)
-                _state = PipelineState.Idle;
-        }
-
-        private void SetState(PipelineState state)
-        {
-            _state = state;
-            AppendLog($"状态切换 -> {_state}");
-        }
-
         /// <summary>
         /// 登记一个流水线动作，延后到 OnGUI（IMGUI 事件）之外的编辑器 tick 再执行。
         /// 必须如此：在 OnGUI 内直接调用 AddressableAssetSettings.BuildPlayerContent / BuildPipeline.BuildPlayer，
@@ -819,235 +483,26 @@ namespace Framework.Editor
             };
         }
 
-        /// <summary>
-        /// 流程失败时自动回滚 Addressables Profile，避免发布环境残留在 FullPackageLocal。
-        /// </summary>
-        private void RollbackProfileIfNeeded()
-        {
-            if (string.IsNullOrEmpty(_profileBeforeRun))
-                return;
-
-            string currentProfile = GetActiveProfileName();
-            if (string.Equals(currentProfile, _profileBeforeRun, StringComparison.Ordinal))
-                return;
-
-            try
-            {
-                if (string.Equals(_profileBeforeRun, "HotUpdateRemote", StringComparison.Ordinal))
-                    AddressablesSetup.SwitchToHotUpdateRemote();
-                else if (string.Equals(_profileBeforeRun, "FullPackageLocal", StringComparison.Ordinal))
-                    AddressablesSetup.SwitchToFullPackageLocal();
-
-                AppendLog($"已回滚Profile: {currentProfile} -> {_profileBeforeRun}");
-            }
-            catch (Exception ex)
-            {
-                AppendLog($"[WARN] Profile 回滚失败：{ex.Message}");
-            }
-        }
-
-        /// <summary>
-        /// 读取当前 Addressables Active Profile 名称。
-        /// </summary>
-        private static string GetActiveProfileName()
-        {
-            var settings = AddressableAssetSettingsDefaultObject.Settings;
-            if (settings == null || settings.profileSettings == null)
-                return string.Empty;
-
-            string activeId = settings.activeProfileId;
-            return settings.profileSettings.GetProfileName(activeId) ?? string.Empty;
-        }
-
-        private void ValidateLaunchTelemetryIfNeeded()
-        {
-            if (!File.Exists(LaunchMetricPath))
-            {
-                string msg = "[Telemetry] 未找到 launch_metrics_last.json，建议先跑一次启动流程冒烟。";
-                AppendLog(msg);
-                if (_requireHealthyLaunchTelemetry)
-                    throw new Exception(msg + "\n请先启动一次客户端并完成 LaunchFlow。");
-                return;
-            }
-
-            try
-            {
-                var metric = JsonUtility.FromJson<LaunchRunMetricSnapshot>(File.ReadAllText(LaunchMetricPath));
-                if (metric == null)
-                {
-                    const string msg = "[Telemetry] launch_metrics_last.json 解析失败。";
-                    AppendLog(msg);
-                    if (_requireHealthyLaunchTelemetry)
-                        throw new Exception(msg);
-                    return;
-                }
-
-                long totalMs = 0;
-                string failedPhase = string.Empty;
-                foreach (var phase in metric.Phases)
-                {
-                    totalMs += phase.DurationMs;
-                    if (!phase.Success && string.IsNullOrEmpty(failedPhase))
-                        failedPhase = string.IsNullOrEmpty(phase.DisplayName) ? phase.Phase : phase.DisplayName;
-                }
-
-                AppendLog($"[Telemetry] 最近启动: success={metric.Success}, reason={metric.EndReason}, total={totalMs}ms");
-                if (!string.IsNullOrEmpty(failedPhase))
-                    AppendLog($"[Telemetry] 失败阶段: {failedPhase}");
-                _lastTelemetryEndReason = metric.EndReason ?? string.Empty;
-                _lastTelemetrySuccess = metric.Success;
-
-                if (_requireHealthyLaunchTelemetry && !metric.Success)
-                {
-                    if (IsRecoverableLaunchTelemetryFailure(metric.EndReason, failedPhase))
-                    {
-                        AppendLog(
-                            "[Telemetry] 最近一次失败属于旧整包缺热更程序集导致的可恢复失败，" +
-                            "本次将重新同步完整热更程序集后继续构建。");
-                        return;
-                    }
-
-                    throw new Exception(
-                        "[Telemetry] 最近一次启动埋点为失败，已阻断整包构建。\n" +
-                        $"reason={metric.EndReason}, failed_phase={failedPhase}");
-                }
-            }
-            catch (Exception ex)
-            {
-                AppendLog($"[Telemetry] 读取启动埋点失败: {ex.Message}");
-                if (_requireHealthyLaunchTelemetry)
-                    throw;
-            }
-        }
-
-        /// <summary>
-        /// 判断最近一次启动失败是否可通过重新整包自愈。
-        /// </summary>
-        /// <param name="endReason">LaunchFlow 结束原因错误码。</param>
-        /// <param name="failedPhase">首个失败阶段名称。</param>
-        /// <returns>可由当前整包流程重新同步产物后修复时返回 true。</returns>
-        private static bool IsRecoverableLaunchTelemetryFailure(string endReason, string failedPhase)
-        {
-            if (string.Equals(endReason, TelemetryErrorCodes.Launch.HotUpdateAssemblyLoadFailed, StringComparison.Ordinal))
-                return true;
-
-            return string.Equals(failedPhase, "step08_hotupdate_assembly_load", StringComparison.OrdinalIgnoreCase);
-        }
-
-        private void ValidateRequiredConfigTables(string dbPath)
-        {
-            var missing = GetMissingRequiredTables(dbPath, BootstrapRequiredTables);
-
-            if (missing.Count > 0)
-            {
-                AddValidationResult("critical_tables", false, string.Join(",", missing));
-                throw new Exception(
-                    "首包 config.db 缺少关键表：\n" + string.Join("\n", missing) +
-                    "\n\n请确认：\n" +
-                    "1) 首包配表.xlsx 含 loading_tips 工作表且已保存；\n" +
-                    "2) 关闭 Excel 后重新点「一键整包构建」；\n" +
-                    "3) 查看 Console 是否有 [ExcelReader] 跳过工作表 或 补导失败 日志。");
-            }
-
-            AddValidationResult("critical_tables", true, "language,loading_tips");
-        }
-
-        private void ValidateUiAddressMappings(string dbPath)
-        {
-            var settings = AddressableAssetSettingsDefaultObject.Settings;
-            if (settings == null)
-                throw new Exception("Addressables Settings 不存在，无法校验 UI 地址映射。");
-
-            var addressSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var group in settings.groups)
-            {
-                if (group == null) continue;
-                foreach (var entry in group.entries)
-                {
-                    if (!string.IsNullOrEmpty(entry.address))
-                        addressSet.Add(entry.address);
-                }
-            }
-
-            var missingRows = new List<UiWndResAddressRow>();
-            using (var db = new SQLiteConnection(dbPath))
-            {
-                int tableExists = db.ExecuteScalar<int>(
-                    "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='ui_wnd_res'");
-
-                if (tableExists == 0)
-                {
-                    AddValidationResult("ui_address_mapping", true, "skip(ui_wnd_res missing)");
-                    return;
-                }
-
-                var rows = db.Query<UiWndResAddressRow>("SELECT Id, Address, Desc FROM ui_wnd_res");
-                foreach (var row in rows)
-                {
-                    if (string.IsNullOrEmpty(row.Address)) continue;
-                    if (!addressSet.Contains(row.Address))
-                        missingRows.Add(row);
-                }
-            }
-
-            if (missingRows.Count > 0)
-            {
-                string distinct = string.Join(
-                    "\n",
-                    missingRows
-                        .GroupBy(row => row.Address, StringComparer.OrdinalIgnoreCase)
-                        .Select(group => FormatMissingUiAddressRow(group.First())));
-                AddValidationResult("ui_address_mapping", false, "missing");
-                throw new Exception(
-                    "UI 配表引用了不存在的 Addressables 资源：\n" +
-                    distinct +
-                    "\n\n造成原因：config.db 的 ui_wnd_res 表仍保留这些 UI 地址，但对应 Prefab 已删除或没有注册到 Addressables。\n" +
-                    $"配置来源：{_excelFolder}/通用UI资源表.xlsx -> ui_wnd_res。\n\n" +
-                    "处理方式：\n" +
-                    "1) 如果这是已删除的测试资源，请从通用UI资源表.xlsx 的 ui_wnd_res 工作表删除对应行；\n" +
-                    "2) 如果这是正式资源，请恢复 Prefab 到 Assets/ResourcesOut 下并重新同步 Addressables；\n" +
-                    "3) 关闭 Excel 后重新点击「一键整包构建」，让 RefData/config.db 重新导出。");
-            }
-
-            AddValidationResult("ui_address_mapping", true, "all addresses resolved");
-        }
-
-        /// <summary>
-        /// 格式化缺失的 UI 地址记录，便于在整包失败弹窗中直接定位配置行。
-        /// </summary>
-        private static string FormatMissingUiAddressRow(UiWndResAddressRow row)
-        {
-            string desc = string.IsNullOrEmpty(row.Desc) ? string.Empty : $"，Desc={row.Desc}";
-            return $"Id={row.Id}，Address={row.Address}{desc}";
-        }
-
-        private void AddValidationResult(string rule, bool passed, string detail)
-        {
-            string line = $"{rule}: {(passed ? "PASS" : "FAIL")} ({detail})";
-            _validationResults.Add(line);
-            AppendLog($"[Check] {line}");
-        }
-
-        private void WriteFullPackageBuildReport(bool success, string errorMessage = null)
+        private void WriteFullPackageBuildReport(FullPackageReleaseContext ctx, bool success, string errorMessage = null)
         {
             var report = new FullPackageBuildReportSnapshot
             {
                 GeneratedAtUtc = DateTime.UtcNow.ToString("O"),
                 Success = success,
                 Error = errorMessage ?? string.Empty,
-                ProfileBefore = _profileBeforeRun,
-                ProfileAfter = GetActiveProfileName(),
+                ProfileBefore = ctx.ProfileBefore,
+                ProfileAfter = FullPackageReleaseSteps.PrepareFullPackageAddressables.GetActiveProfileName(),
                 AppVersion = _appVersion,
                 MinCompatibleVersion = _minCompatibleVersion,
                 BuildOutputPath = _buildOutputPath,
                 BuildTarget = EditorUserBuildSettings.activeBuildTarget.ToString(),
                 AutoSwitchBackAfterBuild = _autoSwitchBackAfterBuild,
-                TelemetryEndReason = _lastTelemetryEndReason,
-                TelemetrySuccess = _lastTelemetrySuccess,
-                ValidationResults = new List<string>(_validationResults)
+                TelemetryEndReason = ctx.TelemetryEndReason,
+                TelemetrySuccess = ctx.TelemetrySuccess,
+                ValidationResults = new List<string>(ctx.ValidationResults)
             };
 
-            report.Artifacts.Add(BuildArtifactSnapshotOf(ToAbsoluteProjectPath(_streamingDbPath)));
+            report.Artifacts.Add(BuildArtifactSnapshotOf(FullPackageReleaseSteps.ToAbsoluteProjectPath(_streamingDbPath)));
             foreach (string bytesFileName in VersionManager.HotUpdateAssemblyFileNames)
                 report.Artifacts.Add(BuildArtifactSnapshotOf(Path.Combine(Application.dataPath, "StreamingAssets", bytesFileName)));
             report.Artifacts.Add(BuildArtifactSnapshotOf(Path.Combine(Application.dataPath, "StreamingAssets", "version.json")));
@@ -1093,19 +548,5 @@ namespace Framework.Editor
             }
         }
 
-        /// <summary>
-        /// ui_wnd_res 表中用于校验 Addressables 映射的最小字段集合。
-        /// </summary>
-        private class UiWndResAddressRow
-        {
-            /// <summary>UI 配表记录编号，用于定位 Excel 源行。</summary>
-            public int Id { get; set; }
-
-            /// <summary>UI Prefab 的 Addressables 地址。</summary>
-            public string Address { get; set; }
-
-            /// <summary>配置描述，用于在错误提示中区分测试资源和正式资源。</summary>
-            public string Desc { get; set; }
-        }
     }
 }

@@ -95,6 +95,92 @@ namespace Framework.Tests
             Assert.Throws<ArgumentNullException>(() => ReleasePipeline.Run(Array.Empty<IReleaseStep>(), null));
         }
 
+        // ── 失败补偿（Saga 语义）─────────────────────────────────────────────
+
+        /// <summary>可补偿假步骤：记录补偿调用顺序，可按需让补偿本身抛异常。</summary>
+        private class FakeCompensableStep : ICompensableStep
+        {
+            private readonly List<string> _compensations;
+            private readonly bool _compensateThrows;
+            public string Name { get; }
+            public string Description => "可补偿测试步骤";
+
+            public FakeCompensableStep(string name, List<string> compensations, bool compensateThrows = false)
+            {
+                Name = name;
+                _compensations = compensations;
+                _compensateThrows = compensateThrows;
+            }
+
+            public void Execute(ReleaseContext context) { }
+
+            public void Compensate(ReleaseContext context)
+            {
+                if (_compensateThrows)
+                    throw new Exception($"{Name} 补偿失败");
+                _compensations.Add(Name);
+            }
+        }
+
+        [Test]
+        public void 失败时_已成功的可补偿步骤逆序补偿()
+        {
+            var compensations = new List<string>();
+            var steps = new IReleaseStep[]
+            {
+                new FakeCompensableStep("A", compensations),
+                new FakeStep("B"),                              // 不可补偿，应被跳过
+                new FakeCompensableStep("C", compensations),
+                new FakeStep("D", _ => throw new Exception("D 炸了")),
+                new FakeCompensableStep("E", compensations)     // 未执行到，不应补偿
+            };
+
+            var result = ReleasePipeline.Run(steps, new ReleaseContext());
+
+            Assert.IsFalse(result.Success);
+            // 逆序：C 先于 A；E 未执行不补偿；B 非可补偿步骤不参与。
+            CollectionAssert.AreEqual(new[] { "C", "A" }, compensations);
+            Assert.IsTrue(result.Steps[0].Compensated);   // A
+            Assert.IsFalse(result.Steps[1].Compensated);  // B
+            Assert.IsTrue(result.Steps[2].Compensated);   // C
+        }
+
+        [Test]
+        public void 单个补偿失败_不阻止其余补偿()
+        {
+            var compensations = new List<string>();
+            var steps = new IReleaseStep[]
+            {
+                new FakeCompensableStep("A", compensations),
+                new FakeCompensableStep("B", compensations, compensateThrows: true),
+                new FakeStep("C", _ => throw new Exception("C 炸了"))
+            };
+
+            var result = ReleasePipeline.Run(steps, new ReleaseContext());
+
+            Assert.IsFalse(result.Success);
+            // B 补偿抛异常只记日志；A 的补偿仍执行。
+            CollectionAssert.AreEqual(new[] { "A" }, compensations);
+            Assert.IsTrue(result.Steps[0].Compensated);
+            Assert.IsFalse(result.Steps[1].Compensated);
+        }
+
+        [Test]
+        public void 全部成功_不触发补偿()
+        {
+            var compensations = new List<string>();
+            var steps = new IReleaseStep[]
+            {
+                new FakeCompensableStep("A", compensations),
+                new FakeCompensableStep("B", compensations)
+            };
+
+            var result = ReleasePipeline.Run(steps, new ReleaseContext());
+
+            Assert.IsTrue(result.Success);
+            Assert.AreEqual(0, compensations.Count);
+        }
+
         // ── 版本递增规则 ─────────────────────────────────────────────────────
 
         [Test]
