@@ -3,7 +3,7 @@
   "BaseUrl": "http://127.0.0.1:80/Updates",
   "UploadRoot": "",
   "RequireHttps": false,
-  "RequireManifestSignature": false,
-  "SigningKeyRef": "",
+  "RequireManifestSignature": true,
+  "SigningKeyRef": "qa_hotupdate_manifest",
   "AllowPlayerPrefsOverride": true
 }

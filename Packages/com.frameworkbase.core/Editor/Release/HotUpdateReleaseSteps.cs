@@ -11,7 +11,7 @@ using UnityEditor.AddressableAssets.Build;
 namespace Framework.Editor.Release
 {
     /// <summary>
-    /// 热更发布流水线的标准步骤集。入口（HotUpdatePublisher 窗口 / 未来的 CI 命令行）组装
+    /// 热更发布流水线的标准步骤集。入口（HotUpdatePublisher 窗口 / ReleaseBatchEntry CI 命令行）组装
     /// 这些步骤调用 <see cref="ReleasePipeline.Run"/>，不再把流程内联在窗口方法里。
     /// </summary>
     public static class HotUpdateReleaseSteps
@@ -24,14 +24,34 @@ namespace Framework.Editor.Release
 
             public void Execute(ReleaseContext ctx)
             {
-                if (!ReleaseProfileStore.TryResolveActive(out ReleaseProfile profile, out string report))
+                if (!Guid.TryParse(ctx.ReleaseId, out _))
+                    throw new Exception($"ReleaseId 必须是有效 GUID：{ctx.ReleaseId}");
+
+                string environment = string.IsNullOrWhiteSpace(ctx.EnvironmentName)
+                    ? ReleaseProfileStore.ActiveEnv
+                    : ctx.EnvironmentName.Trim();
+                ReleaseProfile profile = ReleaseProfileStore.TryLoad(environment, out string loadError);
+                if (profile == null)
+                    throw new Exception($"发布环境 {environment} 加载失败：{loadError}");
+
+                if (!string.IsNullOrWhiteSpace(ctx.UploadRootOverride))
+                    profile.UploadRoot = Path.GetFullPath(ctx.UploadRootOverride);
+
+                if (!ReleaseProfileGate.Validate(
+                        profile,
+                        UpdateManifestSigner.HasUsablePrivateKey,
+                        out string report))
                 {
                     ctx.Log(report);
                     throw new Exception("发布环境校验未通过：\n" + report);
                 }
 
+                ctx.EnvironmentName = environment;
                 ctx.Profile = profile;
+                if (ctx.BuildTarget == BuildTarget.NoTarget)
+                    ctx.BuildTarget = EditorUserBuildSettings.activeBuildTarget;
                 ctx.Log("[环境校验] " + report);
+                ctx.Log($"[环境校验] BuildTarget={ctx.BuildTarget} UploadRoot={profile.UploadRoot}");
             }
         }
 
@@ -49,30 +69,70 @@ namespace Framework.Editor.Release
                     return;
                 }
 
-                var settings = AddressableAssetSettingsDefaultObject.Settings;
+                AddressableAssetSettings settings = AddressableAssetSettingsDefaultObject.Settings;
                 if (settings == null)
                     throw new Exception("未找到 Addressables Settings，请先执行 Framework/Setup Addressables");
+                if (ctx.Profile == null)
+                    throw new Exception("发布环境尚未通过校验，无法配置 Addressables 远程路径。");
 
-                AddressableAssetSettings.BuildPlayerContent(out AddressablesPlayerBuildResult result);
-                if (!string.IsNullOrEmpty(result.Error))
-                    throw new Exception($"Addressables Build 失败：{result.Error}");
+                string profileId = settings.activeProfileId;
+                var profileSettings = settings.profileSettings;
+                string oldBuildPath = profileSettings.GetValueByName(profileId, AddressableAssetSettings.kRemoteBuildPath);
+                string oldLoadPath = profileSettings.GetValueByName(profileId, AddressableAssetSettings.kRemoteLoadPath);
+                string stagedBuildPath = Path.Combine(ctx.ServerDataDir, "addressables", "[BuildTarget]")
+                    .Replace('\\', '/');
+                string stagedLoadPath = ctx.Profile.BaseUrl.TrimEnd('/') + "/addressables/[BuildTarget]";
 
-                ctx.Log("      Addressables Build 完成");
+                try
+                {
+                    // 构建期临时覆盖远程路径，使资源产物进入本次统一 staging；finally 恢复 Profile，避免环境 URL 污染工程资产。
+                    profileSettings.SetValue(profileId, AddressableAssetSettings.kRemoteBuildPath, stagedBuildPath);
+                    profileSettings.SetValue(profileId, AddressableAssetSettings.kRemoteLoadPath, stagedLoadPath);
+                    AddressableAssetSettings.BuildPlayerContent(out AddressablesPlayerBuildResult result);
+                    if (!string.IsNullOrEmpty(result.Error))
+                        throw new Exception($"Addressables Build 失败：{result.Error}");
+                }
+                finally
+                {
+                    profileSettings.SetValue(profileId, AddressableAssetSettings.kRemoteBuildPath, oldBuildPath);
+                    profileSettings.SetValue(profileId, AddressableAssetSettings.kRemoteLoadPath, oldLoadPath);
+                    EditorUtility.SetDirty(settings);
+                    AssetDatabase.SaveAssets();
+                }
 
-                if (string.IsNullOrEmpty(ctx.BundleOutputDir))
-                    return;
+                string stagedOutput = Path.Combine(
+                    ctx.ServerDataDir,
+                    "addressables",
+                    GetBuildTargetName(ctx.BuildTarget));
+                if (!Directory.Exists(stagedOutput) || Directory.GetFiles(stagedOutput, "*", SearchOption.AllDirectories).Length == 0)
+                    throw new Exception($"Addressables 构建产物目录不存在或为空：{stagedOutput}");
+                ctx.Log($"      Addressables Build 完成 → {stagedOutput}");
 
-                string srcDir = Path.Combine(
-                    Directory.GetParent(UnityEngine.Application.dataPath).FullName,
-                    "ServerData", GetBuildTargetName(EditorUserBuildSettings.activeBuildTarget));
-                if (!Directory.Exists(srcDir))
-                    throw new Exception($"ServerData 源目录不存在：{srcDir}");
+                // 旧窗口额外输出路径仅作本地联调兼容；正式发布由 AtomicPublishArtifacts 使用 Profile.UploadRoot 提交。
+                if (!string.IsNullOrEmpty(ctx.BundleOutputDir))
+                {
+                    CopyDirectory(stagedOutput, ctx.BundleOutputDir);
+                    ctx.Log($"      bundle 已同步到兼容目录 → {ctx.BundleOutputDir}");
+                }
+            }
 
-                Directory.CreateDirectory(ctx.BundleOutputDir);
-                foreach (string file in Directory.GetFiles(srcDir))
-                    File.Copy(file, Path.Combine(ctx.BundleOutputDir, Path.GetFileName(file)), overwrite: true);
-
-                ctx.Log($"      bundle 已同步 → {ctx.BundleOutputDir}");
+            private static void CopyDirectory(string source, string destination)
+            {
+                foreach (string directory in Directory.GetDirectories(source, "*", SearchOption.AllDirectories))
+                {
+                    string relative = directory.Substring(source.Length)
+                        .TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                    Directory.CreateDirectory(Path.Combine(destination, relative));
+                }
+                Directory.CreateDirectory(destination);
+                foreach (string file in Directory.GetFiles(source, "*", SearchOption.AllDirectories))
+                {
+                    string relative = file.Substring(source.Length)
+                        .TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                    string target = Path.Combine(destination, relative);
+                    Directory.CreateDirectory(Path.GetDirectoryName(target));
+                    File.Copy(file, target, true);
+                }
             }
         }
 
@@ -90,7 +150,9 @@ namespace Framework.Editor.Release
                     return;
                 }
 
-                BuildTarget target = EditorUserBuildSettings.activeBuildTarget;
+                BuildTarget target = ctx.BuildTarget == BuildTarget.NoTarget
+                    ? EditorUserBuildSettings.activeBuildTarget
+                    : ctx.BuildTarget;
                 CompileDllCommand.CompileDll(target);
                 ctx.Log("      编译完成，复制热更程序集...");
 
@@ -105,23 +167,31 @@ namespace Framework.Editor.Release
                     if (!File.Exists(src))
                         throw new Exception($"未找到热更程序集：{src}\n请先执行 HybridCLR/Generate/All");
 
-                    string destLocal = Path.Combine(ctx.ServerDataDir, destFileName);
+                    string sha256 = ComputeSHA256(src);
+                    string relativePath = Path.Combine(
+                            "payloads",
+                            SanitizePathSegment(ctx.AppVersion),
+                            $"code_{ctx.CodeVersion}",
+                            sha256.Substring(0, 16),
+                            destFileName)
+                        .Replace('\\', '/');
+                    string destLocal = Path.Combine(ctx.ServerDataDir, relativePath.Replace('/', Path.DirectorySeparatorChar));
+                    Directory.CreateDirectory(Path.GetDirectoryName(destLocal));
+                    if (File.Exists(destLocal) && !string.Equals(ComputeSHA256(destLocal), sha256, StringComparison.OrdinalIgnoreCase))
+                        throw new IOException($"不可变补丁路径已存在但内容不同：{destLocal}");
                     File.Copy(src, destLocal, overwrite: true);
 
-                    if (!string.IsNullOrEmpty(ctx.VersionOutputDir))
-                        File.Copy(src, Path.Combine(ctx.VersionOutputDir, destFileName), overwrite: true);
-
-                    // Url 只写相对文件名，保持清单环境无关：实际下载地址运行时由客户端
-                    // UpdateServerUrl 派生（VersionManager.TryResolveCodePatchFiles）。
+                    // URL 指向包含版本和摘要前缀的不可变对象。旧清单继续引用旧对象，发布过程中不会读到新旧内容混合。
                     var patch = new PatchFile
                     {
                         FileName = destFileName,
-                        Url      = destFileName,
+                        Url      = ctx.Profile.BaseUrl.TrimEnd('/') + "/" + relativePath,
                         Size     = new FileInfo(destLocal).Length,
+                        SHA256   = sha256,
                         MD5      = ComputeMD5(destLocal)
                     };
                     ctx.PatchFiles.Add(patch);
-                    ctx.Log($"      {patch.FileName} 大小={patch.Size}B  MD5={patch.MD5}");
+                    ctx.Log($"      {patch.FileName} 大小={patch.Size}B SHA256={patch.SHA256} URL={patch.Url}");
                 }
             }
         }
@@ -134,17 +204,31 @@ namespace Framework.Editor.Release
 
             public void Execute(ReleaseContext ctx)
             {
+                long now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+                var appConfig = Framework.Core.AppConfig.Load();
                 ctx.ManifestJson = ReleaseManifestWriter.ToJson(new UpdateInfo
                 {
-                    AppVersion           = ctx.AppVersion,
-                    ResourceVersion      = ctx.ResourceVersion,
-                    CodeVersion          = ctx.CodeVersion,
-                    ForceUpdate          = ctx.ForceUpdate,
+                    ManifestVersion = FrameworkRuntimeInfo.UpdateManifestVersion,
+                    ManifestId = string.IsNullOrWhiteSpace(ctx.ReleaseId) ? Guid.NewGuid().ToString("D") : ctx.ReleaseId,
+                    IssuedAtUnixSeconds = now,
+                    ExpiresAtUnixSeconds = now + 30L * 24 * 60 * 60,
+                    KeyId = string.IsNullOrWhiteSpace(ctx.Profile?.SigningKeyRef)
+                        ? "development"
+                        : ctx.Profile.SigningKeyRef,
+                    Platform = GetPlatformId(ctx.BuildTarget == BuildTarget.NoTarget
+                        ? EditorUserBuildSettings.activeBuildTarget
+                        : ctx.BuildTarget),
+                    Channel = string.IsNullOrWhiteSpace(appConfig?.AppChannel) ? "default" : appConfig.AppChannel,
+                    MinFrameworkVersion = FrameworkRuntimeInfo.Version,
+                    AppVersion = ctx.AppVersion,
+                    ResourceVersion = ctx.ResourceVersion,
+                    CodeVersion = ctx.CodeVersion,
+                    ForceUpdate = ctx.ForceUpdate,
                     MinCompatibleVersion = ctx.MinCompatibleVersion,
-                    Description          = ctx.Description ?? string.Empty,
-                    PatchFiles           = ctx.PatchFiles,
-                    UpdateUrl            = ctx.ForceUpdate ? (ctx.UpdateUrl ?? string.Empty) : string.Empty,
-                    GrayPercent          = ctx.GrayPercent
+                    Description = ctx.Description ?? string.Empty,
+                    PatchFiles = ctx.PatchFiles,
+                    UpdateUrl = ctx.ForceUpdate ? (ctx.UpdateUrl ?? string.Empty) : string.Empty,
+                    GrayPercent = ctx.GrayPercent
                 });
             }
         }
@@ -160,18 +244,9 @@ namespace Framework.Editor.Release
                 if (string.IsNullOrEmpty(ctx.ManifestJson))
                     throw new Exception("清单 JSON 为空（GenerateManifest 步骤未执行？）");
 
-                bool required = ctx.Profile != null && ctx.Profile.RequireManifestSignature;
-
                 Directory.CreateDirectory(ctx.ServerDataDir);
-                WriteOne(Path.Combine(ctx.ServerDataDir, "version.json"), ctx, required);
-                ctx.Log($"      写入 → {ctx.ServerDataDir}");
-
-                if (!string.IsNullOrEmpty(ctx.VersionOutputDir))
-                {
-                    Directory.CreateDirectory(ctx.VersionOutputDir);
-                    WriteOne(Path.Combine(ctx.VersionOutputDir, "version.json"), ctx, required);
-                    ctx.Log($"      写入 → {ctx.VersionOutputDir}");
-                }
+                WriteOne(Path.Combine(ctx.ServerDataDir, "version.json"), ctx, required: true);
+                ctx.Log($"      清单与签名已写入本地 staging → {ctx.ServerDataDir}");
             }
 
             private static void WriteOne(string manifestPath, ReleaseContext ctx, bool required)
@@ -206,6 +281,45 @@ namespace Framework.Editor.Release
         }
 
         /// <summary>计算文件 MD5（小写十六进制）。</summary>
+        internal static string GetPlatformId(BuildTarget target)
+        {
+            switch (target)
+            {
+                case BuildTarget.Android: return "android";
+                case BuildTarget.iOS: return "ios";
+                case BuildTarget.StandaloneWindows:
+                case BuildTarget.StandaloneWindows64: return "windows";
+                case BuildTarget.StandaloneOSX: return "macos";
+                case BuildTarget.StandaloneLinux64: return "linux";
+                case BuildTarget.WebGL: return "webgl";
+                default: return target.ToString().ToLowerInvariant();
+            }
+        }
+
+        /// <summary>
+        /// 将版本号等路径片段规整为只包含字母、数字、点、下划线和连字符的安全目录名。
+        /// </summary>
+        internal static string SanitizePathSegment(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value)) return "unknown";
+            var chars = value.ToCharArray();
+            for (int i = 0; i < chars.Length; i++)
+            {
+                char c = chars[i];
+                if (!(char.IsLetterOrDigit(c) || c == '.' || c == '_' || c == '-'))
+                    chars[i] = '_';
+            }
+            return new string(chars);
+        }
+
+        internal static string ComputeSHA256(string filePath)
+        {
+            using var sha256 = SHA256.Create();
+            using var stream = File.OpenRead(filePath);
+            byte[] hash = sha256.ComputeHash(stream);
+            return BitConverter.ToString(hash).Replace("-", "").ToLowerInvariant();
+        }
+
         internal static string ComputeMD5(string filePath)
         {
             using var md5 = MD5.Create();

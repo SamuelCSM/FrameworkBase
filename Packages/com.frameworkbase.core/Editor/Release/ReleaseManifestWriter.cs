@@ -29,8 +29,28 @@ namespace Framework.Editor.Release
             if (string.IsNullOrWhiteSpace(manifest.AppVersion))
                 throw new ArgumentException("发布清单缺少 AppVersion", nameof(manifest));
 
+            if (manifest.ManifestVersion != FrameworkRuntimeInfo.UpdateManifestVersion)
+                throw new ArgumentException("ManifestVersion 与当前运行时协议版本不一致。", nameof(manifest));
+            if (!Guid.TryParse(manifest.ManifestId, out _) ||
+                !UpdateSecurity.IsSafeManifestIdentifier(manifest.KeyId) ||
+                string.IsNullOrWhiteSpace(manifest.Platform) ||
+                !UpdateSecurity.IsSafeManifestIdentifier(manifest.Channel))
+                throw new ArgumentException("清单 ManifestId、KeyId、Platform 或 Channel 身份字段不完整。", nameof(manifest));
+            if (manifest.IssuedAtUnixSeconds <= 0 || manifest.ExpiresAtUnixSeconds <= manifest.IssuedAtUnixSeconds)
+                throw new ArgumentException("清单签发时间和失效时间窗口无效。", nameof(manifest));
+            if (!VersionManager.TryCompareVersion(manifest.AppVersion, "0.0.0", out _) ||
+                manifest.ResourceVersion < 1 || manifest.CodeVersion < 1)
+                throw new ArgumentException("清单版本字段格式无效或小于 1。", nameof(manifest));
+            if (manifest.GrayPercent < 0 || manifest.GrayPercent > 100)
+                throw new ArgumentException("GrayPercent 必须位于 0～100。", nameof(manifest));
+
             if (manifest.PatchFiles == null)
                 manifest.PatchFiles = new List<PatchFile>();
+            if (manifest.PatchFiles.Count > 0 &&
+                !UpdateSecurity.ValidateCompleteCodePatchSet(manifest.PatchFiles, appEnv: null, out string patchError))
+            {
+                throw new ArgumentException($"代码补丁快照无效：{patchError}", nameof(manifest));
+            }
 
             return JsonUtility.ToJson(manifest, prettyPrint: true);
         }

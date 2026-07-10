@@ -8,106 +8,124 @@ using UnityEngine;
 namespace Framework.Editor
 {
     /// <summary>
-    /// 整包构建完成后的收尾：自动清理不可发布的调试文件夹（可开关），并按需回切 Addressables Profile。
+    /// 整包构建完成后的安全收尾：归档 IL2CPP/Burst 符号与调试信息，并按需回切 Addressables Profile。
+    /// <para>
+    /// 符号是线上崩溃还原调用栈的必要产物，默认绝不删除。归档目录位于工程 Artifacts/Symbols，
+    /// 后续 CI 可上传到崩溃平台或制品库；上传职责由发布流水线扩展，不在后处理器中静默丢弃文件。
+    /// </para>
     /// </summary>
-    public class FullPackageBuildPostprocessor : IPostprocessBuildWithReport
+    public sealed class FullPackageBuildPostprocessor : IPostprocessBuildWithReport
     {
-        /// <summary>“构建后自动清理调试文件夹”开关的 EditorPrefs 键（默认开）。</summary>
-        private const string CleanupDebugFoldersPrefsKey = "ClientBase.FullPackage.CleanupDebugFoldersAfterBuild";
-
-        /// <summary>菜单项路径，用于在编辑器里开关清理行为并显示勾选态。</summary>
-        private const string CleanupMenuPath = "Framework/发布/构建后清理调试文件夹";
-
-        /// <summary>
-        /// Unity IL2CPP / Burst 构建产出的、不应随包发布的文件夹名后缀。
-        /// 每次构建必然生成、无法从 PlayerSettings 关闭，只能构建后删除。
-        /// </summary>
-        private static readonly string[] NonShippableFolderSuffixes =
+        private static readonly string[] SymbolFolderSuffixes =
         {
             "_BurstDebugInformation_DoNotShip",
-            "_BackUpThisFolder_ButDontShipItWithYourGame"
+            "_BackUpThisFolder_ButDontShipItWithYourGame",
         };
 
         public int callbackOrder => 0;
 
         public void OnPostprocessBuild(BuildReport report)
         {
-            // 仅在构建成功时收尾；失败时保留现场便于排查。
             if (report.summary.result == BuildResult.Succeeded)
-            {
-                CleanupNonShippableFolders(report.summary.outputPath);
-            }
+                ArchiveSymbolFolders(report);
 
             SwitchBackProfileIfRequested(report);
         }
 
         /// <summary>
-        /// 删除构建输出目录下的不可发布调试文件夹（Burst 调试信息 / IL2CPP 符号备份）。
+        /// 把构建输出旁的符号目录完整复制到按版本、平台和时间隔离的归档目录，并校验文件数量与总字节数。
+        /// 原始目录保留不删，避免归档或后续上传链路异常时永久丢失符号。
         /// </summary>
-        /// <param name="outputPath">构建产物主文件路径（Windows 下为 .exe，其兄弟目录即输出目录）。</param>
-        private static void CleanupNonShippableFolders(string outputPath)
+        private static void ArchiveSymbolFolders(BuildReport report)
         {
-            if (!EditorPrefs.GetBool(CleanupDebugFoldersPrefsKey, true))
-                return;
-
-            if (string.IsNullOrEmpty(outputPath))
-                return;
-
-            // 输出目录：exe 类产物取其所在目录；目录类产物取上一级（调试文件夹是其兄弟）。
+            string outputPath = report.summary.outputPath;
+            if (string.IsNullOrWhiteSpace(outputPath)) return;
             string buildDir = File.Exists(outputPath)
                 ? Path.GetDirectoryName(outputPath)
                 : Path.GetDirectoryName(outputPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+            if (string.IsNullOrWhiteSpace(buildDir) || !Directory.Exists(buildDir)) return;
 
-            if (string.IsNullOrEmpty(buildDir) || !Directory.Exists(buildDir))
-                return;
+            string projectRoot = Directory.GetParent(Application.dataPath)?.FullName ?? Directory.GetCurrentDirectory();
+            string archiveRoot = Path.Combine(
+                projectRoot,
+                "Artifacts",
+                "Symbols",
+                Sanitize(PlayerSettings.bundleVersion),
+                report.summary.platform.ToString(),
+                DateTime.UtcNow.ToString("yyyyMMdd-HHmmss"));
 
-            foreach (string dir in Directory.GetDirectories(buildDir))
+            foreach (string sourceDirectory in Directory.GetDirectories(buildDir, "*", SearchOption.TopDirectoryOnly))
             {
-                string name = Path.GetFileName(dir);
-                if (!MatchesNonShippableSuffix(name))
-                    continue;
+                string name = Path.GetFileName(sourceDirectory);
+                if (!MatchesSymbolSuffix(name)) continue;
 
-                try
+                string destination = Path.Combine(archiveRoot, name);
+                CopyDirectory(sourceDirectory, destination);
+                (int sourceCount, long sourceBytes) = MeasureDirectory(sourceDirectory);
+                (int destinationCount, long destinationBytes) = MeasureDirectory(destination);
+                if (sourceCount != destinationCount || sourceBytes != destinationBytes)
                 {
-                    Directory.Delete(dir, true);
-                    Debug.Log($"[FullPackage] 已清理不可发布调试文件夹：{name}");
+                    throw new BuildFailedException(
+                        $"符号归档校验失败：{name}，source={sourceCount}/{sourceBytes}，archive={destinationCount}/{destinationBytes}");
                 }
-                catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException)
-                {
-                    // 受控降级：文件被占用/权限不足时仅告警，不影响构建结果，可手动删除。
-                    Debug.LogWarning($"[FullPackage] 清理调试文件夹失败（可手动删除）：{name} —— {ex.Message}");
-                }
+
+                Debug.Log($"[FullPackage] 符号已归档并保留原文件：{destination}");
             }
         }
 
-        /// <summary>
-        /// 判断文件夹名是否命中任一不可发布后缀。
-        /// </summary>
-        /// <param name="folderName">文件夹名（不含路径）。</param>
-        /// <returns>命中返回 true。</returns>
-        private static bool MatchesNonShippableSuffix(string folderName)
+        private static bool MatchesSymbolSuffix(string folderName)
         {
-            foreach (string suffix in NonShippableFolderSuffixes)
+            foreach (string suffix in SymbolFolderSuffixes)
             {
-                if (folderName.EndsWith(suffix, StringComparison.Ordinal))
-                    return true;
+                if (folderName.EndsWith(suffix, StringComparison.Ordinal)) return true;
             }
-
             return false;
         }
 
-        /// <summary>
-        /// 整包一键流程登记了自动回切时，构建成功后切回 HotUpdateRemote（只消费一次）。
-        /// </summary>
-        /// <param name="report">构建报告。</param>
+        private static void CopyDirectory(string source, string destination)
+        {
+            Directory.CreateDirectory(destination);
+            foreach (string directory in Directory.GetDirectories(source, "*", SearchOption.AllDirectories))
+            {
+                string relative = directory.Substring(source.Length)
+                    .TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                Directory.CreateDirectory(Path.Combine(destination, relative));
+            }
+            foreach (string file in Directory.GetFiles(source, "*", SearchOption.AllDirectories))
+            {
+                string relative = file.Substring(source.Length)
+                    .TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                string target = Path.Combine(destination, relative);
+                Directory.CreateDirectory(Path.GetDirectoryName(target));
+                File.Copy(file, target, true);
+            }
+        }
+
+        private static (int count, long bytes) MeasureDirectory(string directory)
+        {
+            int count = 0;
+            long bytes = 0;
+            foreach (string file in Directory.GetFiles(directory, "*", SearchOption.AllDirectories))
+            {
+                count++;
+                bytes += new FileInfo(file).Length;
+            }
+            return (count, bytes);
+        }
+
+        private static string Sanitize(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value)) return "unknown";
+            foreach (char invalid in Path.GetInvalidFileNameChars()) value = value.Replace(invalid, '_');
+            return value;
+        }
+
         private static void SwitchBackProfileIfRequested(BuildReport report)
         {
             if (!EditorPrefs.GetBool(FullPackagePublisherWindow.AutoSwitchBackAfterBuildPrefsKey, false))
                 return;
 
-            // 只消费一次，避免后续普通构建被误触发。
             EditorPrefs.DeleteKey(FullPackagePublisherWindow.AutoSwitchBackAfterBuildPrefsKey);
-
             if (report.summary.result != BuildResult.Succeeded)
             {
                 Debug.LogWarning("[FullPackage] Build 未成功，跳过自动切回 HotUpdateRemote。");
@@ -116,27 +134,6 @@ namespace Framework.Editor
 
             AddressablesSetup.SwitchToHotUpdateRemote();
             Debug.Log("[FullPackage] Build 成功，已自动切回 HotUpdateRemote。");
-        }
-
-        /// <summary>
-        /// 切换“构建后自动清理调试文件夹”开关。
-        /// </summary>
-        [MenuItem(CleanupMenuPath)]
-        private static void ToggleCleanupDebugFolders()
-        {
-            bool enabled = EditorPrefs.GetBool(CleanupDebugFoldersPrefsKey, true);
-            EditorPrefs.SetBool(CleanupDebugFoldersPrefsKey, !enabled);
-        }
-
-        /// <summary>
-        /// 菜单勾选态：反映当前开关。
-        /// </summary>
-        /// <returns>恒为 true（菜单项始终可点）。</returns>
-        [MenuItem(CleanupMenuPath, true)]
-        private static bool ToggleCleanupDebugFoldersValidate()
-        {
-            Menu.SetChecked(CleanupMenuPath, EditorPrefs.GetBool(CleanupDebugFoldersPrefsKey, true));
-            return true;
         }
     }
 }

@@ -4,7 +4,7 @@ using Framework.HotUpdate;
 namespace Framework.Editor.Release
 {
     /// <summary>
-    /// 发布前环境校验：把"prod 不许 HTTP / prod 未签名阻断发布"从人脑记忆变成发布流程自动判定。
+    /// 发布前环境校验：把传输协议、全环境强制签名和私钥可用性从人脑记忆变成自动化阻断规则。
     /// 纯逻辑（不读文件、不碰 EditorPrefs），便于单测；文件加载与私钥探测由 <see cref="ReleaseProfileStore"/> 收口后传入。
     /// </summary>
     public static class ReleaseProfileGate
@@ -46,18 +46,28 @@ namespace Framework.Editor.Release
                     issues.Add($"环境 {profile.Name} 要求 HTTPS，但 BaseUrl 非 https：{profile.BaseUrl}");
             }
 
-            // 错误 4 收口：要求签名的环境（staging/prod）未配置可用私钥，直接阻断发布。
-            if (profile.RequireManifestSignature)
+            if (!profile.AllowPlayerPrefsOverride && string.IsNullOrWhiteSpace(profile.UploadRoot))
+                issues.Add($"环境 {profile.Name} 必须通过发布机配置或 -uploadRoot 提供部署目标根目录。");
+            if (!profile.AllowPlayerPrefsOverride &&
+                !string.IsNullOrWhiteSpace(profile.BaseUrl) &&
+                profile.BaseUrl.IndexOf("example.com", System.StringComparison.OrdinalIgnoreCase) >= 0)
             {
-                if (!hasUsablePrivateKey)
-                    issues.Add($"环境 {profile.Name} 要求对 version.json 签名，但发布机未配置可用私钥。" +
-                               "请先执行 Framework → Hot Update Security → Generate Signing Key Pair / Set Private Key Path。");
-                else if (!string.IsNullOrWhiteSpace(profile.SigningKeyRef))
-                    notes.Add($"签名私钥引用：{profile.SigningKeyRef}（请确认本机登记的是该环境密钥）");
+                issues.Add($"环境 {profile.Name} 的 BaseUrl 仍是 example.com 占位地址，禁止正式发布。");
             }
-            else
+
+            // 运行时对所有远程清单强制验签，因此任一发布环境关闭签名都会产出客户端必然拒绝的无效清单。
+            if (!profile.RequireManifestSignature)
+                issues.Add($"环境 {profile.Name} 必须启用 RequireManifestSignature；开发环境也应使用独立开发密钥。");
+            if (!UpdateSecurity.IsSafeManifestIdentifier(profile.SigningKeyRef))
+                issues.Add($"环境 {profile.Name} 的 SigningKeyRef 为空或包含非法字符，无法作为稳定 KeyId。");
+            if (!hasUsablePrivateKey)
             {
-                notes.Add($"环境 {profile.Name} 未强制签名（RequireManifestSignature=false），仅开发/内网适用");
+                issues.Add($"环境 {profile.Name} 未配置可用签名私钥。" +
+                           "CI 请注入 FRAMEWORKBASE_MANIFEST_PRIVATE_KEY_XML_BASE64 或 FRAMEWORKBASE_MANIFEST_PRIVATE_KEY_PATH。");
+            }
+            else if (!string.IsNullOrWhiteSpace(profile.SigningKeyRef))
+            {
+                notes.Add($"签名私钥引用：{profile.SigningKeyRef}（请确认注入密钥与该 KeyId 对应）");
             }
 
             report = BuildReport(profile, issues, notes);

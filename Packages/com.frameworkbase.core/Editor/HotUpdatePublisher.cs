@@ -125,7 +125,7 @@ namespace Framework.Editor
             }
         }
 
-        // ─── GUI ───────────────────────────────────────────────
+        // ─── 编辑器界面 ────────────────────────────────────────
         private void OnGUI()
         {
             EditorGUILayout.Space(6);
@@ -347,7 +347,9 @@ namespace Framework.Editor
                     new HotUpdateReleaseSteps.BuildAddressables(),
                     new HotUpdateReleaseSteps.CompileAndCopyHotUpdateDlls(),
                     new HotUpdateReleaseSteps.GenerateManifest(),
-                    new HotUpdateReleaseSteps.WriteAndSignManifest()
+                    new HotUpdateReleaseSteps.WriteAndSignManifest(),
+                    new ReleasePublishingSteps.WriteReleaseLedger(),
+                    new ReleasePublishingSteps.AtomicPublishArtifacts()
                 }, context);
 
                 if (!pipelineResult.Success)

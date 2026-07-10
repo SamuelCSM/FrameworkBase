@@ -358,6 +358,9 @@ namespace Framework.Editor
 
             var steps = BuildCommonSteps(requireBuildOutputPath: true);
             steps.Add(new FullPackageReleaseSteps.BuildPlayer());
+            steps.Add(new ReleasePublishingSteps.StageFullPackageArtifact());
+            steps.Add(new ReleasePublishingSteps.WriteReleaseLedger());
+            steps.Add(new ReleasePublishingSteps.AtomicPublishArtifacts());
             if (_autoSwitchBackAfterBuild)
                 steps.Add(new FullPackageReleaseSteps.SwitchBackHotUpdateRemote());
 
@@ -406,7 +409,7 @@ namespace Framework.Editor
             }
             catch
             {
-                // ignore invalid json and keep defaults
+                // JSON 无效时保留默认值，避免发布窗口因历史偏好损坏而无法打开。
             }
         }
 

@@ -1,27 +1,29 @@
 # 发布环境配置（ReleaseProfiles）
 
-发布机据此决定"本次发到哪、走不走 HTTPS、要不要签名"。发布工具（Framework → Hot Update Publisher /
-Full Package Publisher）顶部的「发布环境」下拉选中哪个，就用哪份。
+发布环境文件只保存团队共享的非敏感策略；机器路径和私钥由发布机或 CI 注入。Editor 窗口与
+`ReleaseBatchEntry` 使用同一套门禁和流水线。
 
-| 文件 | 环境 | HTTPS | 强制签名 |
+| 文件 | 环境 | HTTPS | 清单签名 |
 |---|---|---|---|
-| `dev.json` | 本机开发 | 否 | 否 |
-| `qa.json` | 测试 | 否 | 否 |
-| `staging.json` | 预发 | 是 | 是 |
-| `prod.json` | 生产 | 是 | 是 |
+| `dev.json` | 本机开发 | 可选 | 强制，使用开发密钥 |
+| `qa.json` | 测试 | 可选 | 强制，使用 QA 密钥 |
+| `staging.json` | 预发 | 强制 | 强制 |
+| `prod.json` | 生产 | 强制 | 强制 |
 
 ## 字段
 
-- `BaseUrl`：该环境客户端更新服务器根 URL（对应运行时 `AppConfig.UpdateServerUrl`）。补丁下载地址运行时
-  由客户端 `UpdateServerUrl` 派生，一份签名清单各环境通用。
-- `UploadRoot`：部署产物写入目标根，**机器相关**，留空由本机填写，不作团队权威值。
-- `RequireHttps` / `RequireManifestSignature`：环境准入。prod/staging 恒为 true。
-- `SigningKeyRef`：签名私钥的**引用名**（非私钥本体），供人工核对本机登记的是否为该环境密钥。
+- `BaseUrl`：客户端更新服务根 URL。代码补丁 URL 写入已签名清单，并必须与该根同源、位于其路径下。
+- `UploadRoot`：发布目标文件系统根目录。正式环境通常在 CI 通过 `-uploadRoot` 覆盖，不把机器路径提交到仓库。
+- `RequireHttps`：是否强制 HTTPS；staging/prod 必须为 true。
+- `RequireManifestSignature`：所有环境必须为 true。开发环境也不能跳过远程代码信任边界。
+- `SigningKeyRef`：稳定 KeyId，只是密钥引用名，不包含私钥材料。
+- `AllowPlayerPrefsOverride`：是否允许交互式 Editor 使用本机覆盖；正式环境应关闭。
 
-## 两条纪律
+## 发布纪律
 
-1. **占位 URL 必须改**：`staging.json` / `prod.json` 里的 `*.example.com` 是占位符，上线前替换为真实
-   CDN 域名。发布前校验会拦下 prod 明文 HTTP，但不会替你判断域名是否写对。
-2. **私钥绝不进库**：这里只存引用名。真正的 RSA 私钥保存在工程目录外，路径登记在本机 EditorPrefs
-   （菜单 Framework → Hot Update Security → Generate Signing Key Pair / Set Private Key Path）。
-   `staging` / `prod` 要求签名——本机未登记可用私钥时，发布前校验会**阻断发布**。
+1. staging/prod 的 `example.com` 是占位域名，正式发布门禁会直接拒绝。
+2. 私钥绝不进入仓库、AppConfig 或 Player。CI 使用：
+   - `FRAMEWORKBASE_MANIFEST_PRIVATE_KEY_XML_BASE64`，或
+   - `FRAMEWORKBASE_MANIFEST_PRIVATE_KEY_PATH`。
+3. 每次发布先写本地 staging 和发布台账，再复制载荷，最后提交 `version.json.sig` 与 `version.json`。
+4. 代码补丁使用包含 AppVersion、CodeVersion 和摘要前缀的不可变 URL；禁止覆盖旧清单仍在引用的对象。

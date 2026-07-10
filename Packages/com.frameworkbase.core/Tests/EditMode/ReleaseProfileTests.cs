@@ -107,7 +107,8 @@ namespace Framework.Tests
             var profile = new ReleaseProfile
             {
                 Name = "prod",
-                BaseUrl = "https://cdn.example.com/updates",
+                BaseUrl = "https://cdn.game.example.net/updates",
+                UploadRoot = "/release-target",
                 RequireHttps = true,
                 RequireManifestSignature = true,
                 SigningKeyRef = "prod_key"
@@ -117,17 +118,33 @@ namespace Framework.Tests
         }
 
         [Test]
-        public void Gate_dev_HTTP且不要求签名_放行()
+        public void Gate_dev关闭签名_同样阻断()
         {
             var profile = new ReleaseProfile
             {
                 Name = "dev",
                 BaseUrl = "http://127.0.0.1:80/Updates",
                 RequireHttps = false,
-                RequireManifestSignature = false
+                RequireManifestSignature = false,
             };
 
-            Assert.IsTrue(ReleaseProfileGate.Validate(profile, hasUsablePrivateKey: false, out _));
+            Assert.IsFalse(ReleaseProfileGate.Validate(profile, hasUsablePrivateKey: false, out _));
+        }
+
+        [Test]
+        public void Gate_dev使用独立签名密钥_放行()
+        {
+            var profile = new ReleaseProfile
+            {
+                Name = "dev",
+                BaseUrl = "http://127.0.0.1:80/Updates",
+                RequireHttps = false,
+                RequireManifestSignature = true,
+                SigningKeyRef = "dev_hotupdate_manifest",
+                AllowPlayerPrefsOverride = true,
+            };
+
+            Assert.IsTrue(ReleaseProfileGate.Validate(profile, hasUsablePrivateKey: true, out _));
         }
     }
 }

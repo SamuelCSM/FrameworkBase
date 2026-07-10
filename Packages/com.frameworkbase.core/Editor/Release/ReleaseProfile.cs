@@ -4,7 +4,7 @@ using UnityEngine;
 namespace Framework.Editor.Release
 {
     /// <summary>
-    /// 发布环境配置（dev / qa / staging / prod）。发布机据此决定"发到哪、走不走 HTTPS、要不要签名"。
+    /// 发布环境配置（dev / qa / staging / prod）。发布机据此决定目标根、传输策略和签名 KeyId；所有远程清单均强制签名。
     ///
     /// 存放约定（工程根 <c>ReleaseProfiles/{name}.json</c>，JsonUtility PascalCase 字段）：
     ///   - 非敏感的环境定义（BaseUrl / RequireHttps / 签名策略）<b>进 Git</b>，团队共享同一套；
@@ -30,7 +30,7 @@ namespace Framework.Editor.Release
         /// <summary>是否强制该环境的 BaseUrl 走 HTTPS。prod 恒为 true（明文链路等于开放 RCE 入口）。</summary>
         public bool RequireHttps;
 
-        /// <summary>是否要求本次发布对 version.json 签名；true 时未配置可用私钥将<b>阻断发布</b>。</summary>
+        /// <summary>是否要求本次发布对 version.json 签名。FrameworkBase 安全基线要求所有环境恒为 true。</summary>
         public bool RequireManifestSignature;
 
         /// <summary>签名私钥的<b>引用名</b>（非私钥本体），仅供人工核对当前发布机登记的是否为该环境密钥。</summary>

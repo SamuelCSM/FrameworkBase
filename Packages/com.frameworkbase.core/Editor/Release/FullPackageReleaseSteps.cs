@@ -228,8 +228,22 @@ namespace Framework.Editor.Release
                     return;
                 }
 
+                long now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+                var appConfig = AppConfig.Load();
                 string json = ReleaseManifestWriter.ToJson(new UpdateInfo
                 {
+                    ManifestVersion = FrameworkRuntimeInfo.UpdateManifestVersion,
+                    ManifestId = string.IsNullOrWhiteSpace(ctx.ReleaseId) ? Guid.NewGuid().ToString("D") : ctx.ReleaseId,
+                    IssuedAtUnixSeconds = now,
+                    ExpiresAtUnixSeconds = now + 30L * 24 * 60 * 60,
+                    KeyId = string.IsNullOrWhiteSpace(ctx.Profile?.SigningKeyRef)
+                        ? "development"
+                        : ctx.Profile.SigningKeyRef,
+                    Platform = HotUpdateReleaseSteps.GetPlatformId(ctx.BuildTarget == BuildTarget.NoTarget
+                        ? EditorUserBuildSettings.activeBuildTarget
+                        : ctx.BuildTarget),
+                    Channel = string.IsNullOrWhiteSpace(appConfig?.AppChannel) ? "default" : appConfig.AppChannel,
+                    MinFrameworkVersion = FrameworkRuntimeInfo.Version,
                     AppVersion = ctx.AppVersion,
                     ResourceVersion = 1,
                     CodeVersion = 1,
@@ -246,8 +260,7 @@ namespace Framework.Editor.Release
                 Directory.CreateDirectory(ctx.ServerDataDir);
                 string serverDataManifest = Path.Combine(ctx.ServerDataDir, "version.json");
                 File.WriteAllText(serverDataManifest, json, System.Text.Encoding.UTF8);
-                bool required = ctx.Profile != null && ctx.Profile.RequireManifestSignature;
-                if (!UpdateManifestSigner.SignManifestForPublish(serverDataManifest, ctx.Log, required))
+                if (!UpdateManifestSigner.SignManifestForPublish(serverDataManifest, ctx.Log, required: true))
                     throw new Exception($"清单签名失败（环境 {ctx.Profile?.Name} 要求签名），已中止发布");
 
                 string streamingDir = Path.Combine(Application.dataPath, "StreamingAssets");
