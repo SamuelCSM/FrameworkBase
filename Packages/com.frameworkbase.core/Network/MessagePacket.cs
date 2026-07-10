@@ -79,19 +79,33 @@ namespace Framework.Network
         /// <returns>是否解析成功</returns>
         public static bool Unpack(byte[] packet, out byte mainId, out byte subId, out ushort seqId, out byte[] payload)
         {
+            return Unpack(packet, packet?.Length ?? 0, out mainId, out subId, out seqId, out payload);
+        }
+
+        /// <summary>
+        /// 解析消息包（含 SeqId），帧长度由调用方显式给出。
+        /// <para>
+        /// 供池化缓冲场景使用：ArrayPool 租用的数组实际长度通常大于帧长，不能用 packet.Length 判定协议边界。
+        /// payload 始终为精确长度的新数组，调用方获得所有权，与传入缓冲的生命周期无关。
+        /// </para>
+        /// </summary>
+        /// <param name="packet">承载完整帧的缓冲区，实际数组长度允许大于 <paramref name="packetLength"/>。</param>
+        /// <param name="packetLength">帧的真实字节数。</param>
+        public static bool Unpack(byte[] packet, int packetLength, out byte mainId, out byte subId, out ushort seqId, out byte[] payload)
+        {
             mainId = 0;
             subId = 0;
             seqId = 0;
             payload = null;
 
-            if (packet == null || packet.Length < HeaderSize)
+            if (packet == null || packetLength < HeaderSize || packetLength > packet.Length)
             {
                 return false;
             }
 
             // 读取消息长度
             int length = BitConverter.ToInt32(packet, 0);
-            if (length != packet.Length)
+            if (length != packetLength)
             {
                 return false;
             }
@@ -106,7 +120,7 @@ namespace Framework.Network
             seqId = (ushort)(packet[6] | (packet[7] << 8));
 
             // 读取消息体
-            int payloadLength = packet.Length - HeaderSize;
+            int payloadLength = packetLength - HeaderSize;
             if (payloadLength > 0)
             {
                 payload = new byte[payloadLength];

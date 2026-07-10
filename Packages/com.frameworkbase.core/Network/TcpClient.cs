@@ -1,4 +1,5 @@
 using System;
+using System.Buffers;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
@@ -67,10 +68,16 @@ namespace Framework.Network
         public event Action OnDisconnected;
         /// <summary>携带关闭连接 Epoch 的断开事件，用于主线程忽略排队期间已经过期的旧连接状态。</summary>
         public event Action<int> OnDisconnectedWithEpoch;
-        /// <summary>旧版无 Epoch 收包事件，仅用于兼容；新代码必须订阅 OnReceiveWithEpoch。</summary>
+        /// <summary>旧版无 Epoch 收包事件，仅用于兼容；每帧产生一次精确长度拷贝，订阅方获得数组所有权。</summary>
         public event Action<byte[]> OnReceive;
-        /// <summary>携带 ConnectionEpoch 的完整协议帧事件，用于上层拒绝旧连接数据。</summary>
-        public event Action<int, byte[]> OnReceiveWithEpoch;
+        /// <summary>
+        /// 携带 ConnectionEpoch 的完整协议帧事件（epoch, buffer, frameLength）。
+        /// <para>
+        /// buffer 租自 ArrayPool，实际长度可能大于 frameLength，且<b>仅在回调执行期间有效</b>：
+        /// 回调返回后缓冲区立即归还池并被复用，订阅方严禁持有引用，跨线程或延迟消费必须先按 frameLength 拷贝。
+        /// </para>
+        /// </summary>
+        public event Action<int, byte[], int> OnReceiveWithEpoch;
         /// <summary>传输错误事件，可能由后台线程触发；订阅方必须切回主线程后再操作 Unity UI。</summary>
         public event Action<string> OnError;
         /// <summary>携带故障连接 Epoch 的错误事件，用于重连后过滤旧线程延迟上报。</summary>
@@ -433,17 +440,29 @@ namespace Framework.Network
                 }
                 if (offset - readOffset < messageLength) break;
 
-                byte[] message = new byte[messageLength];
+                // 帧缓冲租自 ArrayPool：高频收包不再逐帧产生托管垃圾。所有权收在本方法内，
+                // 回调同步执行完毕即归还；订阅方契约见 OnReceiveWithEpoch 文档。
+                byte[] message = ArrayPool<byte>.Shared.Rent(messageLength);
                 Buffer.BlockCopy(buffer, readOffset, message, 0, messageLength);
                 readOffset += messageLength;
                 try
                 {
-                    OnReceiveWithEpoch?.Invoke(epoch, message);
-                    OnReceive?.Invoke(message);
+                    OnReceiveWithEpoch?.Invoke(epoch, message, messageLength);
+                    if (OnReceive != null)
+                    {
+                        // 兼容事件按精确长度拷贝并转移所有权，只有存在订阅者时才付出这次分配。
+                        byte[] legacyCopy = new byte[messageLength];
+                        Buffer.BlockCopy(message, 0, legacyCopy, 0, messageLength);
+                        OnReceive.Invoke(legacyCopy);
+                    }
                 }
                 catch (Exception ex)
                 {
                     GameLog.Error($"收包事件回调异常：{ex}");
+                }
+                finally
+                {
+                    ArrayPool<byte>.Shared.Return(message);
                 }
             }
 

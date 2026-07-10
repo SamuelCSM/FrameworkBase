@@ -833,10 +833,14 @@ namespace Framework
                 TryReconnectAsync().Forget();
         }
 
-        private void OnClientReceive(int connectionEpoch, byte[] packet)
+        /// <summary>
+        /// 接收线程回调。packet 为 TcpClient 租用的池化缓冲，仅本次调用内有效；
+        /// Unpack 会以 frameLength 拆出精确长度的 payload 拷贝，投递主线程后不再引用原缓冲。
+        /// </summary>
+        private void OnClientReceive(int connectionEpoch, byte[] packet, int frameLength)
         {
             _dataReceivedFlag = true;
-            if (!MessagePacket.Unpack(packet, out byte mainId, out byte subId, out ushort seqId, out byte[] payload))
+            if (!MessagePacket.Unpack(packet, frameLength, out byte mainId, out byte subId, out ushort seqId, out byte[] payload))
             {
                 TryEnqueueConnectionEvent(new ConnectionEvent(
                     ConnectionEventType.Error,

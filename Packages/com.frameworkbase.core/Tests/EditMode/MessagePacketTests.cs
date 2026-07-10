@@ -1,3 +1,4 @@
+using System;
 using Framework.Network;
 using NUnit.Framework;
 
@@ -79,6 +80,29 @@ namespace Framework.Tests
 
             Assert.IsFalse(MessagePacket.Unpack(packet, out _, out _, out _, out _));
             Assert.IsFalse(MessagePacket.IsValid(packet));
+        }
+
+        /// <summary>池化缓冲场景：数组实际长度大于帧长时，显式长度重载应正确解析且 payload 为精确拷贝。</summary>
+        [Test]
+        public void Unpack_OversizedPooledBuffer_RoundtripsWithExplicitLength()
+        {
+            byte[] payload = { 0xA1, 0xB2, 0xC3 };
+            byte[] exact = MessagePacket.Pack(11, 22, payload, 333);
+
+            // 模拟 ArrayPool.Rent 返回的超长缓冲：帧字节后跟随任意脏数据。
+            byte[] pooled = new byte[exact.Length + 17];
+            Buffer.BlockCopy(exact, 0, pooled, 0, exact.Length);
+            for (int i = exact.Length; i < pooled.Length; i++) pooled[i] = 0xEE;
+
+            Assert.IsTrue(MessagePacket.Unpack(
+                pooled, exact.Length, out byte mainId, out byte subId, out ushort seqId, out byte[] outPayload));
+            Assert.AreEqual(11, mainId);
+            Assert.AreEqual(22, subId);
+            Assert.AreEqual(333, seqId);
+            CollectionAssert.AreEqual(payload, outPayload);
+
+            // 帧长声明超过缓冲区实际长度必须判为无效，防止越界读取。
+            Assert.IsFalse(MessagePacket.Unpack(pooled, pooled.Length + 1, out _, out _, out _, out _));
         }
 
         /// <summary>合法包应通过 IsValid 校验。</summary>
