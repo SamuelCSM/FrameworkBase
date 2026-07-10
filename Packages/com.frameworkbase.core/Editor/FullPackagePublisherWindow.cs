@@ -51,17 +51,6 @@ namespace Framework.Editor
         }
 
         [Serializable]
-        private class VersionSnapshot
-        {
-            public string AppVersion = "1.0";
-            public int ResourceVersion = 1;
-            public int CodeVersion = 1;
-            public bool ForceUpdate = true;
-            public string MinCompatibleVersion = "1.0";
-            public string Description = "";
-        }
-
-        [Serializable]
         private class LaunchPhaseMetricSnapshot
         {
             // 字段由 JsonUtility.FromJson 反射赋值，编译器无法静态识别，故局部关闭 CS0649（字段从未赋值）误报。
@@ -129,6 +118,8 @@ namespace Framework.Editor
         private bool _autoSwitchBackAfterBuild = true;
         private string _appVersion = "2.0";
         private string _minCompatibleVersion = "2.0";
+        // 整包更新跳转链接（应用商店/安装包地址），写入整包 version.json 的 UpdateUrl，供旧包强更弹窗跳转。
+        private string _fullPackageUpdateUrl = "";
         private bool _writeFullUpdateVersion = true;
         private bool _requireHealthyLaunchTelemetry = true;
         private string _buildOutputPath = "";
@@ -209,6 +200,9 @@ namespace Framework.Editor
 
             _appVersion = EditorGUILayout.TextField("AppVersion", _appVersion);
             _minCompatibleVersion = EditorGUILayout.TextField("MinCompatible", _minCompatibleVersion);
+            _fullPackageUpdateUrl = EditorGUILayout.TextField(
+                new GUIContent("整包下载链接", "应用商店/安装包地址，写入 version.json 的 UpdateUrl，旧包强更弹窗据此跳转；可空"),
+                _fullPackageUpdateUrl);
             _writeFullUpdateVersion = EditorGUILayout.Toggle("写入整包 version.json", _writeFullUpdateVersion);
             _requireHealthyLaunchTelemetry = EditorGUILayout.Toggle("要求最近启动埋点通过", _requireHealthyLaunchTelemetry);
 
@@ -334,17 +328,19 @@ namespace Framework.Editor
                 return;
             }
 
-            var snapshot = new VersionSnapshot
+            // 统一契约：ReleaseManifestWriter 序列化 UpdateInfo 本体，与热更发布/客户端解析同一类型。
+            string json = ReleaseManifestWriter.ToJson(new UpdateInfo
             {
                 AppVersion = _appVersion,
                 ResourceVersion = 1,
                 CodeVersion = 1,
                 ForceUpdate = true,
                 MinCompatibleVersion = string.IsNullOrEmpty(_minCompatibleVersion) ? _appVersion : _minCompatibleVersion,
-                Description = ""
-            };
-
-            string json = BuildVersionJson(snapshot);
+                Description = "",
+                PatchFiles = new List<PatchFile>(),
+                UpdateUrl = _fullPackageUpdateUrl ?? string.Empty,
+                GrayPercent = 0
+            });
 
             // ServerData 侧清单会被部署到更新服务器，签名伴生下发；
             // StreamingAssets 侧仅作为出厂版本随包内置，客户端不对其验签，无需签名。
@@ -359,7 +355,7 @@ namespace Framework.Editor
             File.WriteAllText(Path.Combine(streamingDir, "version.json"), json, Encoding.UTF8);
 
             AssetDatabase.Refresh();
-            AppendLog($"完成：整包 version.json 已写入（App={snapshot.AppVersion}, ForceUpdate=true）");
+            AppendLog($"完成：整包 version.json 已写入（App={_appVersion}, ForceUpdate=true）");
         }
 
         private static readonly string[] BootstrapRequiredTables = { "language", "loading_tips" };
@@ -628,10 +624,11 @@ namespace Framework.Editor
 
             try
             {
-                var snapshot = JsonUtility.FromJson<VersionSnapshot>(File.ReadAllText(path));
+                var snapshot = JsonUtility.FromJson<UpdateInfo>(File.ReadAllText(path));
                 if (snapshot == null) return;
                 _appVersion = string.IsNullOrEmpty(snapshot.AppVersion) ? _appVersion : snapshot.AppVersion;
                 _minCompatibleVersion = string.IsNullOrEmpty(snapshot.MinCompatibleVersion) ? _minCompatibleVersion : snapshot.MinCompatibleVersion;
+                _fullPackageUpdateUrl = string.IsNullOrEmpty(snapshot.UpdateUrl) ? _fullPackageUpdateUrl : snapshot.UpdateUrl;
             }
             catch
             {
@@ -642,20 +639,6 @@ namespace Framework.Editor
         private void OnEnable()
         {
             _buildOutputPath = EditorPrefs.GetString(BuildOutputPathPrefsKey, _buildOutputPath);
-        }
-
-        private static string BuildVersionJson(VersionSnapshot v)
-        {
-            return
-$@"{{
-  ""AppVersion"":          ""{v.AppVersion}"",
-  ""ResourceVersion"":     {v.ResourceVersion},
-  ""CodeVersion"":         {v.CodeVersion},
-  ""ForceUpdate"":         {v.ForceUpdate.ToString().ToLowerInvariant()},
-  ""MinCompatibleVersion"":""{v.MinCompatibleVersion}"",
-  ""Description"":         ""{v.Description}"",
-  ""PatchFiles"":          []
-}}";
         }
 
         private static void OpenBuildSettingsWindow(bool autoSwitchBackAfterBuild)

@@ -33,6 +33,10 @@ namespace Framework.Editor
         private int    _codeVersion     = 1;
         private string _minCompatible   = "1.0";
         private string _description     = "";
+        // 灰度放量百分比：0=全量下发；1~99 仅命中分桶设备应用本次更新（上调放量=同版本重发清单只改此值）。
+        private int    _grayPercent     = 0;
+        // 整包更新跳转链接（应用商店/安装包地址），仅勾选"强制整包更新"时写入清单。
+        private string _updateUrl       = "";
 
         // ─── 发布选项 ──────────────────────────────────────────
         private bool _publishResource = false;  // 是否发布资源更新
@@ -72,31 +76,6 @@ namespace Framework.Editor
                          "ServerData", "Updates");
 
         /// <summary>
-        /// 热更程序集发布产物信息，用于生成 version.json 的 PatchFiles。
-        /// </summary>
-        private readonly struct HotUpdateDllArtifact
-        {
-            /// <summary>补丁文件名，例如 HotUpdate.dll.bytes。</summary>
-            public readonly string FileName;
-
-            /// <summary>补丁文件大小，单位为字节。</summary>
-            public readonly long Size;
-
-            /// <summary>补丁文件 MD5，用于客户端下载后校验。</summary>
-            public readonly string Md5;
-
-            /// <summary>
-            /// 创建热更程序集发布产物信息。
-            /// </summary>
-            public HotUpdateDllArtifact(string fileName, long size, string md5)
-            {
-                FileName = fileName;
-                Size = size;
-                Md5 = md5;
-            }
-        }
-
-        /// <summary>
         /// 获取指定构建目标的 HybridCLR 热更 DLL 生成路径。
         /// </summary>
         /// <param name="target">Unity 构建目标。</param>
@@ -131,14 +110,17 @@ namespace Framework.Editor
             try
             {
                 string json = File.ReadAllText(path);
-                var info = JsonUtility.FromJson<VersionSnapshot>(json);
+                var info = JsonUtility.FromJson<UpdateInfo>(json);
                 _appVersion      = info.AppVersion      ?? "1.0";
                 _resourceVersion = info.ResourceVersion;
                 _codeVersion     = info.CodeVersion;
                 _minCompatible   = info.MinCompatibleVersion ?? _appVersion;
                 _description     = "";
+                // 回填当前放量值：支持"同版本重发清单、只上调 GrayPercent"的放量操作。
+                _grayPercent     = info.GrayPercent;
+                _updateUrl       = info.UpdateUrl ?? "";
                 AppendLog($"已读取当前版本：App={_appVersion} " +
-                          $"Resource={_resourceVersion} Code={_codeVersion}");
+                          $"Resource={_resourceVersion} Code={_codeVersion} Gray={_grayPercent}");
             }
             catch (Exception e)
             {
@@ -198,11 +180,29 @@ namespace Framework.Editor
                 _forceUpdate);
 
             if (_forceUpdate)
+            {
                 EditorGUILayout.HelpBox(
                     "⚠ 整包更新：发布后 ResourceVersion / CodeVersion 将重置为 1，" +
                     "请确认 AppVersion 已修改为新版本号。",
                     MessageType.Warning);
+                _updateUrl = EditorGUILayout.TextField("整包下载链接（商店/安装包）", _updateUrl);
+            }
 
+            EditorGUILayout.EndVertical();
+
+            EditorGUILayout.Space(4);
+
+            // ── 灰度放量 ────────────────────────────────────────
+            GUILayout.Label("灰度放量", EditorStyles.boldLabel);
+            EditorGUILayout.BeginVertical("box");
+            _grayPercent = EditorGUILayout.IntSlider(
+                new GUIContent("放量百分比", "0=全量下发；1~99 仅命中分桶的设备应用本次更新。" +
+                                            "上调放量：同版本重新点发布、只改此值即可（清单会重签）。"),
+                _grayPercent, 0, 100);
+            if (_grayPercent > 0 && _grayPercent < 100)
+                EditorGUILayout.HelpBox(
+                    $"本次更新仅对约 {_grayPercent}% 的设备生效，其余设备按\"无更新\"继续。",
+                    MessageType.Info);
             EditorGUILayout.EndVertical();
 
             EditorGUILayout.Space(4);
@@ -358,7 +358,7 @@ namespace Framework.Editor
                 }
 
                 // 3. 复制热更程序集（代码更新时）
-                var dllArtifacts = new List<HotUpdateDllArtifact>();
+                var dllArtifacts = new List<PatchFile>();
 
                 if (_publishCode)
                 {
@@ -367,13 +367,23 @@ namespace Framework.Editor
                     AppendLog("      编译完成，复制热更程序集...");
                     dllArtifacts = CopyHotUpdateDlls();
                     foreach (var artifact in dllArtifacts)
-                        AppendLog($"      {artifact.FileName} 大小={artifact.Size}B  MD5={artifact.Md5}");
+                        AppendLog($"      {artifact.FileName} 大小={artifact.Size}B  MD5={artifact.MD5}");
                 }
 
-                // 4. 生成 version.json
+                // 4. 生成 version.json（统一契约：ReleaseManifestWriter 序列化 UpdateInfo 本体）
                 AppendLog("[3/4] 生成 version.json...");
-                string json = BuildVersionJson(
-                    newResource, newCode, dllArtifacts);
+                string json = ReleaseManifestWriter.ToJson(new UpdateInfo
+                {
+                    AppVersion           = _appVersion,
+                    ResourceVersion      = newResource,
+                    CodeVersion          = newCode,
+                    ForceUpdate          = _forceUpdate,
+                    MinCompatibleVersion = _minCompatible,
+                    Description          = _description ?? string.Empty,
+                    PatchFiles           = dllArtifacts,
+                    UpdateUrl            = _forceUpdate ? (_updateUrl ?? string.Empty) : string.Empty,
+                    GrayPercent          = _grayPercent
+                });
 
                 // 写入 ServerData/Updates（并生成伴生签名 version.json.sig）
                 Directory.CreateDirectory(ServerDataDir);
@@ -632,15 +642,17 @@ namespace Framework.Editor
         // ─── 复制热更程序集 DLL ────────────────────────────────
         /// <summary>
         /// 复制全部热更程序集到发布目录，并返回用于 version.json 的补丁清单。
+        /// Url 只写相对文件名，保持清单环境无关：实际下载地址运行时由客户端 UpdateServerUrl 派生
+        /// （见 VersionManager.TryResolveCodePatchFiles），不硬编码发布机 host。
         /// </summary>
-        private List<HotUpdateDllArtifact> CopyHotUpdateDlls()
+        private List<PatchFile> CopyHotUpdateDlls()
         {
             Directory.CreateDirectory(ServerDataDir);
 
             if (!string.IsNullOrEmpty(_versionOutputDir))
                 Directory.CreateDirectory(_versionOutputDir);
 
-            var artifacts = new List<HotUpdateDllArtifact>(VersionManager.HotUpdateAssemblyFileNames.Length);
+            var artifacts = new List<PatchFile>(VersionManager.HotUpdateAssemblyFileNames.Length);
             foreach (string destFileName in VersionManager.HotUpdateAssemblyFileNames)
             {
                 string src = GetHotUpdateDllSrc(EditorUserBuildSettings.activeBuildTarget, destFileName);
@@ -656,75 +668,16 @@ namespace Framework.Editor
                 if (!string.IsNullOrEmpty(_versionOutputDir))
                     File.Copy(src, Path.Combine(_versionOutputDir, destFileName), overwrite: true);
 
-                long size = new FileInfo(destLocal).Length;
-                string md5 = ComputeMD5(destLocal);
-                artifacts.Add(new HotUpdateDllArtifact(destFileName, size, md5));
+                artifacts.Add(new PatchFile
+                {
+                    FileName = destFileName,
+                    Url      = destFileName,
+                    Size     = new FileInfo(destLocal).Length,
+                    MD5      = ComputeMD5(destLocal)
+                });
             }
 
             return artifacts;
-        }
-
-        // ─── 生成 version.json 字符串 ──────────────────────────
-        private string BuildVersionJson(
-            int newResource, int newCode,
-            IReadOnlyList<HotUpdateDllArtifact> dllArtifacts)
-        {
-            // 构建 PatchFiles 数组（仅代码更新时有条目）
-            string patchFiles = "[]";
-            if (_publishCode && dllArtifacts != null && dllArtifacts.Count > 0)
-                patchFiles = BuildPatchFilesJson(dllArtifacts);
-
-            string desc = EscapeJsonString(_description);
-
-            return
-$@"{{
-  ""AppVersion"":          ""{_appVersion}"",
-  ""ResourceVersion"":     {newResource},
-  ""CodeVersion"":         {newCode},
-  ""ForceUpdate"":         {(_forceUpdate ? "true" : "false")},
-  ""MinCompatibleVersion"":""{_minCompatible}"",
-  ""Description"":         ""{desc}"",
-  ""PatchFiles"":          {patchFiles}
-}}";
-        }
-
-        /// <summary>
-        /// 根据热更程序集产物构建 PatchFiles JSON 数组。
-        /// </summary>
-        private static string BuildPatchFilesJson(IReadOnlyList<HotUpdateDllArtifact> dllArtifacts)
-        {
-            var sb = new StringBuilder();
-            sb.Append("[\n");
-            for (int i = 0; i < dllArtifacts.Count; i++)
-            {
-                var artifact = dllArtifacts[i];
-                // 只写相对文件名，保持清单环境无关：实际下载地址运行时由客户端 UpdateServerUrl 派生
-                // （见 VersionManager.TryResolveCodePatchFiles），不再硬编码发布机 host。
-                string dllUrl = artifact.FileName;
-                sb.Append("    {\n");
-                sb.Append("      \"FileName\": \"").Append(EscapeJsonString(artifact.FileName)).Append("\",\n");
-                sb.Append("      \"Url\":      \"").Append(EscapeJsonString(dllUrl)).Append("\",\n");
-                sb.Append("      \"Size\":     ").Append(artifact.Size).Append(",\n");
-                sb.Append("      \"MD5\":      \"").Append(EscapeJsonString(artifact.Md5)).Append("\"\n");
-                sb.Append("    }");
-                if (i < dllArtifacts.Count - 1)
-                    sb.Append(",");
-                sb.Append("\n");
-            }
-            sb.Append("  ]");
-            return sb.ToString();
-        }
-
-        /// <summary>
-        /// 转义写入 version.json 的字符串字段。
-        /// </summary>
-        private static string EscapeJsonString(string value)
-        {
-            return (value ?? string.Empty)
-                .Replace("\\", "\\\\")
-                .Replace("\"", "\\\"")
-                .Replace("\r", "\\r")
-                .Replace("\n", "\\n");
         }
 
         // ─── 工具方法 ──────────────────────────────────────────
@@ -762,19 +715,6 @@ $@"{{
         {
             _log += $"[{DateTime.Now:HH:mm:ss}] {msg}\n";
             Repaint();
-        }
-
-        // 用于读取 version.json 的简化结构
-        [Serializable]
-        private class VersionSnapshot
-        {
-            // 字段由 JsonUtility.FromJson 反射赋值，编译器无法静态识别，故局部关闭 CS0649（字段从未赋值）误报。
-#pragma warning disable CS0649
-            public string AppVersion;
-            public int    ResourceVersion;
-            public int    CodeVersion;
-            public string MinCompatibleVersion;
-#pragma warning restore CS0649
         }
     }
 
