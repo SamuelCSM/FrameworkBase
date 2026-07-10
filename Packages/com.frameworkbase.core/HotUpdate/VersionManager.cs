@@ -381,14 +381,14 @@ namespace Framework.HotUpdate
                 }
                 catch (Exception ex)
                 {
-                    GameLog.Error($"[VersionManager] Failed to read persisted version: {ex.Message}");
+                    GameLog.Error($"[VersionManager] 读取 persistent 版本文件失败：{ex.Message}");
                 }
             }
 
             if (HotUpdateSlotManager.TryGetActiveCodeVersion(out int activeCodeVersion))
                 packaged.CodeVersion = activeCodeVersion;
 
-            GameLog.Log($"[VersionManager] Effective local version App={packaged.AppVersion} Resource={packaged.ResourceVersion} Code={packaged.CodeVersion}");
+            GameLog.Log($"[VersionManager] 本地有效版本 App={packaged.AppVersion} Resource={packaged.ResourceVersion} Code={packaged.CodeVersion}");
             return packaged;
         }
 
@@ -404,7 +404,7 @@ namespace Framework.HotUpdate
             }
             catch (Exception ex)
             {
-                GameLog.Error($"[VersionManager] Failed to read packaged version: {ex.Message}");
+                GameLog.Error($"[VersionManager] 读取出厂版本文件失败：{ex.Message}");
                 return null;
             }
         }
@@ -437,7 +437,7 @@ namespace Framework.HotUpdate
                 return;
             if (!string.Equals(serverVersion.AppVersion, Application.version, StringComparison.Ordinal))
             {
-                GameLog.Error($"[VersionManager] Refusing to commit content for non-installed AppVersion {serverVersion.AppVersion}");
+                GameLog.Error($"[VersionManager] 拒绝为未安装的整包版本提交内容状态：{serverVersion.AppVersion}");
                 return;
             }
 
@@ -452,7 +452,7 @@ namespace Framework.HotUpdate
             local.Type = UpdateType.None;
             local.PatchFiles = new List<PatchFile>();
             SaveLocalVersion(local);
-            GameLog.Log($"[VersionManager] Content commit complete Resource={local.ResourceVersion} Code={local.CodeVersion}");
+            GameLog.Log($"[VersionManager] 内容版本提交完成 Resource={local.ResourceVersion} Code={local.CodeVersion}");
         }
 
         public static void SaveLocalVersion(UpdateInfo versionInfo)
@@ -468,7 +468,7 @@ namespace Framework.HotUpdate
             }
             catch (Exception ex)
             {
-                GameLog.Error($"[VersionManager] Failed to save local version: {ex.Message}");
+                GameLog.Error($"[VersionManager] 保存本地版本文件失败：{ex.Message}");
             }
         }
         

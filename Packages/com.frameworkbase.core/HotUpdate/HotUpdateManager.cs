@@ -137,7 +137,7 @@ namespace Framework.HotUpdate
                         config?.AppChannel,
                         out string rejectReason))
                 {
-                    GameLog.Error($"[HotUpdateManager] Manifest rejected: {rejectReason}");
+                    GameLog.Error($"[HotUpdateManager] 清单未通过安全准入：{rejectReason}");
                     _state = UpdateState.Error;
                     OnUpdateError?.Invoke(rejectReason);
                     return null;

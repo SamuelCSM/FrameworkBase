@@ -171,6 +171,13 @@ namespace Framework.Core
                 }
                 LaunchTelemetryHelper.EndPhaseMetric(fullUpdateGate, true, "full_update_required=false");
 
+                // 事务边界声明：代码更新走 HotUpdateSlotManager 的 staging→原子槽切换→确认/回滚事务；
+                // 资源（Addressables Catalog/内容）不在该事务内，本步即写入本地缓存。可接受的依据：
+                //   1. Addressables 内容按哈希寻址且幂等，半下载/中断由其缓存层自愈，不存在半安装态；
+                //   2. persistent/version.json 的 ResourceVersion 只在启动确认点之后提交（CommitHotUpdate），
+                //      启动失败时下次仍会按旧版本号重新走检查，不会把未确认状态当作事实；
+                //   3. 资源不含可执行代码，错误资源不会像错误 DLL 一样阻断启动自愈。
+                // 若未来引入不兼容的 Catalog 变更，必须先把 Catalog 切换点移到启动确认之后再放开。
                 var step4 = LaunchTelemetryHelper.BeginPhaseMetric(runMetric, LaunchPhase.ResourceUpdate, "step04_resource_update");
                 bool resourceUpdated = LaunchFlowUpdateExecutor.ShouldUpdateResources(serverVersion, localVersion);
                 var resourceUpdateResult = await LaunchFlowUpdateExecutor.ExecuteResourceUpdateAsync(loading, resourceUpdated);

@@ -53,7 +53,7 @@ namespace Framework.Editor
 
             if (AddressableAssetSettingsDefaultObject.Settings == null)
             {
-                errorSummary = "Addressables Settings missing. FrameworkBase always initializes Addressables at launch; run Framework/Setup Addressables before build.";
+                errorSummary = "缺少 Addressables Settings：FrameworkBase 启动即初始化资源系统，构建前请先执行 Framework/Setup Addressables 并提交配置。";
                 return false;
             }
 
