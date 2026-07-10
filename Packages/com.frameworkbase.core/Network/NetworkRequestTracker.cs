@@ -1,356 +1,322 @@
 using System;
 using System.Collections.Generic;
-using Cysharp.Threading.Tasks;
+using System.Threading;
 
 namespace Framework.Network
 {
     /// <summary>
-    /// 网络请求跟踪器，管理所有进行中的请求-响应关联。
-    /// 职责：
-    ///   1. 分配和回收 seqId
-    ///   2. 跟踪 pending 请求的超时
-    ///   3. 驱动等待 UI 的显示/隐藏
+    /// 网络请求生命周期跟踪器，使用 ConnectionEpoch 与 ushort SeqId 组成请求身份。
+    /// <para>
+    /// SeqId 在单次连接内循环复用，因此不能单独作为响应归属依据。ConnectionEpoch 随每次新连接递增，
+    /// 可阻止旧 Socket 收包线程、代理缓存或延迟响应错误完成新连接上恰好复用相同 SeqId 的请求。
+    /// </para>
+    /// <para>
+    /// 本类型预期只在 Unity 主线程调用。CancellationToken 仅在 <see cref="Update"/> 中轮询消费，
+    /// 不直接注册跨线程回调，从而避免后台线程并发修改字典或触发 UI 回调。
+    /// </para>
     /// </summary>
     internal sealed class NetworkRequestTracker
     {
-        /// <summary>进行中的请求记录。</summary>
+        /// <summary>
+        /// 单个在途请求的完整状态。所有完成路径必须先设置 Completed 并从字典移除，再调用外部回调，
+        /// 以防回调重入导致同一请求被二次完成。
+        /// </summary>
         private sealed class PendingRequest
         {
-            /// <summary>请求序列号。</summary>
+            public int ConnectionEpoch;
             public ushort SeqId;
-
-            /// <summary>结果回调（收到响应时调用，参数为 payload 字节数组）。</summary>
             public Action<byte[]> OnResponse;
-
-            /// <summary>全局错误码拦截后的回调。</summary>
             public Action OnIntercepted;
-
-            /// <summary>超时/取消回调。</summary>
             public Action OnTimeout;
-
-            /// <summary>请求发出的时间戳（秒）。</summary>
+            public Action OnCancelled;
             public float StartTime;
-
-            /// <summary>超时时间（秒）。</summary>
             public float TimeoutSeconds;
-
-            /// <summary>显示 Loading 的延迟（秒），负数表示不显示。</summary>
             public float ShowLoadingDelay;
-
-            /// <summary>是否已经显示了 Loading。</summary>
             public bool LoadingShown;
-
-            /// <summary>是否已完成（响应/超时/取消）。</summary>
             public bool Completed;
+            public CancellationToken CancellationToken;
         }
 
-        /// <summary>当前在飞请求字典，Key = seqId。</summary>
         private readonly Dictionary<ushort, PendingRequest> _pendingRequests =
             new Dictionary<ushort, PendingRequest>();
-
-        /// <summary>本帧超时请求序列号缓冲，避免 Update 中临时分配列表。</summary>
         private readonly List<ushort> _timeoutSeqIds = new List<ushort>(16);
-
-        /// <summary>seqId 自增计数器（0 保留给推送消息）。</summary>
+        private readonly List<ushort> _cancelSeqIds = new List<ushort>(16);
         private ushort _nextSeqId;
-
-        /// <summary>当前累计时间（由 Update 驱动）。</summary>
         private float _currentTime;
-
-        /// <summary>当前正在显示 Loading 的请求数量。</summary>
         private int _loadingRefCount;
 
-        /// <summary>等待 UI 显示回调（由外部设置）。</summary>
+        /// <summary>
+        /// 第一个请求进入等待展示状态时触发；通常由上层 UI 适配器显示全局等待遮罩。
+        /// </summary>
         public Action OnShowWaiting;
 
-        /// <summary>等待 UI 隐藏回调（由外部设置）。</summary>
+        /// <summary>
+        /// 最后一个已展示等待状态的请求结束时触发；使用引用计数避免并发请求互相提前关闭遮罩。
+        /// </summary>
         public Action OnHideWaiting;
 
-        /// <summary>超时提示回调（由外部设置）。参数：提示文案。</summary>
+        /// <summary>
+        /// 兼容旧接口的超时提示入口。具体文案、频控及交互应由 NetworkManager 或 UI 模板处理。
+        /// </summary>
         public Action<string> OnShowTimeoutTip;
 
         /// <summary>
-        /// 分配一个新的 seqId 并注册待响应请求。
+        /// 当前仍在等待响应、拦截、取消或超时的请求数量。
         /// </summary>
-        /// <param name="onResponse">收到响应时的回调。</param>
-        /// <param name="onTimeout">超时回调。</param>
-        /// <param name="config">请求配置。</param>
-        /// <param name="onIntercepted">响应被全局错误码拦截后的回调。</param>
-        /// <returns>分配的 seqId。</returns>
-        public ushort Register(Action<byte[]> onResponse, Action onTimeout, NetworkRequestConfig config, Action onIntercepted = null)
+        public int PendingCount => _pendingRequests.Count;
+
+        /// <summary>
+        /// 注册一个属于指定连接世代的请求，并分配 1～65535 范围内当前未占用的 SeqId。
+        /// </summary>
+        /// <param name="connectionEpoch">发送该请求时的连接世代。</param>
+        /// <param name="onResponse">收到同世代匹配响应后的成功回调。</param>
+        /// <param name="onTimeout">超过请求超时时间后的回调。</param>
+        /// <param name="onCancelled">取消令牌被触发后的回调。</param>
+        /// <param name="config">超时和等待遮罩策略。</param>
+        /// <param name="cancellationToken">由主线程 Update 轮询的取消令牌。</param>
+        /// <param name="onIntercepted">响应被统一拦截器消费后的回调。</param>
+        /// <returns>当前请求占用的非零 SeqId。</returns>
+        /// <exception cref="ArgumentNullException">请求配置为空。</exception>
+        /// <exception cref="InvalidOperationException">全部 65535 个 SeqId 均处于占用状态。</exception>
+        public ushort Register(
+            int connectionEpoch,
+            Action<byte[]> onResponse,
+            Action onTimeout,
+            Action onCancelled,
+            NetworkRequestConfig config,
+            CancellationToken cancellationToken = default,
+            Action onIntercepted = null)
         {
+            if (config == null) throw new ArgumentNullException(nameof(config));
             ushort seqId = AllocateSeqId();
             var pending = new PendingRequest
             {
+                ConnectionEpoch = connectionEpoch,
                 SeqId = seqId,
                 OnResponse = onResponse,
                 OnIntercepted = onIntercepted,
                 OnTimeout = onTimeout,
+                OnCancelled = onCancelled,
                 StartTime = _currentTime,
-                TimeoutSeconds = config.TimeoutMs / 1000f,
+                TimeoutSeconds = Math.Max(0.001f, config.TimeoutMs / 1000f),
                 ShowLoadingDelay = config.ShowLoadingDelayMs / 1000f,
-                LoadingShown = false,
-                Completed = false,
+                CancellationToken = cancellationToken,
             };
-
-            _pendingRequests[seqId] = pending;
-
-            // 如果 delay = 0，立即显示 Loading
-            if (pending.ShowLoadingDelay == 0f)
-            {
-                ShowLoading(pending);
-            }
-
+            _pendingRequests.Add(seqId, pending);
+            if (pending.ShowLoadingDelay == 0f) ShowLoading(pending);
             return seqId;
         }
 
         /// <summary>
-        /// 收到响应时调用，匹配 seqId 并触发回调。
+        /// 兼容旧调用的注册重载。旧链路没有连接世代和独立取消语义，因此固定使用 Epoch 0，
+        /// 并沿用超时回调作为取消回调；新代码应使用完整参数重载。
         /// </summary>
-        /// <param name="seqId">响应包中的 seqId。</param>
-        /// <param name="payload">响应消息体。</param>
-        /// <returns>是否匹配到 pending 请求（true = 已消费，不再走多播分发）。</returns>
-        public bool TryComplete(ushort seqId, byte[] payload)
+        public ushort Register(
+            Action<byte[]> onResponse,
+            Action onTimeout,
+            NetworkRequestConfig config,
+            Action onIntercepted = null)
         {
-            if (seqId == 0)
-            {
-                // seqId=0 是服务端主动推送，不走请求-响应匹配
-                return false;
-            }
+            return Register(0, onResponse, onTimeout, onTimeout, config, default, onIntercepted);
+        }
 
-            if (!_pendingRequests.TryGetValue(seqId, out PendingRequest pending))
-            {
-                return false;
-            }
-
-            if (pending.Completed)
-            {
-                return true; // 已经完成（可能超时了），丢弃这个迟到的响应
-            }
-
-            pending.Completed = true;
-            _pendingRequests.Remove(seqId);
-            HideLoading(pending);
+        /// <summary>
+        /// 仅当 Epoch 与 SeqId 同时匹配时完成请求；旧连接响应或未知响应返回 <see langword="false"/>。
+        /// </summary>
+        public bool TryComplete(int connectionEpoch, ushort seqId, byte[] payload)
+        {
+            if (!TryGetPending(connectionEpoch, seqId, out PendingRequest pending)) return false;
+            CompleteAndRemove(pending);
             pending.OnResponse?.Invoke(payload);
             return true;
         }
 
         /// <summary>
-        /// 主动放弃指定 pending 请求（用于发送失败等场景）：移除记录并隐藏其 Loading，
-        /// 不触发任何完成回调，由调用方自行决定如何向业务收尾（通常直接返回 null）。
+        /// 兼容无连接世代的旧调用，固定按 Epoch 0 匹配。
         /// </summary>
-        /// <param name="seqId">请求序列号。</param>
-        /// <returns>存在并成功移除时返回 true。</returns>
+        public bool TryComplete(ushort seqId, byte[] payload) => TryComplete(0, seqId, payload);
+
+        /// <summary>
+        /// 静默移除指定请求，不触发超时、取消或成功回调；用于发送失败后由调用方自行完成错误语义。
+        /// </summary>
         public bool Cancel(ushort seqId)
         {
-            if (seqId == 0 || !_pendingRequests.TryGetValue(seqId, out PendingRequest pending))
-            {
-                return false;
-            }
-
-            if (!pending.Completed)
-            {
-                pending.Completed = true;
-                HideLoading(pending);
-            }
-
-            _pendingRequests.Remove(seqId);
+            if (!_pendingRequests.TryGetValue(seqId, out PendingRequest pending)) return false;
+            CompleteAndRemove(pending);
             return true;
         }
 
         /// <summary>
-        /// 判断指定 seqId 是否仍存在未完成的在飞请求。
-        /// 供分发前识别已超时/已完成的迟到或重复响应并丢弃，避免其绕过 RequestAsync 单方面刷新业务缓存。
+        /// 判断指定连接世代与 SeqId 对应的请求是否仍处于等待状态。
         /// </summary>
-        /// <param name="seqId">响应包中的 seqId。</param>
-        /// <returns>存在未完成 pending 请求时返回 true。</returns>
-        public bool HasPending(ushort seqId)
+        public bool HasPending(int connectionEpoch, ushort seqId)
         {
-            return seqId != 0
-                && _pendingRequests.TryGetValue(seqId, out PendingRequest pending)
-                && !pending.Completed;
+            return TryGetPending(connectionEpoch, seqId, out _);
         }
 
         /// <summary>
-        /// 将指定请求标记为已被全局错误拦截器消费。
+        /// 兼容旧代码，仅按 SeqId 判断请求是否存在，不提供跨连接隔离保证。
         /// </summary>
-        /// <param name="seqId">响应包中的 seqId。</param>
-        /// <returns>成功释放 pending 请求时返回 true。</returns>
-        public bool TryMarkIntercepted(ushort seqId)
+        public bool HasPending(ushort seqId)
         {
-            if (seqId == 0 || !_pendingRequests.TryGetValue(seqId, out PendingRequest pending))
-            {
-                return false;
-            }
+            return seqId != 0 && _pendingRequests.TryGetValue(seqId, out PendingRequest pending) && !pending.Completed;
+        }
 
-            if (pending.Completed)
-            {
-                return true;
-            }
-
-            pending.Completed = true;
-            _pendingRequests.Remove(seqId);
-            HideLoading(pending);
+        /// <summary>
+        /// 将请求标记为已被统一响应拦截器消费，并触发独立拦截回调。
+        /// </summary>
+        public bool TryMarkIntercepted(int connectionEpoch, ushort seqId)
+        {
+            if (!TryGetPending(connectionEpoch, seqId, out PendingRequest pending)) return false;
+            CompleteAndRemove(pending);
             pending.OnIntercepted?.Invoke();
             return true;
         }
 
         /// <summary>
-        /// 每帧 Update，检查超时和显示 Loading。
+        /// 兼容无连接世代的旧调用，固定按 Epoch 0 标记拦截。
         /// </summary>
-        /// <param name="deltaTime">帧间隔时间。</param>
+        public bool TryMarkIntercepted(ushort seqId) => TryMarkIntercepted(0, seqId);
+
+        /// <summary>
+        /// 在 Unity 主线程推进请求计时、取消令牌、等待遮罩与超时状态。
+        /// <para>
+        /// 遍历期间只收集待处理 SeqId，遍历结束后再修改字典，避免集合枚举失效；
+        /// 取消优先于超时，确保同一帧同时满足两个条件时只产生一种终态。
+        /// </para>
+        /// </summary>
         public void Update(float deltaTime)
         {
-            _currentTime += deltaTime;
+            _currentTime += Math.Max(0, deltaTime);
+            if (_pendingRequests.Count == 0) return;
 
-            if (_pendingRequests.Count == 0)
-            {
-                return;
-            }
-
-            // 收集需要处理的 seqId（避免在迭代中修改字典）
             _timeoutSeqIds.Clear();
-
-            foreach (var kvp in _pendingRequests)
+            _cancelSeqIds.Clear();
+            foreach (KeyValuePair<ushort, PendingRequest> pair in _pendingRequests)
             {
-                PendingRequest pending = kvp.Value;
-                if (pending.Completed)
+                PendingRequest pending = pair.Value;
+                if (pending.Completed) continue;
+                if (pending.CancellationToken.IsCancellationRequested)
                 {
+                    _cancelSeqIds.Add(pair.Key);
                     continue;
                 }
 
                 float elapsed = _currentTime - pending.StartTime;
-
-                // 检查是否需要显示 Loading
                 if (!pending.LoadingShown && pending.ShowLoadingDelay >= 0f && elapsed >= pending.ShowLoadingDelay)
-                {
                     ShowLoading(pending);
-                }
-
-                // 检查超时
                 if (elapsed >= pending.TimeoutSeconds)
-                {
-                    _timeoutSeqIds.Add(kvp.Key);
-                }
+                    _timeoutSeqIds.Add(pair.Key);
             }
 
-            // 处理超时
-            if (_timeoutSeqIds.Count > 0)
-            {
-                for (int i = 0; i < _timeoutSeqIds.Count; i++)
-                {
-                    TimeoutRequest(_timeoutSeqIds[i]);
-                }
-
-                _timeoutSeqIds.Clear();
-            }
+            foreach (ushort seqId in _cancelSeqIds) CancelRequest(seqId);
+            foreach (ushort seqId in _timeoutSeqIds) TimeoutRequest(seqId);
         }
 
         /// <summary>
-        /// 取消所有进行中的请求（断线时调用）。
+        /// 取消并清理全部在途请求；每个请求触发取消回调，并保证等待遮罩引用计数最终归零。
         /// </summary>
         public void CancelAll()
         {
-            foreach (var kvp in _pendingRequests)
-            {
-                PendingRequest pending = kvp.Value;
-                if (!pending.Completed)
-                {
-                    pending.Completed = true;
-                    HideLoading(pending);
-                    pending.OnTimeout?.Invoke();
-                }
-            }
-
+            var requests = new List<PendingRequest>(_pendingRequests.Values);
             _pendingRequests.Clear();
-
-            if (_loadingRefCount > 0)
+            foreach (PendingRequest pending in requests)
             {
-                _loadingRefCount = 0;
-                OnHideWaiting?.Invoke();
+                if (pending.Completed) continue;
+                pending.Completed = true;
+                HideLoading(pending);
+                pending.OnCancelled?.Invoke();
             }
+            ResetLoading();
         }
 
         /// <summary>
-        /// 获取当前 pending 请求数量。
-        /// </summary>
-        public int PendingCount => _pendingRequests.Count;
-
-        /// <summary>
-        /// 分配一个新的 seqId（跳过 0）。
+        /// 循环寻找未被占用的非零 SeqId。0 保留给无需请求响应匹配的单向消息。
         /// </summary>
         private ushort AllocateSeqId()
         {
-            _nextSeqId++;
-            if (_nextSeqId == 0)
+            for (int i = 0; i < ushort.MaxValue; i++)
             {
-                _nextSeqId = 1; // 跳过 0，0 保留给推送消息
+                _nextSeqId++;
+                if (_nextSeqId == 0) _nextSeqId = 1;
+                if (!_pendingRequests.ContainsKey(_nextSeqId)) return _nextSeqId;
             }
-
-            return _nextSeqId;
+            throw new InvalidOperationException("网络请求 SeqId 已全部占用，拒绝继续注册请求。");
         }
 
         /// <summary>
-        /// 请求超时处理。
+        /// 获取仍有效且连接世代匹配的请求，防止旧连接数据完成新连接请求。
         /// </summary>
-        /// <param name="seqId">超时的 seqId。</param>
+        private bool TryGetPending(int connectionEpoch, ushort seqId, out PendingRequest pending)
+        {
+            pending = null;
+            if (seqId == 0 || !_pendingRequests.TryGetValue(seqId, out PendingRequest candidate) || candidate.Completed)
+                return false;
+            if (candidate.ConnectionEpoch != connectionEpoch) return false;
+            pending = candidate;
+            return true;
+        }
+
+        /// <summary>
+        /// 将指定请求转换为超时终态。必须先移除再调用外部回调，以保证回调重入安全。
+        /// </summary>
         private void TimeoutRequest(ushort seqId)
         {
-            if (!_pendingRequests.TryGetValue(seqId, out PendingRequest pending))
-            {
-                return;
-            }
-
-            if (pending.Completed)
-            {
-                return;
-            }
-
-            pending.Completed = true;
-            _pendingRequests.Remove(seqId);
-            HideLoading(pending);
+            if (!_pendingRequests.TryGetValue(seqId, out PendingRequest pending)) return;
+            CompleteAndRemove(pending);
             pending.OnTimeout?.Invoke();
-
-            GameLog.Warning($"[NetworkRequestTracker] 请求超时: seqId={seqId}");
+            GameLog.Warning($"[NetworkRequestTracker] 请求超时：epoch={pending.ConnectionEpoch} seq={seqId}");
         }
 
         /// <summary>
-        /// 增加 Loading 引用计数，首次时显示等待 UI。
+        /// 将指定请求转换为取消终态，并触发独立取消回调。
         /// </summary>
-        /// <param name="pending">请求记录。</param>
+        private void CancelRequest(ushort seqId)
+        {
+            if (!_pendingRequests.TryGetValue(seqId, out PendingRequest pending)) return;
+            CompleteAndRemove(pending);
+            pending.OnCancelled?.Invoke();
+        }
+
+        /// <summary>
+        /// 执行所有终态共用的原子式本地清理：标记完成、移除索引并释放等待遮罩引用。
+        /// </summary>
+        private void CompleteAndRemove(PendingRequest pending)
+        {
+            pending.Completed = true;
+            _pendingRequests.Remove(pending.SeqId);
+            HideLoading(pending);
+        }
+
+        /// <summary>
+        /// 为请求增加一次等待遮罩引用，仅在引用从 0 变为 1 时通知上层显示。
+        /// </summary>
         private void ShowLoading(PendingRequest pending)
         {
-            if (pending.LoadingShown)
-            {
-                return;
-            }
-
+            if (pending.LoadingShown) return;
             pending.LoadingShown = true;
             _loadingRefCount++;
-            if (_loadingRefCount == 1)
-            {
-                OnShowWaiting?.Invoke();
-            }
+            if (_loadingRefCount == 1) OnShowWaiting?.Invoke();
         }
 
         /// <summary>
-        /// 减少 Loading 引用计数，归零时隐藏等待 UI。
+        /// 释放请求持有的等待遮罩引用；最后一个引用释放时通知上层隐藏。
         /// </summary>
-        /// <param name="pending">请求记录。</param>
         private void HideLoading(PendingRequest pending)
         {
-            if (!pending.LoadingShown)
-            {
-                return;
-            }
-
+            if (!pending.LoadingShown) return;
             pending.LoadingShown = false;
             _loadingRefCount--;
-            if (_loadingRefCount <= 0)
-            {
-                _loadingRefCount = 0;
-                OnHideWaiting?.Invoke();
-            }
+            if (_loadingRefCount <= 0) ResetLoading();
+        }
+
+        /// <summary>
+        /// 强制将等待遮罩引用计数归零，并在确有可见引用时通知上层隐藏。
+        /// </summary>
+        private void ResetLoading()
+        {
+            if (_loadingRefCount > 0) OnHideWaiting?.Invoke();
+            _loadingRefCount = 0;
         }
     }
 }

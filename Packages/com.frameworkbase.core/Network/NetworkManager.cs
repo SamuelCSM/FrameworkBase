@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Threading;
 using Cysharp.Threading.Tasks;
 using Framework.Core;
 using Framework.Network;
@@ -46,28 +47,36 @@ namespace Framework
         private readonly struct ConnectionEvent
         {
             public readonly ConnectionEventType Type;
+            public readonly int ConnectionEpoch;
             public readonly string Error;
             public readonly bool SuppressConnectedCallback;
 
             public ConnectionEvent(
                 ConnectionEventType type,
+                int connectionEpoch,
                 string error = null,
                 bool suppressConnectedCallback = false)
             {
                 Type = type;
+                ConnectionEpoch = connectionEpoch;
                 Error = error;
                 SuppressConnectedCallback = suppressConnectedCallback;
             }
         }
 
+        private const int MaxPendingConnectionEvents = 256;
         private readonly ConcurrentQueue<ConnectionEvent> _connectionEvents =
             new ConcurrentQueue<ConnectionEvent>();
+        private int _pendingConnectionEventCount;
+        private int _connectionEventOverflowFlag;
+        private int _mainThreadConnectionEpoch;
+        private bool _mainThreadConnectionActive;
 
         /// <summary>消息分发前拦截委托，初始化后复用，避免 Update 中创建委托。</summary>
-        private Func<byte, byte, ushort, byte[], bool> _messageInterceptHandler;
+        private Func<int, byte, byte, ushort, byte[], bool> _messageInterceptHandler;
 
         /// <summary>请求响应完成委托，初始化后复用，避免 Update 中创建 lambda。</summary>
-        private Action<ushort, byte[]> _seqResponseHandler;
+        private Action<int, ushort, byte[]> _seqResponseHandler;
 
         /// <summary>协议接收日志委托，初始化后复用，避免 Update 中创建委托。</summary>
         private Action<byte, byte, ushort, byte[]> _protocolReceiveLogHandler;
@@ -112,14 +121,15 @@ namespace Framework
         private int     _currentReconnectAttempt = 0;
         private float[] _reconnectIntervals     = { 1f, 2f, 5f, 10f, 30f };
         private volatile bool _isReconnecting   = false;
+        private CancellationTokenSource _reconnectCts;
         private string  _lastHost;
         private int     _lastPort;
 
         /// <summary>
         /// 重连后的应用层重新鉴权钩子（由组合根注入，框架网络层不依赖具体鉴权实现）。
-        /// 传输层重连成功后，服务端会把新建立的连接视为未登录的匿名会话，必须重放登录
-        /// 握手让其重新绑定会话身份并交还对局控制权，否则后续业务请求（快照 / 落子等）
-        /// 会因身份缺失被服务端静默丢弃。返回 true 表示会话已恢复，可对外宣告"重连成功"；
+        /// 传输层重连成功后，新连接通常尚未绑定原会话身份，必须由上层重放鉴权或会话恢复握手；
+        /// 在恢复成功前不得补发应用请求，否则可能因身份缺失被服务端拒绝或错误路由。
+        /// 返回 true 表示会话已恢复，可对外宣告“重连成功”；
         /// 返回 false 表示鉴权失败，按本次重连失败处理并继续退避重试。未注入（null）时跳过。
         /// </summary>
         private Func<UniTask<bool>> _reauthenticator;
@@ -263,20 +273,19 @@ namespace Framework
         // ── 连接 / 断开 ──────────────────────────────────────────────────────
 
         /// <summary>连接服务器</summary>
-        public async UniTask ConnectAsync(string host, int port)
+        public async UniTask ConnectAsync(
+            string host,
+            int port,
+            CancellationToken cancellationToken = default)
         {
-            if (IsConnected)
-            {
-                GameLog.Warning("[NetworkManager] 已连接，跳过");
-                return;
-            }
-
+            if (IsConnected) return;
+            CancelReconnectLoop();
+            _isReconnecting = false;
             _lastHost = host;
             _lastPort = port;
             _currentReconnectAttempt = 0;
-            _enableAutoReconnect     = true;
-
-            await ConnectInternalAsync(host, port);
+            _enableAutoReconnect = true;
+            await ConnectInternalAsync(host, port, cancellationToken);
         }
 
         /// <summary>
@@ -304,9 +313,10 @@ namespace Framework
         /// <summary>主动断开（关闭自动重连）。断线待发队列一并按失败收尾——不会再有重连补发它们。</summary>
         public void Disconnect()
         {
-            _enableAutoReconnect     = false;
-            _isReconnecting          = false;
+            _enableAutoReconnect = false;
+            _isReconnecting = false;
             _currentReconnectAttempt = 0;
+            CancelReconnectLoop();
             _offlineQueue.FailAll();
             _client?.Disconnect();
         }
@@ -315,11 +325,11 @@ namespace Framework
 
         /// <summary>
         /// 发送一条不需要匹配响应的通知消息（seqId = 0）。
-        /// 适用场景：投降、聊天发送、操作确认等服务端不回响应或由推送通道广播的消息。
+        /// 适用于不需要请求-响应配对的遥测、状态通知或应用层单向协议。返回值必须用于处理发送背压。
         /// </summary>
-        public void Notify<T>(T message) where T : class, INetMessage
+        public bool Notify<T>(T message) where T : class, INetMessage
         {
-            SendMessageInternal(message, 0);
+            return SendMessageInternal(message, 0);
         }
 
         /// <summary>
@@ -330,65 +340,66 @@ namespace Framework
         /// 断线待发队列，重连 + 重鉴权成功后按 FIFO 补发，超过 QueueTtlMs 未发出按失败收尾。
         /// </para>
         /// </summary>
-        public UniTask<TResp> RequestAsync<TReq, TResp>(TReq request, NetworkRequestConfig config = null)
+        public UniTask<TResp> RequestAsync<TReq, TResp>(
+            TReq request,
+            NetworkRequestConfig config = null,
+            CancellationToken cancellationToken = default)
             where TReq : class, INetMessage
             where TResp : class, INetMessage, new()
         {
             if (config == null) config = NetworkRequestConfig.Default;
+            if (cancellationToken.IsCancellationRequested)
+                return UniTask.FromResult<TResp>(null);
 
             if (!IsConnected)
             {
                 if (config.QueueWhileDisconnected)
-                    return EnqueueOfflineRequest<TReq, TResp>(request, config);
-
-                GameLog.Error("[NetworkManager] 未连接，无法发送请求");
+                    return EnqueueOfflineRequest<TReq, TResp>(request, config, cancellationToken);
                 return UniTask.FromResult<TResp>(null);
             }
 
-            return RequestConnectedAsync<TReq, TResp>(request, config);
+            return RequestConnectedAsync<TReq, TResp>(request, config, cancellationToken);
         }
 
         /// <summary>已连接状态下的请求-响应核心流程（注册 pending → 发送 → 等待配对）。</summary>
-        private UniTask<TResp> RequestConnectedAsync<TReq, TResp>(TReq request, NetworkRequestConfig config)
+        private UniTask<TResp> RequestConnectedAsync<TReq, TResp>(
+            TReq request,
+            NetworkRequestConfig config,
+            CancellationToken cancellationToken)
             where TReq : class, INetMessage
             where TResp : class, INetMessage, new()
         {
             var tcs = new UniTaskCompletionSource<TResp>();
             _messageTypeRegistry?.Register<TResp>();
+            int epoch = _client?.ConnectionEpoch ?? 0;
 
             ushort seqId = _requestTracker.Register(
+                epoch,
                 payload =>
                 {
-                    try
-                    {
-                        TResp response = ProtobufUtil.Deserialize<TResp>(payload);
-                        tcs.TrySetResult(response);
-                    }
+                    try { tcs.TrySetResult(ProtobufUtil.Deserialize<TResp>(payload)); }
                     catch (Exception ex)
                     {
-                        GameLog.Error($"[NetworkManager] 反序列化响应失败: {typeof(TResp).Name}, 错误={ex.Message}");
+                        GameLog.Error($"[NetworkManager] Response deserialize failed: {typeof(TResp).Name}, {ex.Message}");
                         tcs.TrySetResult(null);
                     }
                 },
-                () =>
+                onTimeout: () =>
                 {
                     if (config.ShowTimeoutTip)
-                    {
-                        string msg = config.TimeoutMessage ?? "网络请求超时，请检查网络后重试";
-                        _requestTracker.OnShowTimeoutTip?.Invoke(msg);
-                    }
+                        _requestTracker.OnShowTimeoutTip?.Invoke(config.TimeoutMessage ?? "网络请求超时。");
                     tcs.TrySetResult(null);
                 },
-                config,
-                () => tcs.TrySetResult(null));
+                onCancelled: () => tcs.TrySetResult(null),
+                config: config,
+                cancellationToken: cancellationToken,
+                onIntercepted: () => tcs.TrySetResult(null));
 
-            // 发送失败时立即放弃该 pending，避免调用方硬等到超时（默认 15s）才拿到 null。
             if (!SendMessageInternal(request, seqId))
             {
                 _requestTracker.Cancel(seqId);
                 tcs.TrySetResult(null);
             }
-
             return tcs.Task;
         }
 
@@ -396,41 +407,42 @@ namespace Framework
         /// 把断线期间的 opt-in 请求挂入待发队列，返回其完成器任务。
         /// 补发只给一次机会：重连补发瞬间又断线时直接按失败收尾，不二次入队（避免无限徘徊）。
         /// </summary>
-        private UniTask<TResp> EnqueueOfflineRequest<TReq, TResp>(TReq request, NetworkRequestConfig config)
+        private UniTask<TResp> EnqueueOfflineRequest<TReq, TResp>(
+            TReq request,
+            NetworkRequestConfig config,
+            CancellationToken cancellationToken)
             where TReq : class, INetMessage
             where TResp : class, INetMessage, new()
         {
-            var tcs = new UniTaskCompletionSource<TResp>();
+            if (cancellationToken.IsCancellationRequested)
+                return UniTask.FromResult<TResp>(null);
 
+            var tcs = new UniTaskCompletionSource<TResp>();
             bool queued = _offlineQueue.TryEnqueue(
-                send: () => ForwardQueuedRequestAsync(request, config, tcs).Forget(),
+                send: () => ForwardQueuedRequestAsync(request, config, cancellationToken, tcs).Forget(),
                 fail: () => tcs.TrySetResult(null),
                 ttlSeconds: config.QueueTtlMs / 1000.0,
                 now: _offlineQueueClock);
-
             if (!queued)
-            {
-                GameLog.Warning($"[NetworkManager] 断线待发队列已满（{_offlineQueue.MaxItems}），请求直接失败: {typeof(TReq).Name}");
                 return UniTask.FromResult<TResp>(null);
-            }
-
-            GameLog.Log($"[NetworkManager] 未连接，请求已入队等待重连补发: {typeof(TReq).Name}（队列 {_offlineQueue.Count} 条）");
             return tcs.Task;
         }
 
         /// <summary>补发一条排队请求并把结果转交给原调用方的完成器。</summary>
         private async UniTaskVoid ForwardQueuedRequestAsync<TReq, TResp>(
-            TReq request, NetworkRequestConfig config, UniTaskCompletionSource<TResp> tcs)
+            TReq request,
+            NetworkRequestConfig config,
+            CancellationToken cancellationToken,
+            UniTaskCompletionSource<TResp> tcs)
             where TReq : class, INetMessage
             where TResp : class, INetMessage, new()
         {
-            if (!IsConnected)
+            if (!IsConnected || cancellationToken.IsCancellationRequested)
             {
-                tcs.TrySetResult(null); // 补发窗口又断线：只给一次机会
+                tcs.TrySetResult(null);
                 return;
             }
-
-            TResp response = await RequestConnectedAsync<TReq, TResp>(request, config);
+            TResp response = await RequestConnectedAsync<TReq, TResp>(request, config, cancellationToken);
             tcs.TrySetResult(response);
         }
 
@@ -442,10 +454,13 @@ namespace Framework
         /// <param name="request">实现了 IRequest&lt;TResp&gt; 的请求消息。</param>
         /// <param name="config">请求配置。为 null 时使用默认配置。</param>
         /// <returns>响应消息实例；超时或取消时返回 null。</returns>
-        public UniTask<TResp> RequestAsync<TResp>(IRequest<TResp> request, NetworkRequestConfig config = null)
+        public UniTask<TResp> RequestAsync<TResp>(
+            IRequest<TResp> request,
+            NetworkRequestConfig config = null,
+            CancellationToken cancellationToken = default)
             where TResp : class, INetMessage, new()
         {
-            return RequestAsync<IRequest<TResp>, TResp>(request, config);
+            return RequestAsync<IRequest<TResp>, TResp>(request, config, cancellationToken);
         }
 
         /// <summary>
@@ -639,7 +654,8 @@ namespace Framework
             {
                 byte[] payload = ProtobufUtil.Serialize(message);
                 byte[] packet = MessagePacket.Pack(message, payload, seqId);
-                _client.Send(packet);
+                if (!_client.Send(packet))
+                    return false;
 
                 if (ShouldLogProtocol(message.GetMainId(), message.GetSubId()))
                 {
@@ -656,73 +672,127 @@ namespace Framework
             }
         }
 
-        private async UniTask ConnectInternalAsync(string host, int port)
+        private async UniTask ConnectInternalAsync(
+            string host,
+            int port,
+            CancellationToken cancellationToken = default)
         {
             try
             {
-                if (_client == null)
-                {
-                    _client = new TcpClient();
-                    // TLS 从 AppConfig 装配一次，重连沿用同一配置（同一 TcpClient 实例）。
-                    var appCfg = Core.AppConfig.Load();
-                    if (appCfg != null && appCfg.UseTls)
-                    {
-                        _client.Tls = new TlsClientOptions
-                        {
-                            Enabled = true,
-                            TargetHost = string.IsNullOrEmpty(appCfg.TlsServerName)
-                                ? "clientbase-gs"
-                                : appCfg.TlsServerName,
-                            CertSha256 = appCfg.TlsCertSha256 ?? string.Empty,
-                        };
-                    }
-
-                    _client.OnConnected    += OnClientConnected;
-                    _client.OnDisconnected += OnClientDisconnected;
-                    _client.OnReceive      += OnClientReceive;
-                    _client.OnError        += OnClientError;
-                }
-
-                await _client.ConnectAsync(host, port);
+                EnsureClient();
+                await _client.ConnectAsync(host, port, cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
             }
             catch (Exception ex)
             {
-                GameLog.Error($"[NetworkManager] 连接失败: {ex.Message}");
-                OnError?.Invoke($"连接失败: {ex.Message}");
-
+                GameLog.Error($"[NetworkManager] 初次连接失败：{ex.Message}");
                 if (_enableAutoReconnect && !_isReconnecting)
-                    await TryReconnectAsync();
+                {
+                    bool reconnected = await TryReconnectAsync();
+                    if (reconnected) return;
+                }
+                throw new InvalidOperationException("连接与自动重连均失败。", ex);
             }
         }
 
+        private void EnsureClient()
+        {
+            if (_client != null) return;
+            _client = new TcpClient();
+            var appCfg = Core.AppConfig.Load();
+            if (appCfg != null)
+            {
+                _client.ConnectTimeoutSeconds = Math.Max(1, appCfg.NetworkTimeoutSeconds);
+                _client.TlsHandshakeTimeoutSeconds = Math.Max(1, appCfg.NetworkTimeoutSeconds);
+                if (appCfg.UseTls)
+                {
+                    _client.Tls = new TlsClientOptions
+                    {
+                        Enabled = true,
+                        TargetHost = appCfg.TlsServerName ?? string.Empty,
+                        CertSha256 = appCfg.TlsCertSha256 ?? string.Empty,
+                        CertSha256Pins = appCfg.TlsCertSha256Pins ?? Array.Empty<string>(),
+                        AllowPinnedCertificateWithoutSystemTrust = appCfg.AllowPinnedCertificateWithoutSystemTrust,
+                    };
+                }
+            }
+            _client.OnConnectedWithEpoch += OnClientConnected;
+            _client.OnDisconnectedWithEpoch += OnClientDisconnected;
+            _client.OnReceiveWithEpoch += OnClientReceive;
+            _client.OnErrorWithEpoch += OnClientError;
+        }
+
         // ── TcpClient 回调：可能在后台线程触发，仅入队，处理推迟到主线程 ──────
-        private void OnClientConnected()
-            => _connectionEvents.Enqueue(new ConnectionEvent(
+        private void OnClientConnected(int connectionEpoch)
+            => TryEnqueueConnectionEvent(new ConnectionEvent(
                 ConnectionEventType.Connected,
+                connectionEpoch,
                 suppressConnectedCallback: _isReconnecting));
 
-        private void OnClientDisconnected()
-            => _connectionEvents.Enqueue(new ConnectionEvent(ConnectionEventType.Disconnected));
+        private void OnClientDisconnected(int connectionEpoch)
+            => TryEnqueueConnectionEvent(new ConnectionEvent(ConnectionEventType.Disconnected, connectionEpoch));
 
-        private void OnClientError(string error)
-            => _connectionEvents.Enqueue(new ConnectionEvent(ConnectionEventType.Error, error));
+        private void OnClientError(int connectionEpoch, string error)
+            => TryEnqueueConnectionEvent(new ConnectionEvent(ConnectionEventType.Error, connectionEpoch, error));
 
-        /// <summary>主线程排空连接状态事件队列，按投递顺序处理。</summary>
+        /// <summary>
+        /// 从任意后台线程向有界连接事件队列投递状态变化。达到上限时设置溢出标记并主动关闭传输，禁止无界占用内存。
+        /// </summary>
+        private void TryEnqueueConnectionEvent(ConnectionEvent connectionEvent)
+        {
+            int count = Interlocked.Increment(ref _pendingConnectionEventCount);
+            if (count <= MaxPendingConnectionEvents)
+            {
+                _connectionEvents.Enqueue(connectionEvent);
+                return;
+            }
+
+            Interlocked.Decrement(ref _pendingConnectionEventCount);
+            Interlocked.Exchange(ref _connectionEventOverflowFlag, 1);
+            _client?.Disconnect();
+        }
+
+        /// <summary>
+        /// 主线程按投递顺序排空连接状态事件，并通过 Epoch 拒绝排队期间已经过期的旧连接事件。
+        /// </summary>
         private void DrainConnectionEvents()
         {
             while (_connectionEvents.TryDequeue(out ConnectionEvent ev))
             {
+                Interlocked.Decrement(ref _pendingConnectionEventCount);
                 switch (ev.Type)
                 {
-                    case ConnectionEventType.Connected:    HandleConnected(ev.SuppressConnectedCallback); break;
-                    case ConnectionEventType.Disconnected: HandleDisconnected();   break;
-                    case ConnectionEventType.Error:        HandleError(ev.Error);  break;
+                    case ConnectionEventType.Connected:
+                        HandleConnected(ev.ConnectionEpoch, ev.SuppressConnectedCallback);
+                        break;
+                    case ConnectionEventType.Disconnected:
+                        HandleDisconnected(ev.ConnectionEpoch);
+                        break;
+                    case ConnectionEventType.Error:
+                        if (ev.ConnectionEpoch == 0 || ev.ConnectionEpoch == _mainThreadConnectionEpoch)
+                            HandleError(ev.Error);
+                        break;
                 }
+            }
+
+            if (Interlocked.Exchange(ref _connectionEventOverflowFlag, 0) != 0)
+            {
+                HandleError($"连接状态事件队列超过上限 {MaxPendingConnectionEvents}，已断开连接以保护主线程一致性。");
+                if (_mainThreadConnectionActive && !IsConnected)
+                    HandleDisconnected(_mainThreadConnectionEpoch);
             }
         }
 
-        private void HandleConnected(bool suppressConnectedCallback)
+        private void HandleConnected(int connectionEpoch, bool suppressConnectedCallback)
         {
+            if (connectionEpoch < _mainThreadConnectionEpoch)
+                return;
+            _mainThreadConnectionEpoch = connectionEpoch;
+            _mainThreadConnectionActive = true;
+
             // 传输层已连接：无论首连还是重连都重置心跳计时，避免刚连上就误判超时。
             _heartbeatTimer    = 0f;
             _timeSinceLastData = 0f;
@@ -750,9 +820,12 @@ namespace Framework
             OnConnected?.Invoke();
         }
 
-        private void HandleDisconnected()
+        private void HandleDisconnected(int connectionEpoch)
         {
-            GameLog.Log("[NetworkManager] 连接断开");
+            if (!_mainThreadConnectionActive || connectionEpoch != _mainThreadConnectionEpoch)
+                return;
+            _mainThreadConnectionActive = false;
+            GameLog.Log($"[NetworkManager] 连接断开，epoch={connectionEpoch}");
             _requestTracker?.CancelAll();
             OnDisconnected?.Invoke();
 
@@ -760,18 +833,25 @@ namespace Framework
                 TryReconnectAsync().Forget();
         }
 
-        private void OnClientReceive(byte[] packet)
+        private void OnClientReceive(int connectionEpoch, byte[] packet)
         {
             _dataReceivedFlag = true;
-
-            if (MessagePacket.Unpack(packet, out byte mainId, out byte subId, out ushort seqId, out byte[] payload))
+            if (!MessagePacket.Unpack(packet, out byte mainId, out byte subId, out ushort seqId, out byte[] payload))
             {
-                // 统一入队到主线程处理，保证 Subscribe 和 RequestAsync 的时序一致
-                _dispatcher.EnqueueMessage(mainId, subId, payload, seqId);
+                TryEnqueueConnectionEvent(new ConnectionEvent(
+                    ConnectionEventType.Error,
+                    connectionEpoch,
+                    "协议包解析失败。"));
+                return;
             }
-            else
+
+            if (!_dispatcher.TryEnqueueMessage(connectionEpoch, mainId, subId, payload, seqId))
             {
-                GameLog.Error("[NetworkManager] 消息包解析失败");
+                TryEnqueueConnectionEvent(new ConnectionEvent(
+                    ConnectionEventType.Error,
+                    connectionEpoch,
+                    $"入站消息队列超过上限 {_dispatcher.MaxPendingMessages}，已断开连接以保护状态一致性。"));
+                _client?.Disconnect();
             }
         }
 
@@ -800,7 +880,7 @@ namespace Framework
         /// <param name="seqId">请求序列号。</param>
         /// <param name="payload">协议消息体字节数据。</param>
         /// <returns>消息已被框架层消费时返回 true。</returns>
-        private bool ShouldConsumeBeforeDispatch(byte mainId, byte subId, ushort seqId, byte[] payload)
+        private bool ShouldConsumeBeforeDispatch(int connectionEpoch, byte mainId, byte subId, ushort seqId, byte[] payload)
         {
             if (IsHeartbeatMessage(mainId, subId))
             {
@@ -812,12 +892,12 @@ namespace Framework
             // seqId>0 的响应必须对应一个仍在飞的请求；若对应 pending 已不存在（请求已超时/取消/被处理完毕），
             // 说明这是迟到或重复响应，直接消费丢弃，避免它绕过 RequestAsync 单方面进入 Subscribe 多播刷新业务缓存，
             // 造成"调用方已按超时返回 null、缓存却被迟到响应更新"的状态分叉。
-            if (seqId > 0 && _requestTracker != null && !_requestTracker.HasPending(seqId))
+            if (seqId > 0 && _requestTracker != null && !_requestTracker.HasPending(connectionEpoch, seqId))
             {
                 return true;
             }
 
-            return TryInterceptNetworkError(mainId, subId, seqId, payload);
+            return TryInterceptNetworkError(connectionEpoch, mainId, subId, seqId, payload);
         }
 
         /// <summary>
@@ -868,7 +948,7 @@ namespace Framework
         /// <param name="seqId">请求序列号。</param>
         /// <param name="payload">协议消息体字节数据。</param>
         /// <returns>消息已被全局拦截器消费时返回 true。</returns>
-        private bool TryInterceptNetworkError(byte mainId, byte subId, ushort seqId, byte[] payload)
+        private bool TryInterceptNetworkError(int connectionEpoch, byte mainId, byte subId, ushort seqId, byte[] payload)
         {
             if (_globalErrorInterceptor == null || _messageTypeRegistry == null)
             {
@@ -901,7 +981,7 @@ namespace Framework
 
             if (seqId > 0)
             {
-                _requestTracker?.TryMarkIntercepted(seqId);
+                _requestTracker?.TryMarkIntercepted(connectionEpoch, seqId);
             }
 
             GameLog.Warning($"[NetworkManager] 全局错误码已拦截: MainId={mainId} SubId={subId} SeqId={seqId} ResultCode={response.ResultCode}");
@@ -913,9 +993,9 @@ namespace Framework
         /// </summary>
         /// <param name="seqId">请求序列号。</param>
         /// <param name="payload">响应消息体字节数据。</param>
-        private void CompleteSeqResponse(ushort seqId, byte[] payload)
+        private void CompleteSeqResponse(int connectionEpoch, ushort seqId, byte[] payload)
         {
-            _requestTracker?.TryComplete(seqId, payload);
+            _requestTracker?.TryComplete(connectionEpoch, seqId, payload);
         }
 
         private void HandleError(string error)
@@ -971,7 +1051,11 @@ namespace Framework
 
                 byte[] payload = ProtobufUtil.Serialize(request);
                 byte[] packet = MessagePacket.Pack(request, payload);
-                _client.Send(packet);
+                if (!_client.Send(packet))
+                {
+                    _client.Disconnect();
+                    throw new InvalidOperationException("心跳发送触发背压或连接已断开，已关闭传输等待重连。");
+                }
 
                 if (ShouldLogProtocol(request.GetMainId(), request.GetSubId()))
                 {
@@ -988,59 +1072,77 @@ namespace Framework
         /// 指数退避重连循环。
         /// 每次尝试前触发 OnReconnecting 事件（含等待时长），供 UI 显示倒计时。
         /// </summary>
-        private async UniTask TryReconnectAsync()
+        private async UniTask<bool> TryReconnectAsync()
         {
-            if (_isReconnecting) return;
+            if (_isReconnecting || string.IsNullOrEmpty(_lastHost)) return IsConnected;
             _isReconnecting = true;
+            CancelReconnectLoop();
+            var reconnectCts = new CancellationTokenSource();
+            _reconnectCts = reconnectCts;
+            CancellationToken token = reconnectCts.Token;
+            var random = new Random(unchecked(Environment.TickCount * 397));
 
-            while (_currentReconnectAttempt < _maxReconnectAttempts)
+            try
             {
-                _currentReconnectAttempt++;
-                int   idx      = Math.Min(_currentReconnectAttempt - 1, _reconnectIntervals.Length - 1);
-                float waitSecs = _reconnectIntervals[idx];
-
-                GameLog.Log($"[NetworkManager] 重连中 ({_currentReconnectAttempt}/{_maxReconnectAttempts})，{waitSecs}s 后重试...");
-
-                // 通知 UI：当前是第几次尝试、还有多久
-                OnReconnecting?.Invoke(_currentReconnectAttempt, _maxReconnectAttempts, waitSecs);
-
-                await UniTask.Delay(TimeSpan.FromSeconds(waitSecs));
-
-                try
+                EnsureClient();
+                while (_currentReconnectAttempt < _maxReconnectAttempts)
                 {
-                    await _client.ConnectAsync(_lastHost, _lastPort);
+                    token.ThrowIfCancellationRequested();
+                    _currentReconnectAttempt++;
+                    int idx = Math.Min(_currentReconnectAttempt - 1, _reconnectIntervals.Length - 1);
+                    float baseWait = _reconnectIntervals[idx];
+                    float waitSeconds = baseWait * (float)(0.85 + random.NextDouble() * 0.3);
+                    OnReconnecting?.Invoke(_currentReconnectAttempt, _maxReconnectAttempts, waitSeconds);
+                    await UniTask.Delay(TimeSpan.FromSeconds(waitSeconds), cancellationToken: token);
 
-                    // 传输层已恢复，但服务端把新连接视为匿名会话；必须先重放登录握手恢复
-                    // 鉴权身份（重新绑定会话、交还对局控制权），鉴权成功后才算真正"重连成功"。
-                    // 鉴权失败时主动断开这条未鉴权连接，让下一轮退避重新建连 + 登录。
-                    if (!await TryReauthenticateAsync())
+                    try
                     {
-                        GameLog.Warning($"[NetworkManager] 第 {_currentReconnectAttempt} 次重连传输已恢复但重新鉴权失败，断开后继续重试");
-                        _client.Disconnect();
-                        continue;
+                        await _client.ConnectAsync(_lastHost, _lastPort, token);
+                        if (!await TryReauthenticateAsync())
+                        {
+                            _client.Disconnect();
+                            continue;
+                        }
+
+                        _currentReconnectAttempt = 0;
+                        _isReconnecting = false;
+                        _offlineQueue.FlushAll();
+                        OnReconnectSucceeded?.Invoke();
+                        return true;
                     }
-
-                    // 连接 + 鉴权均成功
-                    GameLog.Log("[NetworkManager] 重连成功");
-                    _isReconnecting = false;
-
-                    // 会话已恢复：先补发断线期间排队的 opt-in 请求，再对外宣告重连成功
-                    _offlineQueue.FlushAll();
-                    OnReconnectSucceeded?.Invoke();
-                    return;
+                    catch (OperationCanceledException) { throw; }
+                    catch (Exception ex)
+                    {
+                        GameLog.Warning($"[NetworkManager] 第 {_currentReconnectAttempt} 次重连失败：{ex.Message}");
+                    }
                 }
-                catch (Exception ex)
-                {
-                    GameLog.Warning($"[NetworkManager] 第 {_currentReconnectAttempt} 次重连失败: {ex.Message}");
-                }
+
+                _offlineQueue.FailAll();
+                OnReconnectFailed?.Invoke();
+                OnError?.Invoke("网络重连预算已耗尽。");
+                return false;
             }
+            catch (OperationCanceledException)
+            {
+                GameLog.Log("[NetworkManager] 重连循环已取消。");
+                return false;
+            }
+            finally
+            {
+                _isReconnecting = false;
+                if (ReferenceEquals(_reconnectCts, reconnectCts))
+                    _reconnectCts = null;
+                reconnectCts.Dispose();
+            }
+        }
 
-            // 全部次数用尽：连接不再恢复，排队请求全部按失败收尾
-            _isReconnecting = false;
-            _offlineQueue.FailAll();
-            GameLog.Error($"[NetworkManager] 达到最大重连次数 ({_maxReconnectAttempts})，放弃重连");
-            OnReconnectFailed?.Invoke();
-            OnError?.Invoke("网络连接失败，请检查网络后手动重连");
+        private void CancelReconnectLoop()
+        {
+            CancellationTokenSource cts = _reconnectCts;
+            _reconnectCts = null;
+            if (cts == null) return;
+            try { cts.Cancel(); } catch { }
+            cts.Dispose();
         }
 
         /// <summary>

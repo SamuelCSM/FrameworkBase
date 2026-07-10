@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 
 namespace Framework.Network
 {
@@ -36,9 +37,19 @@ namespace Framework.Network
         private readonly object _queueLock = new object();
 
         /// <summary>
-        /// 主线程待处理消息缓冲，避免每帧处理队列时分配临时 List。
+        /// 后台收包线程允许积压到主线程队列的最大消息数；达到上限后拒绝入队，由 NetworkManager 主动断线以保护内存。
         /// </summary>
-        private readonly List<PendingMessage> _processingMessages = new List<PendingMessage>(64);
+        public int MaxPendingMessages { get; set; } = 2048;
+
+        /// <summary>
+        /// 单帧最多分发的消息数量，与耗时预算共同构成主线程保护上限。
+        /// </summary>
+        public int MaxMessagesPerFrame { get; set; } = 256;
+
+        /// <summary>
+        /// 单帧消息分发最大耗时（毫秒）；小于等于 0 表示只使用数量预算。
+        /// </summary>
+        public double MaxProcessingMilliseconds { get; set; } = 4.0;
 
         /// <summary>
         /// 订阅快照列表池，避免每条消息分发时 ToArray 产生 GC。
@@ -55,6 +66,11 @@ namespace Framework.Network
         /// </summary>
         private struct PendingMessage
         {
+            /// <summary>
+            /// 产生该消息的连接世代，用于拒绝旧连接延迟到达的数据。
+            /// </summary>
+            public int ConnectionEpoch;
+
             /// <summary>主消息 ID。</summary>
             public byte MainId;
 
@@ -208,15 +224,30 @@ namespace Framework.Network
         /// <param name="seqId">请求序列号（0 = 推送）。</param>
         public void EnqueueMessage(byte mainId, byte subId, byte[] payload, ushort seqId = 0)
         {
+            TryEnqueueMessage(connectionEpoch: 0, mainId, subId, payload, seqId);
+        }
+
+        public bool TryEnqueueMessage(
+            int connectionEpoch,
+            byte mainId,
+            byte subId,
+            byte[] payload,
+            ushort seqId = 0)
+        {
             lock (_queueLock)
             {
+                if (_messageQueue.Count >= Math.Max(1, MaxPendingMessages))
+                    return false;
+
                 _messageQueue.Enqueue(new PendingMessage
                 {
+                    ConnectionEpoch = connectionEpoch,
                     MainId = mainId,
                     SubId = subId,
                     SeqId = seqId,
                     Payload = payload
                 });
+                return true;
             }
         }
 
@@ -228,44 +259,39 @@ namespace Framework.Network
         /// <param name="onSeqResponse">seqId 响应回调，参数：seqId, payload。在 Subscribe 分发完成后调用。</param>
         /// <param name="onBeforeProcess">消息进入业务处理前的观察回调，常用于协议日志。</param>
         public void ProcessMessageQueue(
-            Func<byte, byte, ushort, byte[], bool> shouldIntercept = null,
-            Action<ushort, byte[]> onSeqResponse = null,
+            Func<int, byte, byte, ushort, byte[], bool> shouldIntercept = null,
+            Action<int, ushort, byte[]> onSeqResponse = null,
             Action<byte, byte, ushort, byte[]> onBeforeProcess = null)
         {
-            _processingMessages.Clear();
+            int processed = 0;
+            int maxMessages = Math.Max(1, MaxMessagesPerFrame);
+            long startTicks = Stopwatch.GetTimestamp();
 
-            lock (_queueLock)
+            while (processed < maxMessages)
             {
-                while (_messageQueue.Count > 0)
+                PendingMessage msg;
+                lock (_queueLock)
                 {
-                    _processingMessages.Add(_messageQueue.Dequeue());
+                    if (_messageQueue.Count == 0) break;
+                    msg = _messageQueue.Dequeue();
                 }
-            }
 
-            for (int i = 0; i < _processingMessages.Count; i++)
-            {
-                PendingMessage msg = _processingMessages[i];
-
-                // 0. 先执行观察回调，只读记录当前协议，不影响业务处理链路。
                 onBeforeProcess?.Invoke(msg.MainId, msg.SubId, msg.SeqId, msg.Payload);
-
-                // 1. 先执行全局拦截，避免错误响应继续流入业务层。
-                if (shouldIntercept != null && shouldIntercept(msg.MainId, msg.SubId, msg.SeqId, msg.Payload))
+                if (shouldIntercept == null ||
+                    !shouldIntercept(msg.ConnectionEpoch, msg.MainId, msg.SubId, msg.SeqId, msg.Payload))
                 {
-                    continue;
+                    DispatchMessage(msg.MainId, msg.SubId, msg.Payload, msg.SeqId == 0);
+                    if (msg.SeqId > 0)
+                        onSeqResponse?.Invoke(msg.ConnectionEpoch, msg.SeqId, msg.Payload);
                 }
 
-                // 2. 再走多播分发（Subscribe 回调 → Component 更新缓存）。
-                DispatchMessage(msg.MainId, msg.SubId, msg.Payload, msg.SeqId == 0);
-
-                // 3. 最后通知 RequestAsync 回调（业务层 await 恢复时缓存已是最新）。
-                if (msg.SeqId > 0 && onSeqResponse != null)
+                processed++;
+                if (MaxProcessingMilliseconds > 0)
                 {
-                    onSeqResponse(msg.SeqId, msg.Payload);
+                    double elapsedMs = (Stopwatch.GetTimestamp() - startTicks) * 1000.0 / Stopwatch.Frequency;
+                    if (elapsedMs >= MaxProcessingMilliseconds) break;
                 }
             }
-
-            _processingMessages.Clear();
         }
 
         /// <summary>
