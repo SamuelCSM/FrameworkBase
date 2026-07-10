@@ -76,17 +76,14 @@ namespace Framework.Editor
                          "ServerData", "Updates");
 
         /// <summary>
-        /// 获取指定构建目标的 HybridCLR 热更 DLL 生成路径。
+        /// 获取指定构建目标的 HybridCLR 热更 DLL 生成路径（委托到流水线步骤共用工具）。
         /// </summary>
         /// <param name="target">Unity 构建目标。</param>
         /// <param name="bytesFileName">运行时加载的热更程序集 bytes 文件名。</param>
         /// <returns>指定热更程序集 DLL 的绝对路径。</returns>
         private static string GetHotUpdateDllSrc(BuildTarget target, string bytesFileName)
         {
-            string assemblyName = VersionManager.ToAssemblyName(bytesFileName);
-            return Path.Combine(Directory.GetParent(Application.dataPath).FullName,
-                         "HybridCLRData", "HotUpdateDlls",
-                         GetBuildTargetName(target), assemblyName + ".dll");
+            return HotUpdateReleaseSteps.GetHotUpdateDllSrc(target, bytesFileName);
         }
 
         [MenuItem("Framework/Hot Update Publisher")]
@@ -315,97 +312,48 @@ namespace Framework.Editor
 
             try
             {
-                // 发布前环境校验（prod 明文 / 要求签名却无私钥等）：不达标直接阻断，不产出半成品清单。
-                if (!ReleaseProfileStore.TryResolveActive(out ReleaseProfile profile, out string profileReport))
-                {
-                    AppendLog("[环境校验] " + profileReport);
-                    throw new Exception("发布环境校验未通过：\n" + profileReport);
-                }
-                AppendLog("[环境校验] " + profileReport);
-                // 1. 计算新版本号
-                // 整包更新（AppVersion 已变更）：热更计数归 1 重算，
-                // 因为新大版本的安装包里内置的就是 Resource=1 / Code=1。
-                int newResource, newCode;
-                if (_forceUpdate)
-                {
-                    newResource = 1;
-                    newCode     = 1;
-                }
-                else
-                {
-                    newResource = _publishResource ? _resourceVersion + 1 : _resourceVersion;
-                    newCode     = _publishCode     ? _codeVersion     + 1 : _codeVersion;
-                }
+                // 版本递增规则收口到 VersionPolicy（整包归 1、热更 +1）。
+                (int newResource, int newCode) = VersionPolicy.Next(
+                    _forceUpdate, _publishResource, _publishCode, _resourceVersion, _codeVersion);
 
                 AppendLog($"===== 开始发布 =====");
                 AppendLog(_forceUpdate
                     ? $"整包更新：App={_appVersion}  Resource/Code 重置为 1"
                     : $"热更版本：App={_appVersion}  Resource={_resourceVersion}→{newResource}  Code={_codeVersion}→{newCode}");
 
-                // 2. Build Addressables（资源更新时）
-                if (_publishResource)
+                // 流程收敛到 ReleasePipeline：窗口只负责收集参数与展示结果，
+                // 未来 CI / Release Center 组装同一组步骤即可复用整条流水线。
+                var context = new ReleaseContext
                 {
-                    AppendLog("[1/4] 构建 Addressables 资源包...");
-                    BuildAddressables();
-                    AppendLog("      Addressables Build 完成");
-
-                    // 可选：同步 bundle 到 IIS 目录
-                    if (!string.IsNullOrEmpty(_bundleOutputDir))
-                    {
-                        AppendLog($"      同步 bundle → {_bundleOutputDir}");
-                        SyncBundles(_bundleOutputDir);
-                    }
-                }
-
-                // 3. 复制热更程序集（代码更新时）
-                var dllArtifacts = new List<PatchFile>();
-
-                if (_publishCode)
-                {
-                    AppendLog("[2/4] 编译热更 DLL（HybridCLR CompileDll）...");
-                    CompileDllForActivePlatform();
-                    AppendLog("      编译完成，复制热更程序集...");
-                    dllArtifacts = CopyHotUpdateDlls();
-                    foreach (var artifact in dllArtifacts)
-                        AppendLog($"      {artifact.FileName} 大小={artifact.Size}B  MD5={artifact.MD5}");
-                }
-
-                // 4. 生成 version.json（统一契约：ReleaseManifestWriter 序列化 UpdateInfo 本体）
-                AppendLog("[3/4] 生成 version.json...");
-                string json = ReleaseManifestWriter.ToJson(new UpdateInfo
-                {
+                    PublishResource      = _publishResource,
+                    PublishCode          = _publishCode,
+                    ForceUpdate          = _forceUpdate,
                     AppVersion           = _appVersion,
                     ResourceVersion      = newResource,
                     CodeVersion          = newCode,
-                    ForceUpdate          = _forceUpdate,
                     MinCompatibleVersion = _minCompatible,
                     Description          = _description ?? string.Empty,
-                    PatchFiles           = dllArtifacts,
-                    UpdateUrl            = _forceUpdate ? (_updateUrl ?? string.Empty) : string.Empty,
-                    GrayPercent          = _grayPercent
-                });
+                    GrayPercent          = _grayPercent,
+                    UpdateUrl            = _updateUrl ?? string.Empty,
+                    ServerDataDir        = ServerDataDir,
+                    VersionOutputDir     = _versionOutputDir,
+                    BundleOutputDir      = _bundleOutputDir,
+                    Log                  = AppendLog
+                };
 
-                // 写入 ServerData/Updates（并生成伴生签名 version.json.sig）
-                Directory.CreateDirectory(ServerDataDir);
-                string serverDataManifest = Path.Combine(ServerDataDir, "version.json");
-                File.WriteAllText(serverDataManifest, json, System.Text.Encoding.UTF8);
-                if (!UpdateManifestSigner.SignManifestForPublish(serverDataManifest, AppendLog, profile.RequireManifestSignature))
-                    throw new Exception($"清单签名失败（环境 {profile.Name} 要求签名），已中止发布");
-                AppendLog($"      写入 → {ServerDataDir}");
-
-                // 写入 IIS 输出目录
-                if (!string.IsNullOrEmpty(_versionOutputDir))
+                var pipelineResult = ReleasePipeline.Run(new IReleaseStep[]
                 {
-                    Directory.CreateDirectory(_versionOutputDir);
-                    string outputManifest = Path.Combine(_versionOutputDir, "version.json");
-                    File.WriteAllText(outputManifest, json, System.Text.Encoding.UTF8);
-                    if (!UpdateManifestSigner.SignManifestForPublish(outputManifest, AppendLog, profile.RequireManifestSignature))
-                        throw new Exception($"清单签名失败（环境 {profile.Name} 要求签名），已中止发布");
-                    AppendLog($"      写入 → {_versionOutputDir}");
-                }
+                    new HotUpdateReleaseSteps.ValidateReleaseEnvironment(),
+                    new HotUpdateReleaseSteps.BuildAddressables(),
+                    new HotUpdateReleaseSteps.CompileAndCopyHotUpdateDlls(),
+                    new HotUpdateReleaseSteps.GenerateManifest(),
+                    new HotUpdateReleaseSteps.WriteAndSignManifest()
+                }, context);
 
-                // 5. 更新内存版本号
-                AppendLog("[4/4] 更新本地版本记录...");
+                if (!pipelineResult.Success)
+                    throw new Exception($"步骤 {pipelineResult.FailedStep} 失败：{pipelineResult.Error}");
+
+                // 更新内存版本号
                 _resourceVersion = newResource;
                 _codeVersion     = newCode;
 
@@ -428,20 +376,6 @@ namespace Framework.Editor
             }
         }
 
-        // ─── Addressables Build ────────────────────────────────
-        private static void BuildAddressables()
-        {
-            var settings = AddressableAssetSettingsDefaultObject.Settings;
-            if (settings == null)
-                throw new Exception("未找到 Addressables Settings，请先执行 Framework/Setup Addressables");
-
-            AddressableAssetSettings.BuildPlayerContent(out AddressablesPlayerBuildResult result);
-
-            if (!string.IsNullOrEmpty(result.Error))
-                throw new Exception($"Addressables Build 失败：{result.Error}");
-        }
-
-        // ─── 同步 bundle 到目标目录 ────────────────────────────
         /// <summary>
         /// 将当前全部热更程序集同步到 StreamingAssets，作为 Player 内置初始版本。
         /// 打包前必须执行一次，否则首次启动找不到解释域 DLL。
@@ -498,30 +432,6 @@ namespace Framework.Editor
                 EditorUtility.DisplayDialog("同步失败", ex.Message, "OK");
                 throw;
             }
-        }
-
-        private static void SyncBundles(string destDir)
-        {
-            string srcDir = Path.Combine(
-                Directory.GetParent(Application.dataPath).FullName,
-                "ServerData", GetBuildTargetName());
-
-            if (!Directory.Exists(srcDir))
-                throw new Exception($"ServerData 源目录不存在：{srcDir}");
-
-            Directory.CreateDirectory(destDir);
-            foreach (string file in Directory.GetFiles(srcDir))
-            {
-                string dest = Path.Combine(destDir, Path.GetFileName(file));
-                File.Copy(file, dest, overwrite: true);
-            }
-        }
-
-        // ─── HybridCLR 编译热更 DLL ────────────────────────────
-        private static void CompileDllForActivePlatform()
-        {
-            BuildTarget target = EditorUserBuildSettings.activeBuildTarget;
-            CompileDllCommand.CompileDll(target);
         }
 
         /// <summary>
@@ -637,78 +547,6 @@ namespace Framework.Editor
                     EditorUtility.DisplayDialog("同步失败", e.Message, "OK");
                 throw;
             }
-        }
-
-        // ─── 复制热更程序集 DLL ────────────────────────────────
-        /// <summary>
-        /// 复制全部热更程序集到发布目录，并返回用于 version.json 的补丁清单。
-        /// Url 只写相对文件名，保持清单环境无关：实际下载地址运行时由客户端 UpdateServerUrl 派生
-        /// （见 VersionManager.TryResolveCodePatchFiles），不硬编码发布机 host。
-        /// </summary>
-        private List<PatchFile> CopyHotUpdateDlls()
-        {
-            Directory.CreateDirectory(ServerDataDir);
-
-            if (!string.IsNullOrEmpty(_versionOutputDir))
-                Directory.CreateDirectory(_versionOutputDir);
-
-            var artifacts = new List<PatchFile>(VersionManager.HotUpdateAssemblyFileNames.Length);
-            foreach (string destFileName in VersionManager.HotUpdateAssemblyFileNames)
-            {
-                string src = GetHotUpdateDllSrc(EditorUserBuildSettings.activeBuildTarget, destFileName);
-                if (!File.Exists(src))
-                    throw new Exception(
-                        $"未找到热更程序集：{src}\n请先执行 HybridCLR/Generate/All");
-
-                // 写到 ServerData/Updates/
-                string destLocal = Path.Combine(ServerDataDir, destFileName);
-                File.Copy(src, destLocal, overwrite: true);
-
-                // 写到 IIS Updates 目录
-                if (!string.IsNullOrEmpty(_versionOutputDir))
-                    File.Copy(src, Path.Combine(_versionOutputDir, destFileName), overwrite: true);
-
-                artifacts.Add(new PatchFile
-                {
-                    FileName = destFileName,
-                    Url      = destFileName,
-                    Size     = new FileInfo(destLocal).Length,
-                    MD5      = ComputeMD5(destLocal)
-                });
-            }
-
-            return artifacts;
-        }
-
-        // ─── 工具方法 ──────────────────────────────────────────
-        private static string ComputeMD5(string filePath)
-        {
-            using var md5 = MD5.Create();
-            using var stream = File.OpenRead(filePath);
-            byte[] hash = md5.ComputeHash(stream);
-            return BitConverter.ToString(hash).Replace("-", "").ToLowerInvariant();
-        }
-
-        private static string GetBuildTargetName()
-        {
-            return GetBuildTargetName(EditorUserBuildSettings.activeBuildTarget);
-        }
-
-        /// <summary>
-        /// 将 Unity 构建目标转换为 HybridCLRData 使用的平台目录名。
-        /// </summary>
-        /// <param name="target">Unity 构建目标。</param>
-        /// <returns>HybridCLRData 下的平台目录名。</returns>
-        private static string GetBuildTargetName(BuildTarget target)
-        {
-            return target switch
-            {
-                BuildTarget.StandaloneWindows   => "StandaloneWindows",
-                BuildTarget.StandaloneWindows64 => "StandaloneWindows64",
-                BuildTarget.Android             => "Android",
-                BuildTarget.iOS                 => "iOS",
-                _                               => target.ToString()
-            };
         }
 
         private void AppendLog(string msg)
