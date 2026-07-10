@@ -20,6 +20,7 @@ namespace Framework.HotUpdate
     /// <para>
     /// 新槽激活后先处于 PendingConfirmation 状态，只有 HotfixEntry.Start 成功完成才提升为 Last-Known-Good。
     /// 如果进程在确认前崩溃、被杀或下次启动仍发现 Pending，则自动回滚到上一已确认槽，避免坏补丁造成永久启动死循环。
+    /// 在此之上还有崩溃循环兜底：任何活动槽连续多次启动未到达确认点时，清空全部槽回退整包出厂基线。
     /// </para>
     /// <para>
     /// 槽状态按 AppVersion 隔离。整包升级后旧槽不会被新原生运行时继续加载，防止跨整包复用不兼容程序集。
@@ -38,6 +39,13 @@ namespace Framework.HotUpdate
             public string ActiveSlot = string.Empty;
             public string LastKnownGoodSlot = string.Empty;
             public string PendingConfirmationSlot = string.Empty;
+
+            /// <summary>
+            /// 连续"带热更槽启动但未到达确认点"的次数。启动确认成功后清零。
+            /// Pending 回滚只保护首次激活的新槽；该计数保护的是已确认槽（含 LKG）在后续
+            /// 启动窗口内反复崩溃的场景，超过阈值后回退整包出厂基线，避免永久启动死循环。
+            /// </summary>
+            public int UnconfirmedLaunchCount;
             public long UpdatedAtUnixSeconds;
         }
 
@@ -57,6 +65,12 @@ namespace Framework.HotUpdate
 
         private const string StateFileName = "install-state.json";
         private const string SlotManifestFileName = "slot.json";
+
+        /// <summary>
+        /// 同一活动槽允许的最大连续未确认启动次数。超过后判定为崩溃循环，
+        /// 下一次启动清空全部代码槽并回退整包出厂基线。
+        /// </summary>
+        private const int MaxUnconfirmedLaunchAttempts = 3;
         private static readonly object Sync = new object();
         private static readonly StringComparison PathComparison =
             Path.DirectorySeparatorChar == '\\' ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
@@ -135,6 +149,26 @@ namespace Framework.HotUpdate
                         ? state.LastKnownGoodSlot
                         : string.Empty;
                     state.PendingConfirmationSlot = string.Empty;
+                    state.UpdatedAtUnixSeconds = Now();
+                    SaveState(state);
+                }
+
+                // Crash-loop 检测：只要本次启动会加载热更槽，就先把"未确认启动"计数落盘；
+                // 计数只能由启动确认点清零。连续超过阈值说明已确认槽（含回滚后的 LKG）
+                // 也无法完成启动，此时清空全部槽回退整包出厂基线，恢复玩家自愈能力。
+                if (!string.IsNullOrEmpty(state.ActiveSlot))
+                {
+                    state.UnconfirmedLaunchCount++;
+                    if (state.UnconfirmedLaunchCount > MaxUnconfirmedLaunchAttempts)
+                    {
+                        GameLog.Error(
+                            $"[HotUpdateSlots] 活动槽 {state.ActiveSlot} 连续 {state.UnconfirmedLaunchCount - 1} 次启动未确认成功，" +
+                            "判定为崩溃循环，清空热更代码槽并回退整包出厂基线。");
+                        state.ActiveSlot = string.Empty;
+                        state.LastKnownGoodSlot = string.Empty;
+                        state.PendingConfirmationSlot = string.Empty;
+                        state.UnconfirmedLaunchCount = 0;
+                    }
                     state.UpdatedAtUnixSeconds = Now();
                     SaveState(state);
                 }
@@ -299,8 +333,8 @@ namespace Framework.HotUpdate
         }
 
         /// <summary>
-        /// 在 HotfixEntry.Start 成功返回后确认当前 Pending 槽，并将其提升为 Last-Known-Good。
-        /// 若 Pending 与 Active 不一致或槽完整性复验失败，则抛出异常，绝不写入虚假的成功状态。
+        /// 在 HotfixEntry.Start 成功返回后确认本次启动：清零崩溃循环计数；存在 Pending 槽时将其提升为
+        /// Last-Known-Good。若 Pending 与 Active 不一致或槽完整性复验失败，则抛出异常，绝不写入虚假的成功状态。
         /// </summary>
         public static void ConfirmPendingSlot()
         {
@@ -308,7 +342,17 @@ namespace Framework.HotUpdate
             {
                 InstallState state = CurrentState();
                 if (string.IsNullOrEmpty(state.PendingConfirmationSlot))
+                {
+                    // 无 Pending 也要确认启动成功：已确认槽（含 LKG）完成启动即重置崩溃循环计数。
+                    if (state.UnconfirmedLaunchCount != 0)
+                    {
+                        state.UnconfirmedLaunchCount = 0;
+                        state.UpdatedAtUnixSeconds = Now();
+                        SaveState(state);
+                        _state = state;
+                    }
                     return;
+                }
 
                 string reason = null;
                 if (!string.Equals(state.PendingConfirmationSlot, state.ActiveSlot, StringComparison.Ordinal) ||
@@ -319,6 +363,7 @@ namespace Framework.HotUpdate
 
                 state.LastKnownGoodSlot = state.ActiveSlot;
                 state.PendingConfirmationSlot = string.Empty;
+                state.UnconfirmedLaunchCount = 0;
                 state.UpdatedAtUnixSeconds = Now();
                 SaveState(state);
                 _state = state;

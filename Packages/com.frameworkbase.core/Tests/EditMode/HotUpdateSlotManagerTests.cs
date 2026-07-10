@@ -93,6 +93,47 @@ namespace Framework.Tests
             Assert.Throws<InvalidDataException>(() => HotUpdateSlotManager.PrepareStagingSlot(update));
         }
 
+        [Test]
+        public void 已确认槽连续启动未确认_超过阈值回退出厂基线()
+        {
+            Commit(CreateUpdate(2, 0x22));
+            HotUpdateSlotManager.ConfirmPendingSlot();
+
+            // 已确认槽（LKG）连续 3 次带槽启动都没有到达确认点：模拟启动早期崩溃循环。
+            for (int attempt = 0; attempt < 3; attempt++)
+            {
+                HotUpdateSlotManager.ResetStateForTests();
+                HotUpdateSlotManager.PrepareForLaunch();
+                Assert.IsTrue(HotUpdateSlotManager.TryGetActiveCodeVersion(out int stillActive),
+                    $"第 {attempt + 1} 次未确认启动仍应保留活动槽");
+                Assert.AreEqual(2, stillActive);
+            }
+
+            // 第 4 次启动触发崩溃循环兜底：清空全部槽，回退整包出厂基线。
+            HotUpdateSlotManager.ResetStateForTests();
+            LogAssert.Expect(LogType.Error, new Regex(".*判定为崩溃循环.*回退整包出厂基线.*"));
+            HotUpdateSlotManager.PrepareForLaunch();
+            Assert.IsFalse(HotUpdateSlotManager.TryGetActiveCodeVersion(out _));
+        }
+
+        [Test]
+        public void 启动确认成功_崩溃循环计数清零不误伤()
+        {
+            Commit(CreateUpdate(2, 0x22));
+            HotUpdateSlotManager.ConfirmPendingSlot();
+
+            // 交替"重启 + 启动确认"多轮：每次确认都会清零计数，永远不应触发出厂回退。
+            for (int round = 0; round < 5; round++)
+            {
+                HotUpdateSlotManager.ResetStateForTests();
+                HotUpdateSlotManager.PrepareForLaunch();
+                HotUpdateSlotManager.ConfirmPendingSlot();
+            }
+
+            Assert.IsTrue(HotUpdateSlotManager.TryGetActiveCodeVersion(out int codeVersion));
+            Assert.AreEqual(2, codeVersion);
+        }
+
         /// <summary>
         /// 创建 staging、写入所有清单文件并提交为待确认槽。
         /// </summary>
