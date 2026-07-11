@@ -56,7 +56,7 @@ namespace Framework.Editor.Release
                 string projectRoot = Directory.GetParent(Application.dataPath)?.FullName ?? Directory.GetCurrentDirectory();
                 EnsureCleanGit(projectRoot, HasFlag(args, "allowDirtyRelease"));
 
-                BuildTarget target = ParseBuildTarget(Require(args, "buildTarget"));
+                BuildTarget target = ResolveBuildTarget(args);
                 SwitchBuildTarget(target);
                 string staging = Get(args, "serverDataDir",
                     Path.Combine(projectRoot, "Artifacts", "ReleaseStaging", releaseId));
@@ -108,7 +108,7 @@ namespace Framework.Editor.Release
                 string projectRoot = Directory.GetParent(Application.dataPath)?.FullName ?? Directory.GetCurrentDirectory();
                 EnsureCleanGit(projectRoot, HasFlag(args, "allowDirtyRelease"));
 
-                BuildTarget target = ParseBuildTarget(Require(args, "buildTarget"));
+                BuildTarget target = ResolveBuildTarget(args);
                 SwitchBuildTarget(target);
                 string staging = Get(args, "serverDataDir",
                     Path.Combine(projectRoot, "Artifacts", "ReleaseStaging", releaseId));
@@ -246,15 +246,31 @@ namespace Framework.Editor.Release
         private static bool HasFlag(Dictionary<string, string> args, string key) =>
             args.TryGetValue(key, out string value) && (!bool.TryParse(value, out bool parsed) || parsed);
 
-        private static BuildTarget ParseBuildTarget(string value)
+        /// <summary>
+        /// 解析发布目标平台。-buildTarget 是 Unity 启动器的<b>保留参数</b>，会先于托管代码被
+        /// Unity 自身解析：值不在 Unity 官方平台名单（Win64/Android/iOS/Linux64/OSXUniversal/WebGL…）
+        /// 内时编辑器直接崩溃。因此本方法只接受 Unity 官方命令行平台名，禁止自造别名；
+        /// 参数缺省时使用当前激活目标（Unity 已按同一参数完成平台切换，与 GameCI targetPlatform 天然一致）。
+        /// </summary>
+        private static BuildTarget ResolveBuildTarget(Dictionary<string, string> args)
         {
-            if (string.Equals(value, "windows64", StringComparison.OrdinalIgnoreCase))
-                return BuildTarget.StandaloneWindows64;
-            if (string.Equals(value, "linux64", StringComparison.OrdinalIgnoreCase))
-                return BuildTarget.StandaloneLinux64;
-            if (Enum.TryParse(value, true, out BuildTarget target) && target != BuildTarget.NoTarget)
-                return target;
-            throw new ArgumentException($"不支持的 BuildTarget：{value}");
+            if (!args.TryGetValue("buildTarget", out string value) || string.IsNullOrWhiteSpace(value))
+                return EditorUserBuildSettings.activeBuildTarget;
+
+            switch (value.Trim().ToLowerInvariant())
+            {
+                case "win": return BuildTarget.StandaloneWindows;
+                case "win64": return BuildTarget.StandaloneWindows64;
+                case "linux64": return BuildTarget.StandaloneLinux64;
+                case "osxuniversal": return BuildTarget.StandaloneOSX;
+                case "android": return BuildTarget.Android;
+                case "ios": return BuildTarget.iOS;
+                case "webgl": return BuildTarget.WebGL;
+                default:
+                    throw new ArgumentException(
+                        $"不支持的 buildTarget：{value}。必须使用 Unity 官方命令行平台名" +
+                        "（Win64/Win/Linux64/OSXUniversal/Android/iOS/WebGL），自造别名会让 Unity 启动器直接崩溃。");
+            }
         }
 
         private static void SwitchBuildTarget(BuildTarget target)

@@ -24,7 +24,7 @@ on:
         options: [dev, qa, prod]
         required: true
       buildTarget:
-        description: Unity BuildTarget（Android / iOS / StandaloneWindows64 / StandaloneLinux64）
+        description: GameCI targetPlatform（Android / iOS / StandaloneWindows64 / StandaloneLinux64）
         type: string
         required: true
         default: Android
@@ -86,9 +86,7 @@ jobs:
           allowDirtyBuild: false
           buildMethod: ${{ inputs.kind == 'hotupdate' && 'Framework.Editor.Release.ReleaseBatchEntry.PublishHotUpdateForBuilder' || 'Framework.Editor.Release.ReleaseBatchEntry.BuildFullPackageForBuilder' }}
           customParameters: >-
-            -releaseId ${{ github.run_id }}-${{ github.run_attempt }}
             -releaseEnv ${{ inputs.releaseEnv }}
-            -buildTarget ${{ inputs.buildTarget }}
             -appVersion ${{ inputs.appVersion }}
             -resourceVersion ${{ inputs.resourceVersion }}
             -codeVersion ${{ inputs.codeVersion }}
