@@ -259,13 +259,13 @@ namespace Framework.Editor.Release
                 // StreamingAssets 侧仅作为出厂版本随包内置，客户端不对其验签，无需签名。
                 Directory.CreateDirectory(ctx.ServerDataDir);
                 string serverDataManifest = Path.Combine(ctx.ServerDataDir, "version.json");
-                File.WriteAllText(serverDataManifest, json, System.Text.Encoding.UTF8);
+                File.WriteAllText(serverDataManifest, json, new System.Text.UTF8Encoding(false)); // 清单契约：无 BOM UTF-8（与热更清单同一规则）
                 if (!UpdateManifestSigner.SignManifestForPublish(serverDataManifest, ctx.Log, required: true))
                     throw new Exception($"清单签名失败（环境 {ctx.Profile?.Name} 要求签名），已中止发布");
 
                 string streamingDir = Path.Combine(Application.dataPath, "StreamingAssets");
                 Directory.CreateDirectory(streamingDir);
-                File.WriteAllText(Path.Combine(streamingDir, "version.json"), json, System.Text.Encoding.UTF8);
+                File.WriteAllText(Path.Combine(streamingDir, "version.json"), json, new System.Text.UTF8Encoding(false));
 
                 AssetDatabase.Refresh();
                 ctx.Log($"完成：整包 version.json 已写入（App={ctx.AppVersion}, ForceUpdate=true）");

@@ -236,7 +236,7 @@ namespace Framework.Editor
             var data = new HybridCLRMetadataManifestData { assemblies = assemblies };
             string json = JsonUtility.ToJson(data, true);
             string manifestPath = Path.Combine(destDir, HybridCLRMetadataManifest.ManifestFileName);
-            File.WriteAllText(manifestPath, json, Encoding.UTF8);
+            File.WriteAllText(manifestPath, json, new UTF8Encoding(false)); // 运行时消费的清单统一无 BOM UTF-8
             Debug.Log($"[HybridCLRStreamingAssetsSync] manifest -> {manifestPath}");
         }
     }

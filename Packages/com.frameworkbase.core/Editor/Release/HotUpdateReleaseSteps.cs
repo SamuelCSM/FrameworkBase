@@ -251,7 +251,10 @@ namespace Framework.Editor.Release
 
             private static void WriteOne(string manifestPath, ReleaseContext ctx, bool required)
             {
-                File.WriteAllText(manifestPath, ctx.ManifestJson, System.Text.Encoding.UTF8);
+                // 清单契约：无 BOM UTF-8。签名对象是原始字节，BOM 会随签名一起"合法化"，
+                // 但客户端把字节转字符串解析 KeyId 信封时 BOM 进入 JSON 解析器即拒收——
+                // 属于"签名有效但解析失败"的线上事故类别（release-rehearsal 已把该契约测试化）。
+                File.WriteAllText(manifestPath, ctx.ManifestJson, new System.Text.UTF8Encoding(false));
                 if (!UpdateManifestSigner.SignManifestForPublish(manifestPath, ctx.Log, required))
                     throw new Exception($"清单签名失败（环境 {ctx.Profile?.Name} 要求签名），已中止发布");
             }
