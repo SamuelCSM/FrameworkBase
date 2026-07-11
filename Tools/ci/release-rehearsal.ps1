@@ -1,19 +1,19 @@
 ﻿# FrameworkBase 发布演练（release rehearsal）：发布端 → 客户端 端到端安全网。
 #
-# 流程：
+# 流程（切片 B 起为四跳）：
 #   1. 生成一次性 dev RSA 密钥对，经 FRAMEWORKBASE_MANIFEST_PRIVATE_KEY_XML_BASE64 注入；
-#   2. batchmode 执行 ReleaseBatchEntry.PublishHotUpdate（buildTarget=Win64——必须用 Unity
-#      官方命令行平台名，该参数会先被 Unity 启动器解析）发布到本地 uploadRoot；
-#   3. 写 rehearsal.json 供 EditMode 集成测试（ReleaseRehearsalTests）消费真实发布产物：
-#      原始字节验签 → KeyId 信封 → 字段级准入（平台/渠道映射）→ 逐文件校验 → 事务槽安装确认；
-#   4. 三个故障注入必须红：篡改 DLL、过期清单、连续 3 次未确认启动回退出厂。
+#   2. batchmode 真实发布 code=2、code=3 两个 release（buildTarget=Win64——必须用 Unity
+#      官方命令行平台名，该参数会先被 Unity 启动器解析）到本地 uploadRoot；
+#   3. batchmode 执行 RollbackRelease 一键回滚（指针回切到 code=2，产物不重建）；
+#   4. EditMode 集成测试（ReleaseRehearsalTests）消费真实产物：指针验签+历史链 → 清单验签
+#      → 准入（平台/渠道映射）→ 逐文件校验 → 事务槽安装确认 + 三个故障注入。
 #
-# v1 约束：不含真实网络跳（客户端按不可变 payloads 相对路径直接读 uploadRoot）；
+# v1 约束：不含真实网络跳（客户端按不可变相对路径直接读 uploadRoot）；
 #          只发代码热更（仓库 Addressables 组为空，-publishResource 待有真实远程资源后开启）。
 #
 # 用法（工程须先关闭 Unity 编辑器）：
 #   .\Tools\ci\release-rehearsal.ps1 [-UnityPath <Unity.exe>] [-KeepArtifacts]
-# 退出码：0 = 演练全绿；非 0 = 发布失败或任一契约测试未通过。
+# 退出码：0 = 演练全绿；非 0 = 任一发布/回滚/契约测试未通过。
 param(
     [string]$UnityPath,
     [switch]$KeepArtifacts
@@ -75,74 +75,98 @@ $channelLine = Get-Content (Join-Path $projectPath "Assets\Resources\AppConfig.a
 $channel = if ($channelLine -match "AppChannel:\s*(\S+)") { $Matches[1] } else { "default" }
 $channelRelative = "dev/windows/$channel"
 
-$resourceVersion = 1   # v1 不发资源：与出厂基线一致即可通过防降级
-$codeVersion     = 2   # 高于出厂基线 1，触发完整代码补丁集契约
-
 Write-Host "== FrameworkBase 发布演练 =="
 Write-Host "Unity      : $UnityPath"
-Write-Host "AppVersion : $appVersion  Code: $codeVersion  KeyId: $keyId"
+Write-Host "AppVersion : $appVersion  KeyId: $keyId  Channel: $channelRelative"
 Write-Host "UploadRoot : $uploadRoot"
 
-# ── 第 1 跳：真实发布（batchmode，以 RELEASE_RESULT 哨兵判定，不信进程退出码）──
-$publishLog = Join-Path $logsDir "release-rehearsal-publish.log"
-if (Test-Path $publishLog) { Remove-Item $publishLog -Force }
-$releaseId = [guid]::NewGuid().ToString("N")
+# ── batchmode 调用与哨兵判定（不信进程退出码）────────────────────────────────
+function Invoke-ReleaseBatch([string]$stepName, [string]$logName, [string[]]$unityArgs) {
+    $logPath = Join-Path $logsDir $logName
+    if (Test-Path $logPath) { Remove-Item $logPath -Force }
+    & $UnityPath -batchmode -nographics -projectPath $projectPath @unityArgs -logFile $logPath | Out-Null
 
-& $UnityPath -batchmode -nographics `
-    -projectPath $projectPath `
-    -executeMethod Framework.Editor.Release.ReleaseBatchEntry.PublishHotUpdate `
-    -releaseId $releaseId `
-    -releaseEnv dev `
-    -buildTarget Win64 `
-    -appVersion $appVersion `
-    -resourceVersion $resourceVersion `
-    -codeVersion $codeVersion `
-    -publishResource false `
-    -publishCode true `
-    -uploadRoot $uploadRoot `
-    -allowDirtyRelease `
-    -logFile $publishLog | Out-Null
-
-$verdict = $null
-for ($i = 0; $i -lt 300; $i++) {
-    if (Test-Path $publishLog) {
-        $endLine = Get-Content $publishLog -Encoding UTF8 -ErrorAction SilentlyContinue |
-            Where-Object { $_ -match "RELEASE_RESULT\s+exit=(\d+)" } | Select-Object -Last 1
-        if ($endLine -and $endLine -match "RELEASE_RESULT\s+exit=(\d+)") {
-            $verdict = [int]$Matches[1]
-            break
+    $verdict = $null
+    for ($i = 0; $i -lt 300; $i++) {
+        if (Test-Path $logPath) {
+            $endLine = Get-Content $logPath -Encoding UTF8 -ErrorAction SilentlyContinue |
+                Where-Object { $_ -match "RELEASE_RESULT\s+exit=(\d+)" } | Select-Object -Last 1
+            if ($endLine -and $endLine -match "RELEASE_RESULT\s+exit=(\d+)") {
+                $verdict = [int]$Matches[1]
+                break
+            }
         }
+        if ($i -gt 0 -and $i % 25 -eq 0) { Write-Host "等待 $stepName 结论落盘... $([int]($i / 5))s" }
+        Start-Sleep -Milliseconds 200
     }
-    if ($i -gt 0 -and $i % 25 -eq 0) { Write-Host "等待发布结论落盘... $([int]($i / 5))s" }
-    Start-Sleep -Milliseconds 200
+
+    Get-Content $logPath -Encoding UTF8 -ErrorAction SilentlyContinue |
+        Where-Object { $_ -match "\[ReleaseBatch\]|\[环境校验\]|error CS|Exception" } |
+        Select-Object -Last 30 | ForEach-Object { Write-Host $_ }
+
+    if ($verdict -ne 0) {
+        Write-Host "$stepName 失败（RELEASE_RESULT=$verdict），详见日志: $logPath"
+        return $false
+    }
+    Write-Host "$stepName 通过。"
+    return $true
 }
 
-Get-Content $publishLog -Encoding UTF8 -ErrorAction SilentlyContinue |
-    Where-Object { $_ -match "\[ReleaseBatch\]|\[环境校验\]|error CS|Exception" } |
-    Select-Object -Last 40 | ForEach-Object { Write-Host $_ }
-
-if ($verdict -ne 0) {
-    Write-Host "发布演练第 1 跳失败（RELEASE_RESULT=$verdict），详见日志: $publishLog"
-    Remove-Item Env:\FRAMEWORKBASE_MANIFEST_PRIVATE_KEY_XML_BASE64 -ErrorAction SilentlyContinue
-    exit 1
+function Invoke-Publish([int]$codeVersion, [string]$releaseId, [string]$logName) {
+    return Invoke-ReleaseBatch "发布 code=$codeVersion" $logName @(
+        "-executeMethod", "Framework.Editor.Release.ReleaseBatchEntry.PublishHotUpdate",
+        "-releaseId", $releaseId,
+        "-releaseEnv", "dev",
+        "-buildTarget", "Win64",
+        "-appVersion", $appVersion,
+        "-resourceVersion", "1",
+        "-codeVersion", "$codeVersion",
+        "-publishResource", "false",
+        "-publishCode", "true",
+        "-uploadRoot", $uploadRoot,
+        "-allowDirtyRelease"
+    )
 }
-$channelManifest = Join-Path $uploadRoot (($channelRelative -replace '/', '\') + "\version.json")
-if (-not (Test-Path $channelManifest)) {
-    Write-Host "发布声称成功但渠道根缺少清单别名：$channelManifest，判定失败。"
-    exit 1
-}
-Write-Host "第 1 跳（真实发布）通过。"
 
-# ── 第 2 跳：写 rehearsal.json，跑客户端契约集成测试 ─────────────────────────
+$releaseIdV2 = [guid]::NewGuid().ToString("N")
+$releaseIdV3 = [guid]::NewGuid().ToString("N")
+
+# ── 第 1/2 跳：真实发布两个 release ─────────────────────────────────────────
+$cleanup = { Remove-Item Env:\FRAMEWORKBASE_MANIFEST_PRIVATE_KEY_XML_BASE64 -ErrorAction SilentlyContinue }
+if (-not (Invoke-Publish 2 $releaseIdV2 "release-rehearsal-publish-v2.log")) { & $cleanup; exit 1 }
+if (-not (Invoke-Publish 3 $releaseIdV3 "release-rehearsal-publish-v3.log")) { & $cleanup; exit 1 }
+
+# ── 第 3 跳：一键回滚（指针回切到 code=2，产物不重建）───────────────────────
+$rollbackOk = Invoke-ReleaseBatch "一键回滚" "release-rehearsal-rollback.log" @(
+    "-executeMethod", "Framework.Editor.Release.ReleaseBatchEntry.RollbackRelease",
+    "-releaseEnv", "dev",
+    "-buildTarget", "Win64",
+    "-uploadRoot", $uploadRoot,
+    "-switchedBy", "release-rehearsal"
+)
+if (-not $rollbackOk) { & $cleanup; exit 1 }
+
+$channelRoot = Join-Path $uploadRoot ($channelRelative -replace '/', '\')
+foreach ($required in @("version.json", "version.json.sig", "current.json", "current.json.sig")) {
+    if (-not (Test-Path (Join-Path $channelRoot $required))) {
+        Write-Host "回滚后渠道根缺少 $required，判定失败。"
+        & $cleanup; exit 1
+    }
+}
+
+# ── 第 4 跳：写 rehearsal.json，跑客户端契约集成测试 ─────────────────────────
 @{
-    PublicKeyXml    = $publicXml
-    KeyId           = $keyId
-    UploadRoot      = $uploadRoot
-    BaseUrl         = $devProfile.BaseUrl
-    ChannelRelative = $channelRelative
-    AppVersion      = $appVersion
-    ResourceVersion = $resourceVersion
-    CodeVersion     = $codeVersion
+    PublicKeyXml              = $publicXml
+    KeyId                     = $keyId
+    UploadRoot                = $uploadRoot
+    BaseUrl                   = $devProfile.BaseUrl
+    ChannelRelative           = $channelRelative
+    AppVersion                = $appVersion
+    ResourceVersion           = 1
+    CodeVersion               = 2   # 回滚后激活 release 的代码版本
+    ExpectedActiveReleaseId   = $releaseIdV2
+    ExpectedPreviousReleaseId = $releaseIdV3
+    RolledBackCodeVersion     = 3   # 被回滚 release 的代码版本（正本必须原样保留）
 } | ConvertTo-Json | Out-File -Encoding utf8 (Join-Path $rehearsalRoot "rehearsal.json")
 
 $resultsPath = Join-Path $logsDir "release-rehearsal-results.xml"
@@ -179,7 +203,7 @@ if ($null -ne $xml) {
         }
     }
     # 全绿且确实执行（skipped 全组说明 rehearsal.json 未被识别，同样判失败）。
-    if ([int]$run.failed -eq 0 -and [int]$run.passed -ge 7) { $exitCode = 0 }
+    if ([int]$run.failed -eq 0 -and [int]$run.passed -ge 8) { $exitCode = 0 }
     elseif ([int]$run.failed -eq 0) { Write-Host "契约测试通过数不足（可能整组被跳过），判定失败。" }
 }
 else {
@@ -190,7 +214,7 @@ else {
 
 # ── 收尾：清理进程内私钥。演练成功默认清理产物（传 -KeepArtifacts 保留）；
 #    失败时一律保留——uploadRoot 与 ledger 是排查第一手证据。
-Remove-Item Env:\FRAMEWORKBASE_MANIFEST_PRIVATE_KEY_XML_BASE64 -ErrorAction SilentlyContinue
+& $cleanup
 if (-not $KeepArtifacts -and $exitCode -eq 0) {
     Remove-Item $rehearsalRoot -Recurse -Force -ErrorAction SilentlyContinue
 }

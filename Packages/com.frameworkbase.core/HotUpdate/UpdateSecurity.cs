@@ -571,6 +571,80 @@ namespace Framework.HotUpdate
             IsSafeIdentifier(value, maxLength);
 
         /// <summary>
+        /// 对已通过原始字节验签的 current.json 指针执行字段级准入（目标设计 §3）。
+        /// <para>
+        /// 调用顺序与清单一致：下载原始字节 → 按 KeyId 选公钥 → 验签 → 反序列化 → 本方法。
+        /// ManifestPath 只允许 releases/ 前缀下的安全相对路径——指针被投毒时不能把客户端
+        /// 引到渠道根之外或非 releases 的可变对象上。
+        /// </para>
+        /// </summary>
+        /// <param name="pointer">服务端指针。</param>
+        /// <param name="expectedChannel">当前客户端发行渠道。</param>
+        /// <param name="rejectReason">失败时返回明确拒绝原因。</param>
+        public static bool ValidateCurrentPointer(
+            CurrentPointer pointer,
+            string expectedChannel,
+            out string rejectReason)
+        {
+            rejectReason = null;
+            if (pointer == null)
+            {
+                rejectReason = "指针为空。";
+                return false;
+            }
+            if (pointer.SchemaVersion != 1)
+            {
+                rejectReason = $"指针协议版本不受支持：{pointer.SchemaVersion}";
+                return false;
+            }
+            if (!IsSafeIdentifier(pointer.KeyId, 64) ||
+                !IsSafeIdentifier(pointer.ReleaseId, 64) ||
+                !IsSafeIdentifier(pointer.Env, 64))
+            {
+                rejectReason = "指针 KeyId/ReleaseId/Env 为空或包含不允许的字符。";
+                return false;
+            }
+
+            string expectedPlatform = GetRuntimePlatformId();
+            if (!string.Equals(pointer.Platform, expectedPlatform, StringComparison.OrdinalIgnoreCase))
+            {
+                rejectReason = $"指针平台不匹配：expected={expectedPlatform}, actual={pointer.Platform}";
+                return false;
+            }
+            string normalizedChannel = string.IsNullOrWhiteSpace(expectedChannel) ? "default" : expectedChannel.Trim();
+            if (!IsSafeIdentifier(pointer.Channel, 64) ||
+                !string.Equals(pointer.Channel.Trim(), normalizedChannel, StringComparison.OrdinalIgnoreCase))
+            {
+                rejectReason = $"指针渠道不匹配：expected={normalizedChannel}, actual={pointer.Channel}";
+                return false;
+            }
+            if (!IsSafeReleaseManifestPath(pointer.ManifestPath))
+            {
+                rejectReason = $"指针 ManifestPath 不是 releases/ 下的安全相对路径：{pointer.ManifestPath}";
+                return false;
+            }
+            return true;
+        }
+
+        /// <summary>
+        /// 判断指针的清单路径是否为 releases/ 前缀下的安全相对路径：
+        /// 禁止绝对路径、盘符、反斜杠、<c>..</c> 与空段，且必须以 version.json 结尾。
+        /// </summary>
+        public static bool IsSafeReleaseManifestPath(string path)
+        {
+            if (string.IsNullOrWhiteSpace(path)) return false;
+            if (path.Length > 512) return false;
+            if (path.Contains("\\") || path.Contains("..") || path.Contains(":")) return false;
+            if (!path.StartsWith("releases/", StringComparison.Ordinal)) return false;
+            if (!path.EndsWith("/version.json", StringComparison.Ordinal)) return false;
+            foreach (string segment in path.Split('/'))
+            {
+                if (segment.Length == 0) return false;
+            }
+            return true;
+        }
+
+        /// <summary>
         /// 校验用于 KeyId、Channel 等路由字段的稳定标识，仅允许字母、数字、点、下划线和连字符。
         /// </summary>
         private static bool IsSafeIdentifier(string value, int maxLength)

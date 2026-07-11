@@ -35,6 +35,9 @@ namespace Framework.Tests
             public string AppVersion;
             public int ResourceVersion;
             public int CodeVersion;
+            public string ExpectedActiveReleaseId;
+            public string ExpectedPreviousReleaseId;
+            public int RolledBackCodeVersion;
         }
 
         /// <summary>与 HotUpdateManager 未验签信封解析保持同构的最小结构。</summary>
@@ -131,6 +134,61 @@ namespace Framework.Tests
             Assert.IsTrue(
                 UpdateSecurity.ValidateManifest(_server, local, appConfig?.AppEnv, appConfig?.AppChannel, out string reason),
                 $"真实发布清单未通过客户端安全准入：{reason}");
+        }
+
+        [Test]
+        public void 指针_验签准入通过_回滚后指向前一Release且历史链与正本完整()
+        {
+            string channelRoot = Path.Combine(
+                _config.UploadRoot,
+                _config.ChannelRelative.Replace('/', Path.DirectorySeparatorChar));
+            byte[] pointerBytes = File.ReadAllBytes(Path.Combine(channelRoot, "current.json"));
+            string pointerSig = File.ReadAllText(Path.Combine(channelRoot, "current.json.sig"));
+
+            // 指针与清单同一契约：无 BOM + 原始字节验签 + KeyId 公钥环。
+            Assert.IsFalse(
+                pointerBytes.Length >= 3 &&
+                pointerBytes[0] == 0xEF && pointerBytes[1] == 0xBB && pointerBytes[2] == 0xBF,
+                "current.json 含 UTF-8 BOM，违反无 BOM 契约。");
+            Assert.IsTrue(
+                UpdateSecurity.VerifyManifestSignature(pointerBytes, pointerSig, _config.PublicKeyXml),
+                "current.json 指针验签失败。");
+
+            var pointer = JsonUtility.FromJson<CurrentPointer>(
+                System.Text.Encoding.UTF8.GetString(pointerBytes));
+            Assert.IsTrue(
+                UpdateSecurity.ValidateCurrentPointer(pointer, AppConfig.Load()?.AppChannel, out string reason),
+                $"指针未通过客户端准入：{reason}");
+
+            // 回滚语义：指针回到 code=2 的 release，历史链 PreviousReleaseId 指向被回滚者。
+            Assert.AreEqual(_config.ExpectedActiveReleaseId, pointer.ReleaseId, "回滚后指针未指向目标 release。");
+            Assert.AreEqual(_config.ExpectedPreviousReleaseId, pointer.PreviousReleaseId, "指针历史链断裂。");
+
+            // 指针指向的正本清单与渠道根别名字节一致（别名同步保护旧客户端）。
+            byte[] canonical = File.ReadAllBytes(Path.Combine(
+                channelRoot, pointer.ManifestPath.Replace('/', Path.DirectorySeparatorChar)));
+            CollectionAssert.AreEqual(canonical, _manifestBytes, "正本清单与渠道根别名不一致。");
+
+            // 被回滚 release 的不可变正本必须原样保留（回滚只动指针，不动产物）。
+            string rolledBackManifest = Path.Combine(
+                channelRoot, "releases",
+                HotUpdateReleaseStepsCompatibleSegment(_config.AppVersion),
+                _config.ExpectedPreviousReleaseId, "version.json");
+            Assert.IsTrue(File.Exists(rolledBackManifest), "被回滚 release 的正本清单被移除。");
+            var rolledBack = JsonUtility.FromJson<UpdateInfo>(File.ReadAllText(rolledBackManifest));
+            Assert.AreEqual(_config.RolledBackCodeVersion, rolledBack.CodeVersion, "被回滚正本内容被改动。");
+        }
+
+        /// <summary>与发布端 SanitizePathSegment 同规则的版本号路径段（点与字母数字保持原样）。</summary>
+        private static string HotUpdateReleaseStepsCompatibleSegment(string value)
+        {
+            var chars = value.ToCharArray();
+            for (int i = 0; i < chars.Length; i++)
+            {
+                char c = chars[i];
+                if (!(char.IsLetterOrDigit(c) || c == '.' || c == '_' || c == '-')) chars[i] = '_';
+            }
+            return new string(chars);
         }
 
         [Test]

@@ -60,6 +60,10 @@ namespace Framework.Editor.Release
         /// 目录一经发布永不修改；回滚与晋级只移动指针，不重建产物。
         /// </summary>
         public string ReleaseDirRelative = string.Empty;
+        /// <summary>实际发布到的渠道根绝对路径，由 AtomicPublishArtifacts 回写；未部署时为空。</summary>
+        public string PublishedRootAbsolute = string.Empty;
+        /// <summary>指针切换操作者标识（审计用）；CI 入口注入 workflow 信息，缺省为机器用户名。</summary>
+        public string SwitchedBy = string.Empty;
 
         // ── 中间产物（步骤间传递）─────────────────────────────────────────────
         /// <summary>代码补丁清单（复制热更 DLL 步骤产出）。</summary>

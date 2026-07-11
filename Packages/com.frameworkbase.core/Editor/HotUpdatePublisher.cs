@@ -349,7 +349,9 @@ namespace Framework.Editor
                     new HotUpdateReleaseSteps.GenerateManifest(),
                     new HotUpdateReleaseSteps.WriteAndSignManifest(),
                     new ReleasePublishingSteps.WriteReleaseLedger(),
-                    new ReleasePublishingSteps.AtomicPublishArtifacts()
+                    new ReleasePublishingSteps.AtomicPublishArtifacts(),
+                    new ReleasePublishingSteps.VerifyPublishedArtifacts(),
+                    new ReleasePublishingSteps.SwitchCurrentPointer()
                 }, context);
 
                 if (!pipelineResult.Success)

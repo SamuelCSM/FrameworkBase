@@ -251,6 +251,7 @@ namespace Framework.Editor.Release
 
                     CommitOne(stagingRoot, targetRoot, signatureRelative);
                     CommitOne(stagingRoot, targetRoot, manifestRelative);
+                    ctx.PublishedRootAbsolute = targetRoot;
                     ctx.Log($"      原子发布完成 → {targetRoot}（version.json 最后提交）");
                 }
                 finally
@@ -258,6 +259,233 @@ namespace Framework.Editor.Release
                     if (Directory.Exists(stagingRoot)) Directory.Delete(stagingRoot, true);
                 }
             }
+        }
+
+        /// <summary>
+        /// 上传后校验（目标设计 §1.5，状态机 Published→Verified）：从已发布的渠道根回读本 release
+        /// 台账列出的每个产物，逐文件比对 SHA-256。任何缺失或不一致都抛异常中止，后续指针切换不会执行，
+        /// 线上指针保持指向上一个已验证 release。
+        /// </summary>
+        public sealed class VerifyPublishedArtifacts : IReleaseStep
+        {
+            public string Name => "VerifyPublishedArtifacts";
+            public string Description => "回读已发布产物并逐文件比对 SHA-256（Published→Verified）";
+
+            public void Execute(ReleaseContext ctx)
+            {
+                if (string.IsNullOrEmpty(ctx.PublishedRootAbsolute))
+                {
+                    ctx.Log("      未执行部署，跳过上传后校验。");
+                    return;
+                }
+
+                int verified = VerifyLedgerArtifacts(
+                    ctx.PublishedRootAbsolute,
+                    Path.Combine(
+                        ctx.PublishedRootAbsolute,
+                        ctx.ReleaseDirRelative.Replace('/', Path.DirectorySeparatorChar),
+                        "ledger.json"),
+                    immutableOnly: false);
+                ctx.Log($"      上传后校验通过：{verified} 个产物 SHA-256 与台账一致（Verified）。");
+            }
+        }
+
+        /// <summary>
+        /// 切换渠道根 current.json 签名指针（状态机 Verified→Active）：唯一可变对象，
+        /// 先提交伴生签名再提交指针本体；PreviousReleaseId 指向上一个激活 release 形成可回溯历史链。
+        /// </summary>
+        public sealed class SwitchCurrentPointer : IReleaseStep
+        {
+            public string Name => "SwitchCurrentPointer";
+            public string Description => "签名并原子切换 current.json 指针（Verified→Active）";
+
+            public void Execute(ReleaseContext ctx)
+            {
+                if (string.IsNullOrEmpty(ctx.PublishedRootAbsolute) || string.IsNullOrEmpty(ctx.ReleaseDirRelative))
+                {
+                    ctx.Log("      未执行部署或缺少版本目录，跳过指针切换。");
+                    return;
+                }
+
+                string previousReleaseId = string.Empty;
+                string currentPath = Path.Combine(ctx.PublishedRootAbsolute, "current.json");
+                if (File.Exists(currentPath))
+                {
+                    var existing = JsonUtility.FromJson<Framework.HotUpdate.CurrentPointer>(File.ReadAllText(currentPath));
+                    previousReleaseId = existing?.ReleaseId ?? string.Empty;
+                }
+
+                var pointer = new Framework.HotUpdate.CurrentPointer
+                {
+                    SchemaVersion = 1,
+                    KeyId = ctx.Profile?.SigningKeyRef ?? "development",
+                    Env = ctx.EnvironmentName,
+                    Platform = HotUpdateReleaseSteps.GetPlatformId(ctx.BuildTarget),
+                    Channel = ctx.Channel,
+                    AppVersion = ctx.AppVersion,
+                    ReleaseId = ctx.ReleaseId,
+                    ManifestPath = ctx.ReleaseDirRelative + "/version.json",
+                    PreviousReleaseId = previousReleaseId,
+                    SwitchedAtUnixSeconds = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+                    SwitchedBy = string.IsNullOrWhiteSpace(ctx.SwitchedBy)
+                        ? $"{Environment.UserName}@{Environment.MachineName}"
+                        : ctx.SwitchedBy,
+                };
+                CommitPointer(ctx.PublishedRootAbsolute, pointer, ctx.Log);
+                ctx.Log($"      指针已切换：{previousReleaseId} → {pointer.ReleaseId}（Active）。");
+            }
+        }
+
+        /// <summary>
+        /// 序列化、签名并以"签名先行、指针最后"顺序原子提交 current.json。指针契约要求无 BOM UTF-8。
+        /// </summary>
+        internal static void CommitPointer(string publishedRoot, Framework.HotUpdate.CurrentPointer pointer, Action<string> log)
+        {
+            string json = JsonUtility.ToJson(pointer, true);
+            string tempPointer = Path.Combine(publishedRoot, "current.json.publishing");
+            File.WriteAllText(tempPointer, json, new UTF8Encoding(false));
+            if (!UpdateManifestSigner.SignManifestForPublish(tempPointer, log, required: true))
+            {
+                File.Delete(tempPointer);
+                throw new InvalidOperationException("current.json 指针签名失败，指针未切换。");
+            }
+
+            ReplaceFile(tempPointer + ".sig", Path.Combine(publishedRoot, "current.json.sig"));
+            ReplaceFile(tempPointer, Path.Combine(publishedRoot, "current.json"));
+        }
+
+        /// <summary>
+        /// 按台账回读校验发布根下的产物。immutableOnly=true 时仅校验 releases/ 前缀
+        /// （回滚场景：根别名已随后续发布合法变化，不参与目标 release 的完整性判定）。
+        /// </summary>
+        /// <returns>实际校验的产物数量。</returns>
+        internal static int VerifyLedgerArtifacts(string publishedRoot, string ledgerPath, bool immutableOnly)
+        {
+            if (!File.Exists(ledgerPath))
+                throw new FileNotFoundException("发布台账不存在，无法执行回读校验。", ledgerPath);
+
+            var ledger = JsonUtility.FromJson<ReleaseLedger>(File.ReadAllText(ledgerPath));
+            if (ledger == null || ledger.Artifacts == null || ledger.Artifacts.Count == 0)
+                throw new InvalidDataException($"发布台账无产物记录：{ledgerPath}");
+
+            int verified = 0;
+            foreach (ArtifactRecord record in ledger.Artifacts)
+            {
+                // player/ 前缀是构建原始产物的审计记录，不部署到渠道根，不参与回读。
+                if (record.Path.StartsWith("player/", StringComparison.Ordinal)) continue;
+                if (immutableOnly && !record.Path.StartsWith("releases/", StringComparison.Ordinal)) continue;
+
+                string published = Path.Combine(publishedRoot, record.Path.Replace('/', Path.DirectorySeparatorChar));
+                if (!File.Exists(published))
+                    throw new FileNotFoundException($"回读校验失败：已发布产物缺失 {record.Path}", published);
+                string actual = ComputeSHA256(published);
+                if (!string.Equals(actual, record.SHA256, StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new InvalidDataException(
+                        $"回读校验失败：{record.Path} SHA-256 不一致，期望={record.SHA256}，实际={actual}");
+                }
+                verified++;
+            }
+
+            if (verified == 0)
+                throw new InvalidDataException($"回读校验未覆盖任何产物：{ledgerPath}");
+            return verified;
+        }
+
+        /// <summary>
+        /// 一键回滚（目标设计 §1.3，状态机 Active→RolledBack）：把渠道根指针回切到指定或上一个
+        /// releaseId。不重建、不重传产物；回切前对目标 release 的不可变产物集执行台账回读校验
+        /// （回滚目标必须仍处于 Verified 完整性），同时同步渠道根 version.json 别名保护旧客户端。
+        /// </summary>
+        /// <param name="ctx">已通过环境校验的上下文（Profile/作用域已填充）。</param>
+        /// <param name="targetReleaseId">回滚目标 releaseId；为空时取当前指针的 PreviousReleaseId。</param>
+        public static void ExecuteRollback(ReleaseContext ctx, string targetReleaseId)
+        {
+            string uploadRoot = ctx.Profile?.UploadRoot;
+            if (string.IsNullOrWhiteSpace(uploadRoot))
+                throw new InvalidOperationException("回滚要求配置 UploadRoot（无部署目标何谈回滚）。");
+            string publishedRoot = string.IsNullOrEmpty(ctx.PublishScopeRelative)
+                ? Path.GetFullPath(uploadRoot)
+                : Path.GetFullPath(Path.Combine(uploadRoot, ctx.PublishScopeRelative.Replace('/', Path.DirectorySeparatorChar)));
+
+            string currentPath = Path.Combine(publishedRoot, "current.json");
+            if (!File.Exists(currentPath))
+                throw new FileNotFoundException("渠道根不存在 current.json 指针，无法回滚。", currentPath);
+            var current = JsonUtility.FromJson<Framework.HotUpdate.CurrentPointer>(File.ReadAllText(currentPath));
+            if (current == null || string.IsNullOrWhiteSpace(current.ReleaseId))
+                throw new InvalidDataException("current.json 指针无法解析。");
+
+            string target = string.IsNullOrWhiteSpace(targetReleaseId) ? current.PreviousReleaseId : targetReleaseId.Trim();
+            if (string.IsNullOrWhiteSpace(target))
+                throw new InvalidOperationException("指针没有 PreviousReleaseId 且未指定回滚目标，历史链为空。");
+            if (string.Equals(target, current.ReleaseId, StringComparison.Ordinal))
+                throw new InvalidOperationException($"回滚目标与当前激活 release 相同：{target}");
+
+            // 定位目标不可变版本目录：releases/{appVersion}/{releaseId}
+            string releasesRoot = Path.Combine(publishedRoot, "releases");
+            string targetDir = Directory.Exists(releasesRoot)
+                ? Directory.GetDirectories(releasesRoot, target, SearchOption.AllDirectories)
+                    .FirstOrDefault(dir => string.Equals(Path.GetFileName(dir), target, StringComparison.Ordinal))
+                : null;
+            if (targetDir == null)
+                throw new DirectoryNotFoundException($"渠道根 releases/ 下找不到回滚目标版本目录：{target}");
+
+            string targetManifest = Path.Combine(targetDir, "version.json");
+            string targetSignature = targetManifest + ".sig";
+            string targetLedger = Path.Combine(targetDir, "ledger.json");
+            if (!File.Exists(targetManifest) || !File.Exists(targetSignature))
+                throw new FileNotFoundException($"回滚目标缺少正本清单或签名：{targetDir}");
+
+            // 目标 release 必须仍满足 Verified：不可变产物集逐文件回读校验（别名不参与，见方法注释）。
+            int verified = VerifyLedgerArtifacts(publishedRoot, targetLedger, immutableOnly: true);
+            ctx.Log($"      回滚目标完整性复验通过：{verified} 个不可变产物一致。");
+
+            var targetInfo = JsonUtility.FromJson<Framework.HotUpdate.UpdateInfo>(File.ReadAllText(targetManifest));
+            if (targetInfo == null)
+                throw new InvalidDataException($"回滚目标正本清单无法解析：{targetManifest}");
+
+            // 渠道根别名同步（旧客户端路径），签名先行、清单最后。
+            string aliasSignature = Path.Combine(publishedRoot, "version.json.sig");
+            string aliasManifest = Path.Combine(publishedRoot, "version.json");
+            string tempSig = aliasSignature + ".rollback";
+            string tempManifest = aliasManifest + ".rollback";
+            File.Copy(targetSignature, tempSig, true);
+            File.Copy(targetManifest, tempManifest, true);
+            ReplaceFile(tempSig, aliasSignature);
+            ReplaceFile(tempManifest, aliasManifest);
+
+            string relativeManifest = GetSafeRelativePath(publishedRoot, targetManifest);
+            var pointer = new Framework.HotUpdate.CurrentPointer
+            {
+                SchemaVersion = 1,
+                KeyId = ctx.Profile?.SigningKeyRef ?? "development",
+                Env = ctx.EnvironmentName,
+                Platform = HotUpdateReleaseSteps.GetPlatformId(ctx.BuildTarget),
+                Channel = ctx.Channel,
+                AppVersion = targetInfo.AppVersion,
+                ReleaseId = target,
+                ManifestPath = relativeManifest,
+                PreviousReleaseId = current.ReleaseId, // 历史链指向被回滚者，链条不断裂
+                SwitchedAtUnixSeconds = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+                SwitchedBy = string.IsNullOrWhiteSpace(ctx.SwitchedBy)
+                    ? $"{Environment.UserName}@{Environment.MachineName}"
+                    : ctx.SwitchedBy,
+            };
+            CommitPointer(publishedRoot, pointer, ctx.Log);
+            ctx.Log($"      回滚完成：{current.ReleaseId} → {target}（RolledBack，仅指针与别名变化）。");
+        }
+
+        private static void ReplaceFile(string source, string destination)
+        {
+            if (File.Exists(destination))
+            {
+                string backup = destination + ".release-backup";
+                if (File.Exists(backup)) File.Delete(backup);
+                File.Replace(source, destination, backup, true);
+                if (File.Exists(backup)) File.Delete(backup);
+                return;
+            }
+            File.Move(source, destination);
         }
 
         private static void CommitOne(string stagingRoot, string targetRoot, string relative)

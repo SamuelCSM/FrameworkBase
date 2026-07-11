@@ -361,6 +361,8 @@ namespace Framework.Editor
             steps.Add(new ReleasePublishingSteps.StageFullPackageArtifact());
             steps.Add(new ReleasePublishingSteps.WriteReleaseLedger());
             steps.Add(new ReleasePublishingSteps.AtomicPublishArtifacts());
+            steps.Add(new ReleasePublishingSteps.VerifyPublishedArtifacts());
+            steps.Add(new ReleasePublishingSteps.SwitchCurrentPointer());
             if (_autoSwitchBackAfterBuild)
                 steps.Add(new FullPackageReleaseSteps.SwitchBackHotUpdateRemote());
 

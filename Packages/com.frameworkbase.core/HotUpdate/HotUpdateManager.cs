@@ -94,7 +94,12 @@ namespace Framework.HotUpdate
                     throw new InvalidDataException(urlRejectReason);
 
                 UpdateInfo localVersion = VersionManager.GetLocalVersion();
-                string versionUrl = $"{updateUrl.TrimEnd('/')}/version.json";
+
+                // 指针优先（目标设计 §3）：渠道根 current.json 是唯一可变对象，验签+准入后
+                // 跳转到不可变正本清单；指针对象不存在（旧布局/迁移期）回退渠道根别名。
+                // 指针存在但无效一律在解析方法内抛异常失败关闭，禁止靠回退绕过。
+                string root = updateUrl.TrimEnd('/');
+                string versionUrl = await ResolveManifestUrlViaPointerAsync(root, config, cancellationToken);
                 string tempPath = Path.Combine(Application.temporaryCachePath, "version_temp.json");
                 if (!await _patchDownloader.DownloadFileAsync(
                         versionUrl,
@@ -117,10 +122,11 @@ namespace Framework.HotUpdate
                 if (envelope == null || string.IsNullOrWhiteSpace(envelope.KeyId))
                     throw new InvalidDataException("热更新清单缺少可用于选择验签公钥的 KeyId。");
 
-                if (!await VerifyManifestSignatureAsync(
-                        updateUrl,
+                if (!await VerifyDetachedSignatureAsync(
+                        versionUrl,
                         manifestBytes,
                         envelope.KeyId,
+                        "version_temp.json.sig",
                         cancellationToken))
                 {
                     throw new CryptographicException("热更新清单签名验证失败。");
@@ -177,19 +183,74 @@ namespace Framework.HotUpdate
         }
         
         /// <summary>
-        /// 校验已下载清单的 RSA-SHA256 签名。
-        /// 所有环境都必须按 KeyId 从客户端公钥环选择信任根，并对清单原始字节验签；
+        /// 渠道根指针解析（目标设计 §3）：下载 current.json，验签并通过字段准入后返回不可变正本
+        /// 清单 URL；指针对象不存在时回退渠道根 version.json 别名（旧布局/迁移期兼容）。
+        /// 指针存在但大小、验签或准入任一失败即抛异常失败关闭——被投毒的指针不能靠回退别名绕过。
+        /// </summary>
+        /// <param name="root">更新服务渠道根 URL（已去尾斜杠）。</param>
+        /// <param name="config">当前应用配置，用于渠道匹配与公钥环。</param>
+        /// <param name="cancellationToken">检查生命周期取消令牌。</param>
+        /// <returns>应当下载的清单绝对 URL。</returns>
+        private async UniTask<string> ResolveManifestUrlViaPointerAsync(
+            string root,
+            Core.AppConfigAsset config,
+            CancellationToken cancellationToken)
+        {
+            string pointerUrl = $"{root}/current.json";
+            string tempPath = Path.Combine(Application.temporaryCachePath, "current_temp.json");
+            if (!await _patchDownloader.DownloadFileAsync(
+                    pointerUrl,
+                    tempPath,
+                    forceRefresh: true,
+                    cancellationToken: cancellationToken))
+            {
+                GameLog.Log("[HotUpdateManager] 渠道根无 current.json 指针，回退 version.json 别名。");
+                return $"{root}/version.json";
+            }
+
+            long pointerLength = FileStorages.Shared.GetFileSize(tempPath);
+            if (pointerLength <= 0 || pointerLength > MaxManifestBytes)
+                throw new InvalidDataException($"指针文件大小非法：{pointerLength} 字节。");
+
+            byte[] pointerBytes = FileStorages.Shared.ReadBytes(tempPath);
+            string json = Encoding.UTF8.GetString(pointerBytes);
+            ManifestKeyEnvelope envelope = JsonSerializers.Shared.FromJson<ManifestKeyEnvelope>(json);
+            if (envelope == null || string.IsNullOrWhiteSpace(envelope.KeyId))
+                throw new InvalidDataException("指针缺少可用于选择验签公钥的 KeyId。");
+            if (!await VerifyDetachedSignatureAsync(
+                    pointerUrl,
+                    pointerBytes,
+                    envelope.KeyId,
+                    "current_temp.json.sig",
+                    cancellationToken))
+            {
+                throw new CryptographicException("current.json 指针签名验证失败。");
+            }
+
+            CurrentPointer pointer = JsonSerializers.Shared.FromJson<CurrentPointer>(json);
+            if (!UpdateSecurity.ValidateCurrentPointer(pointer, config?.AppChannel, out string reason))
+                throw new InvalidDataException($"指针未通过安全准入：{reason}");
+
+            GameLog.Log($"[HotUpdateManager] 指针指向 releaseId={pointer.ReleaseId}，跳转不可变正本清单。");
+            return $"{root}/{pointer.ManifestPath}";
+        }
+
+        /// <summary>
+        /// 校验载荷（清单或指针）的伴生 RSA-SHA256 签名。
+        /// 所有环境都必须按 KeyId 从客户端公钥环选择信任根，并对载荷原始字节验签；
         /// 公钥、签名文件缺失或签名不匹配一律失败，开发环境也不得绕过远程代码信任边界。
         /// </summary>
-        /// <param name="updateUrl">更新服务器根 URL。</param>
-        /// <param name="manifestBytes">网络下载并限制大小后的 version.json 原始字节。</param>
+        /// <param name="payloadUrl">载荷绝对 URL；伴生签名固定为该 URL 追加 .sig。</param>
+        /// <param name="payloadBytes">网络下载并限制大小后的载荷原始字节。</param>
         /// <param name="keyId">未验签信封中声明的公钥标识，只用于本地密钥选择。</param>
-        /// <param name="cancellationToken">清单检查生命周期取消令牌。</param>
+        /// <param name="signatureTempName">签名临时文件名；不同载荷使用不同名字避免互相覆盖。</param>
+        /// <param name="cancellationToken">检查生命周期取消令牌。</param>
         /// <returns>签名文件存在、大小合法且原始字节验签通过时返回 true。</returns>
-        private async UniTask<bool> VerifyManifestSignatureAsync(
-            string updateUrl,
-            byte[] manifestBytes,
+        private async UniTask<bool> VerifyDetachedSignatureAsync(
+            string payloadUrl,
+            byte[] payloadBytes,
             string keyId,
+            string signatureTempName,
             CancellationToken cancellationToken)
         {
             Core.AppConfigAsset config = Core.AppConfig.Load();
@@ -201,12 +262,12 @@ namespace Framework.HotUpdate
             // 任何环境的远程代码清单都必须验签。开发环境应使用独立 development 密钥，而不是跳过信任边界。
             if (string.IsNullOrWhiteSpace(publicKey))
             {
-                GameLog.Error($"[HotUpdateManager] 未找到 KeyId={keyId} 对应的清单验签公钥，更新已拒绝。");
+                GameLog.Error($"[HotUpdateManager] 未找到 KeyId={keyId} 对应的验签公钥，更新已拒绝。");
                 return false;
             }
 
-            string signatureUrl = $"{updateUrl.TrimEnd('/')}/version.json{UpdateSecurity.ManifestSignatureSuffix}";
-            string signaturePath = Path.Combine(Application.temporaryCachePath, "version_temp.json.sig");
+            string signatureUrl = payloadUrl + UpdateSecurity.ManifestSignatureSuffix;
+            string signaturePath = Path.Combine(Application.temporaryCachePath, signatureTempName);
             if (!await _patchDownloader.DownloadFileAsync(
                     signatureUrl,
                     signaturePath,
@@ -219,12 +280,12 @@ namespace Framework.HotUpdate
             long signatureLength = FileStorages.Shared.GetFileSize(signaturePath);
             if (signatureLength <= 0 || signatureLength > MaxSignatureBytes)
             {
-                GameLog.Error($"[HotUpdateManager] 清单签名文件大小非法：{signatureLength} 字节。");
+                GameLog.Error($"[HotUpdateManager] 签名文件大小非法：{signatureLength} 字节。");
                 return false;
             }
 
             return UpdateSecurity.VerifyManifestSignature(
-                manifestBytes,
+                payloadBytes,
                 FileStorages.Shared.ReadText(signaturePath),
                 publicKey);
         }

@@ -48,6 +48,39 @@ namespace Framework.Editor.Release
             RunForBuilder(ExecuteBuildFullPackage);
         }
 
+        /// <summary>
+        /// 一键回滚入口：<c>-releaseEnv &lt;env&gt; [-targetReleaseId &lt;id&gt;] [-uploadRoot &lt;root&gt;]</c>。
+        /// 只回切 current.json 指针并同步渠道根别名，不重建、不重传产物；目标缺省为指针的 PreviousReleaseId。
+        /// </summary>
+        public static void RollbackRelease()
+        {
+            RunAndExit(ExecuteRollbackRelease);
+        }
+
+        /// <summary>外部构建器专用回滚入口；失败以 BuildFailedException 上抛。</summary>
+        public static void RollbackReleaseForBuilder()
+        {
+            RunForBuilder(ExecuteRollbackRelease);
+        }
+
+        private static void ExecuteRollbackRelease()
+        {
+            Dictionary<string, string> args = ParseArgs();
+            var context = new ReleaseContext
+            {
+                EnvironmentName = Require(args, "releaseEnv"),
+                UploadRootOverride = Get(args, "uploadRoot", string.Empty),
+                BuildTarget = ResolveBuildTarget(args),
+                // 回滚不产生新版本目录：AppVersion 仅满足环境校验的路径段计算，实际版本取自目标正本清单。
+                AppVersion = "rollback",
+                SwitchedBy = Get(args, "switchedBy", string.Empty),
+                ServerDataDir = string.Empty,
+                Log = message => UnityEngine.Debug.Log("[ReleaseBatch] " + message),
+            };
+            new HotUpdateReleaseSteps.ValidateReleaseEnvironment().Execute(context);
+            ReleasePublishingSteps.ExecuteRollback(context, Get(args, "targetReleaseId", string.Empty));
+        }
+
         private static void ExecutePublishHotUpdate()
         {
             {
@@ -95,6 +128,8 @@ namespace Framework.Editor.Release
                     new HotUpdateReleaseSteps.WriteAndSignManifest(),
                     new ReleasePublishingSteps.WriteReleaseLedger(),
                     new ReleasePublishingSteps.AtomicPublishArtifacts(),
+                    new ReleasePublishingSteps.VerifyPublishedArtifacts(),
+                    new ReleasePublishingSteps.SwitchCurrentPointer(),
                 }, context);
                 ThrowIfFailed(result);
             }
@@ -150,6 +185,8 @@ namespace Framework.Editor.Release
                     new ReleasePublishingSteps.StageFullPackageArtifact(),
                     new ReleasePublishingSteps.WriteReleaseLedger(),
                     new ReleasePublishingSteps.AtomicPublishArtifacts(),
+                    new ReleasePublishingSteps.VerifyPublishedArtifacts(),
+                    new ReleasePublishingSteps.SwitchCurrentPointer(),
                     new FullPackageReleaseSteps.SwitchBackHotUpdateRemote(),
                 };
                 ThrowIfFailed(ReleasePipeline.Run(steps, context));
