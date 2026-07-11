@@ -475,6 +475,180 @@ namespace Framework.Editor.Release
             ctx.Log($"      回滚完成：{current.ReleaseId} → {target}（RolledBack，仅指针与别名变化）。");
         }
 
+        /// <summary>
+        /// 晋级（目标设计 §1.4）：把源环境已验证的 releaseId 以"同产物重签"方式推进目标环境。
+        /// <para>
+        /// payload 逐字节复用（SHA-256 不变，"测过的就是发出去的"）；仅清单重新派生：KeyId 换目标
+        /// 环境签名引用、补丁 URL 从源渠道根重根到目标渠道根、签发/失效时间刷新。目标侧完成
+        /// 回读校验后才切指针，禁止 prod 单独重建产物。
+        /// </para>
+        /// </summary>
+        /// <param name="ctx">已通过目标环境校验的上下文（Profile/作用域已填充）。</param>
+        /// <param name="sourceEnv">源环境名（如 qa）。</param>
+        /// <param name="sourceReleaseId">要晋级的 releaseId；为空时取源渠道根当前指针的激活 release。</param>
+        public static void ExecutePromote(ReleaseContext ctx, string sourceEnv, string sourceReleaseId)
+        {
+            if (string.IsNullOrWhiteSpace(sourceEnv))
+                throw new ArgumentException("晋级必须指定 -sourceEnv 源环境。");
+            if (string.Equals(sourceEnv.Trim(), ctx.EnvironmentName, StringComparison.OrdinalIgnoreCase))
+                throw new ArgumentException("晋级源环境与目标环境相同。");
+
+            ReleaseProfile sourceProfile = ReleaseProfileStore.TryLoad(sourceEnv.Trim(), out string loadError);
+            if (sourceProfile == null)
+                throw new InvalidOperationException($"源环境 {sourceEnv} 加载失败：{loadError}");
+
+            string uploadRoot = ctx.Profile?.UploadRoot;
+            if (string.IsNullOrWhiteSpace(uploadRoot))
+                throw new InvalidOperationException("晋级要求配置 UploadRoot（产物仓库单一物理根）。");
+
+            // 单一产物仓库根：源与目标只是根下不同 {env}/{platform}/{channel} 作用域。
+            string platformSegment = HotUpdateReleaseSteps.GetPlatformId(ctx.BuildTarget);
+            string sourceScope = $"{HotUpdateReleaseSteps.SanitizePathSegment(sourceEnv.Trim())}/{platformSegment}/{ctx.Channel}";
+            string sourceRoot = Path.GetFullPath(Path.Combine(uploadRoot, sourceScope.Replace('/', Path.DirectorySeparatorChar)));
+            string targetRoot = Path.GetFullPath(Path.Combine(uploadRoot, ctx.PublishScopeRelative.Replace('/', Path.DirectorySeparatorChar)));
+
+            // 1. 确定晋级对象：显式指定或源指针当前激活 release。
+            string releaseId = sourceReleaseId?.Trim();
+            if (string.IsNullOrWhiteSpace(releaseId))
+            {
+                string sourcePointerPath = Path.Combine(sourceRoot, "current.json");
+                if (!File.Exists(sourcePointerPath))
+                    throw new FileNotFoundException("源渠道根无 current.json 且未显式指定 -sourceReleaseId。", sourcePointerPath);
+                var sourcePointer = JsonUtility.FromJson<Framework.HotUpdate.CurrentPointer>(File.ReadAllText(sourcePointerPath));
+                releaseId = sourcePointer?.ReleaseId;
+                if (string.IsNullOrWhiteSpace(releaseId))
+                    throw new InvalidDataException("源渠道根指针无法解析出激活 releaseId。");
+            }
+
+            // 2. 定位源版本目录并复验完整性（晋级对象必须仍 Verified）。
+            string sourceReleasesRoot = Path.Combine(sourceRoot, "releases");
+            string sourceDir = Directory.Exists(sourceReleasesRoot)
+                ? Directory.GetDirectories(sourceReleasesRoot, releaseId, SearchOption.AllDirectories)
+                    .FirstOrDefault(dir => string.Equals(Path.GetFileName(dir), releaseId, StringComparison.Ordinal))
+                : null;
+            if (sourceDir == null)
+                throw new DirectoryNotFoundException($"源环境 releases/ 下找不到晋级目标：{releaseId}");
+            int verifiedSource = VerifyLedgerArtifacts(sourceRoot, Path.Combine(sourceDir, "ledger.json"), immutableOnly: true);
+            ctx.Log($"      源 release 完整性复验通过：{verifiedSource} 个不可变产物一致。");
+
+            string releaseRelative = GetSafeRelativePath(sourceRoot, sourceDir);
+            string targetDir = Path.Combine(targetRoot, releaseRelative.Replace('/', Path.DirectorySeparatorChar));
+            if (Directory.Exists(targetDir))
+                throw new IOException($"目标环境已存在同 releaseId 版本目录，禁止覆盖：{releaseRelative}");
+
+            // 3. payload 逐字节复制并校验（同产物：SHA-256 必须与源一致）。
+            Directory.CreateDirectory(targetDir);
+            foreach (string sourceFile in Directory.GetFiles(sourceDir, "*", SearchOption.AllDirectories))
+            {
+                string name = Path.GetFileName(sourceFile);
+                if (name == "version.json" || name == "version.json.sig" || name == "ledger.json")
+                    continue; // 清单重派生、台账重生成，其余全部逐字节复用
+                string relative = GetSafeRelativePath(sourceDir, sourceFile);
+                string destination = Path.Combine(targetDir, relative.Replace('/', Path.DirectorySeparatorChar));
+                Directory.CreateDirectory(Path.GetDirectoryName(destination));
+                File.Copy(sourceFile, destination, false);
+                if (!string.Equals(ComputeSHA256(sourceFile), ComputeSHA256(destination), StringComparison.OrdinalIgnoreCase))
+                    throw new IOException($"晋级复制校验失败：{relative}");
+            }
+
+            // 4. 重派生清单：payload 哈希不变，仅换 KeyId、重根 URL、刷新时效。
+            var manifest = JsonUtility.FromJson<Framework.HotUpdate.UpdateInfo>(
+                File.ReadAllText(Path.Combine(sourceDir, "version.json")));
+            if (manifest == null)
+                throw new InvalidDataException("源正本清单无法解析。");
+            string sourceChannelUrl = sourceProfile.BaseUrl.TrimEnd('/') + "/" + sourceScope + "/";
+            string targetChannelUrl = ctx.Profile.BaseUrl.TrimEnd('/') + "/" + ctx.PublishScopeRelative + "/";
+            foreach (Framework.HotUpdate.PatchFile patch in manifest.PatchFiles)
+            {
+                if (!patch.Url.StartsWith(sourceChannelUrl, StringComparison.Ordinal))
+                    throw new InvalidDataException($"源清单补丁 URL 不在源渠道根下，晋级无法重根：{patch.Url}");
+                patch.Url = targetChannelUrl + patch.Url.Substring(sourceChannelUrl.Length);
+            }
+            long now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            manifest.KeyId = ctx.Profile.SigningKeyRef;
+            manifest.IssuedAtUnixSeconds = now;
+            manifest.ExpiresAtUnixSeconds = now + 30L * 24 * 60 * 60;
+
+            string manifestJson = ReleaseManifestWriter.ToJson(manifest);
+            string targetManifest = Path.Combine(targetDir, "version.json");
+            File.WriteAllText(targetManifest, manifestJson, new UTF8Encoding(false));
+            if (!UpdateManifestSigner.SignManifestForPublish(targetManifest, ctx.Log, required: true))
+                throw new InvalidOperationException("晋级清单签名失败，已中止。");
+
+            // 5. 重生成目标台账：构建溯源字段照抄源台账，产物记录按目标目录重新枚举。
+            var sourceLedger = JsonUtility.FromJson<ReleaseLedger>(
+                File.ReadAllText(Path.Combine(sourceDir, "ledger.json")));
+            var targetLedger = new ReleaseLedger
+            {
+                ReleaseId = releaseId,
+                GeneratedAtUtc = DateTime.UtcNow.ToString("O"),
+                GitCommit = sourceLedger?.GitCommit ?? string.Empty,
+                GitWorkingTreeDirty = sourceLedger?.GitWorkingTreeDirty ?? false,
+                UnityVersion = sourceLedger?.UnityVersion ?? string.Empty,
+                PackagesLockSHA256 = sourceLedger?.PackagesLockSHA256 ?? string.Empty,
+                Environment = ctx.EnvironmentName,
+                Channel = ctx.Channel,
+                BuildTarget = sourceLedger?.BuildTarget ?? ctx.BuildTarget.ToString(),
+                AppVersion = manifest.AppVersion,
+                ResourceVersion = manifest.ResourceVersion,
+                CodeVersion = manifest.CodeVersion,
+                PublishResource = sourceLedger?.PublishResource ?? false,
+                PublishCode = sourceLedger?.PublishCode ?? false,
+                FullPackage = sourceLedger?.FullPackage ?? false,
+            };
+            foreach (string file in Directory.GetFiles(targetDir, "*", SearchOption.AllDirectories)
+                         .OrderBy(path => path, StringComparer.Ordinal))
+            {
+                targetLedger.Artifacts.Add(new ArtifactRecord
+                {
+                    Path = GetSafeRelativePath(targetRoot, file),
+                    Size = new FileInfo(file).Length,
+                    SHA256 = ComputeSHA256(file),
+                });
+            }
+            string targetLedgerPath = Path.Combine(targetDir, "ledger.json");
+            File.WriteAllText(targetLedgerPath, JsonUtility.ToJson(targetLedger, true), new UTF8Encoding(false));
+
+            // 6. 目标侧回读校验（Published→Verified）后，别名同步 + 指针切换（Verified→Active）。
+            int verifiedTarget = VerifyLedgerArtifacts(targetRoot, targetLedgerPath, immutableOnly: true);
+            ctx.Log($"      目标侧回读校验通过：{verifiedTarget} 个产物一致。");
+
+            string aliasSig = Path.Combine(targetRoot, "version.json.sig");
+            string aliasManifest = Path.Combine(targetRoot, "version.json");
+            string tempSig = aliasSig + ".promote";
+            string tempManifest = aliasManifest + ".promote";
+            File.Copy(targetManifest + ".sig", tempSig, true);
+            File.Copy(targetManifest, tempManifest, true);
+            ReplaceFile(tempSig, aliasSig);
+            ReplaceFile(tempManifest, aliasManifest);
+
+            string previousReleaseId = string.Empty;
+            string targetPointerPath = Path.Combine(targetRoot, "current.json");
+            if (File.Exists(targetPointerPath))
+            {
+                var existing = JsonUtility.FromJson<Framework.HotUpdate.CurrentPointer>(File.ReadAllText(targetPointerPath));
+                previousReleaseId = existing?.ReleaseId ?? string.Empty;
+            }
+            var pointer = new Framework.HotUpdate.CurrentPointer
+            {
+                SchemaVersion = 1,
+                KeyId = ctx.Profile.SigningKeyRef,
+                Env = ctx.EnvironmentName,
+                Platform = platformSegment,
+                Channel = ctx.Channel,
+                AppVersion = manifest.AppVersion,
+                ReleaseId = releaseId,
+                ManifestPath = releaseRelative + "/version.json",
+                PreviousReleaseId = previousReleaseId,
+                SwitchedAtUnixSeconds = now,
+                SwitchedBy = string.IsNullOrWhiteSpace(ctx.SwitchedBy)
+                    ? $"{Environment.UserName}@{Environment.MachineName}"
+                    : ctx.SwitchedBy,
+            };
+            CommitPointer(targetRoot, pointer, ctx.Log);
+            ctx.Log($"      晋级完成：{sourceEnv}:{releaseId} → {ctx.EnvironmentName}（同产物重签，payload 零重建）。");
+        }
+
         private static void ReplaceFile(string source, string destination)
         {
             if (File.Exists(destination))

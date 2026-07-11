@@ -14,9 +14,9 @@ on:
   workflow_dispatch:
     inputs:
       kind:
-        description: 发布类型（rollback 只回切指针，不重建产物）
+        description: 发布类型（promote=同产物重签晋级；rollback=指针回切；两者都不重建产物）
         type: choice
-        options: [hotupdate, fullpackage, rollback]
+        options: [hotupdate, fullpackage, promote, rollback]
         required: true
       releaseEnv:
         description: 目标环境（决定审批链与签名密钥）
@@ -42,6 +42,14 @@ on:
         default: ""
       targetReleaseId:
         description: 回滚目标 releaseId（仅 kind=rollback；留空回滚到上一个激活 release）
+        type: string
+        default: ""
+      sourceEnv:
+        description: 晋级源环境（仅 kind=promote，如 qa→prod 时填 qa）
+        type: string
+        default: qa
+      sourceReleaseId:
+        description: 晋级 releaseId（仅 kind=promote；留空取源环境当前激活 release）
         type: string
         default: ""
       publishResource:
@@ -88,7 +96,7 @@ jobs:
         with:
           targetPlatform: ${{ inputs.buildTarget }}
           allowDirtyBuild: false
-          buildMethod: ${{ inputs.kind == 'hotupdate' && 'Framework.Editor.Release.ReleaseBatchEntry.PublishHotUpdateForBuilder' || inputs.kind == 'fullpackage' && 'Framework.Editor.Release.ReleaseBatchEntry.BuildFullPackageForBuilder' || 'Framework.Editor.Release.ReleaseBatchEntry.RollbackReleaseForBuilder' }}
+          buildMethod: ${{ inputs.kind == 'hotupdate' && 'Framework.Editor.Release.ReleaseBatchEntry.PublishHotUpdateForBuilder' || inputs.kind == 'fullpackage' && 'Framework.Editor.Release.ReleaseBatchEntry.BuildFullPackageForBuilder' || inputs.kind == 'promote' && 'Framework.Editor.Release.ReleaseBatchEntry.PromoteReleaseForBuilder' || 'Framework.Editor.Release.ReleaseBatchEntry.RollbackReleaseForBuilder' }}
           customParameters: >-
             -releaseEnv ${{ inputs.releaseEnv }}
             -appVersion ${{ inputs.appVersion }}
@@ -98,6 +106,8 @@ jobs:
             -publishCode ${{ inputs.publishCode }}
             -grayPercent ${{ inputs.grayPercent }}
             -targetReleaseId "${{ inputs.targetReleaseId }}"
+            -sourceEnv ${{ inputs.sourceEnv }}
+            -sourceReleaseId "${{ inputs.sourceReleaseId }}"
             -switchedBy "workflow-${{ github.run_id }}-${{ github.actor }}"
             -description "${{ inputs.description }}"
             -buildOutput build/Release/${{ inputs.buildTarget }}

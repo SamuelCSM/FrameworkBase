@@ -63,6 +63,42 @@ namespace Framework.Editor.Release
             RunForBuilder(ExecuteRollbackRelease);
         }
 
+        /// <summary>
+        /// 晋级入口：<c>-releaseEnv &lt;目标env&gt; -sourceEnv &lt;源env&gt; [-sourceReleaseId &lt;id&gt;]
+        /// [-uploadRoot &lt;root&gt;]</c>。同产物重签切指针，payload 零重建；源缺省取其指针激活 release。
+        /// </summary>
+        public static void PromoteRelease()
+        {
+            RunAndExit(ExecutePromoteRelease);
+        }
+
+        /// <summary>外部构建器专用晋级入口；失败以 BuildFailedException 上抛。</summary>
+        public static void PromoteReleaseForBuilder()
+        {
+            RunForBuilder(ExecutePromoteRelease);
+        }
+
+        private static void ExecutePromoteRelease()
+        {
+            Dictionary<string, string> args = ParseArgs();
+            var context = new ReleaseContext
+            {
+                EnvironmentName = Require(args, "releaseEnv"),
+                UploadRootOverride = Get(args, "uploadRoot", string.Empty),
+                BuildTarget = ResolveBuildTarget(args),
+                // 晋级不产生新版本号：AppVersion 占位仅满足环境校验，真实版本取自源正本清单。
+                AppVersion = "promote",
+                SwitchedBy = Get(args, "switchedBy", string.Empty),
+                ServerDataDir = string.Empty,
+                Log = message => UnityEngine.Debug.Log("[ReleaseBatch] " + message),
+            };
+            new HotUpdateReleaseSteps.ValidateReleaseEnvironment().Execute(context);
+            ReleasePublishingSteps.ExecutePromote(
+                context,
+                Require(args, "sourceEnv"),
+                Get(args, "sourceReleaseId", string.Empty));
+        }
+
         private static void ExecuteRollbackRelease()
         {
             Dictionary<string, string> args = ParseArgs();

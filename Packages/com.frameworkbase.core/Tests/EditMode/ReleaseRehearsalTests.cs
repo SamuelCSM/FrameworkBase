@@ -38,6 +38,9 @@ namespace Framework.Tests
             public string ExpectedActiveReleaseId;
             public string ExpectedPreviousReleaseId;
             public int RolledBackCodeVersion;
+            public string PromotedChannelRelative;
+            public string PromotedKeyId;
+            public string ExpectedPromotedReleaseId;
         }
 
         /// <summary>与 HotUpdateManager 未验签信封解析保持同构的最小结构。</summary>
@@ -177,6 +180,52 @@ namespace Framework.Tests
             Assert.IsTrue(File.Exists(rolledBackManifest), "被回滚 release 的正本清单被移除。");
             var rolledBack = JsonUtility.FromJson<UpdateInfo>(File.ReadAllText(rolledBackManifest));
             Assert.AreEqual(_config.RolledBackCodeVersion, rolledBack.CodeVersion, "被回滚正本内容被改动。");
+        }
+
+        [Test]
+        public void 晋级_同产物重签_目标环境指针与清单契约成立()
+        {
+            string qaRoot = Path.Combine(
+                _config.UploadRoot,
+                _config.PromotedChannelRelative.Replace('/', Path.DirectorySeparatorChar));
+
+            // 晋级指针：同一公钥环验签，KeyId 换为目标环境签名引用，指向晋级 releaseId。
+            byte[] pointerBytes = File.ReadAllBytes(Path.Combine(qaRoot, "current.json"));
+            Assert.IsTrue(
+                UpdateSecurity.VerifyManifestSignature(
+                    pointerBytes,
+                    File.ReadAllText(Path.Combine(qaRoot, "current.json.sig")),
+                    _config.PublicKeyXml),
+                "晋级后 qa 指针验签失败。");
+            var pointer = JsonUtility.FromJson<CurrentPointer>(System.Text.Encoding.UTF8.GetString(pointerBytes));
+            Assert.AreEqual(_config.ExpectedPromotedReleaseId, pointer.ReleaseId, "qa 指针未指向晋级 release。");
+            Assert.AreEqual(_config.PromotedKeyId, pointer.KeyId, "qa 指针 KeyId 未切换为目标环境签名引用。");
+
+            // 晋级正本清单：重签有效、KeyId 换环境、补丁 URL 已重根到 qa 渠道根、payload 哈希与源一致（同产物）。
+            string manifestPath = Path.Combine(qaRoot, pointer.ManifestPath.Replace('/', Path.DirectorySeparatorChar));
+            byte[] manifestBytes = File.ReadAllBytes(manifestPath);
+            Assert.IsTrue(
+                UpdateSecurity.VerifyManifestSignature(
+                    manifestBytes,
+                    File.ReadAllText(manifestPath + UpdateSecurity.ManifestSignatureSuffix),
+                    _config.PublicKeyXml),
+                "晋级正本清单验签失败。");
+            var promoted = JsonUtility.FromJson<UpdateInfo>(System.Text.Encoding.UTF8.GetString(manifestBytes));
+            Assert.AreEqual(_config.PromotedKeyId, promoted.KeyId);
+            Assert.AreEqual(_config.CodeVersion, promoted.CodeVersion, "晋级对象应为回滚后 dev 激活的 release。");
+
+            Assert.IsTrue(Uri.TryCreate(_config.BaseUrl, UriKind.Absolute, out Uri baseUri));
+            string basePath = baseUri.AbsolutePath.TrimEnd('/') + "/";
+            foreach (PatchFile patch in promoted.PatchFiles)
+            {
+                Assert.IsTrue(Uri.TryCreate(patch.Url, UriKind.Absolute, out Uri uri));
+                string relative = uri.AbsolutePath.Substring(basePath.Length);
+                StringAssert.StartsWith(_config.PromotedChannelRelative + "/releases/", relative,
+                    "晋级清单补丁 URL 未重根到目标渠道根。");
+                string local = Path.Combine(_config.UploadRoot, relative.Replace('/', Path.DirectorySeparatorChar));
+                Assert.IsTrue(File.Exists(local), $"晋级 payload 缺失：{relative}");
+                Assert.IsTrue(FileVerifier.VerifyPatchFile(local, patch, out string error), error);
+            }
         }
 
         /// <summary>与发布端 SanitizePathSegment 同规则的版本号路径段（点与字母数字保持原样）。</summary>

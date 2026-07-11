@@ -67,6 +67,9 @@ $appVersion = $Matches[1]
 $devProfile = Get-Content (Join-Path $projectPath "ReleaseProfiles\dev.json") -Raw | ConvertFrom-Json
 $keyId = $devProfile.SigningKeyRef
 if (-not $keyId) { throw "ReleaseProfiles/dev.json 缺少 SigningKeyRef。" }
+$qaProfile = Get-Content (Join-Path $projectPath "ReleaseProfiles\qa.json") -Raw | ConvertFrom-Json
+$qaKeyId = $qaProfile.SigningKeyRef
+if (-not $qaKeyId) { throw "ReleaseProfiles/qa.json 缺少 SigningKeyRef。" }
 
 # 渠道作用域（切片 A 布局）：{env}/{platform}/{channel}。platform 与发布端 GetPlatformId(Win64)
 # 一致为 windows；channel 与发布端同源取 AppConfig.AppChannel（缺省 default）。
@@ -154,6 +157,26 @@ foreach ($required in @("version.json", "version.json.sig", "current.json", "cur
     }
 }
 
+# ── 第 4 跳：晋级 dev→qa（同产物重签切指针；prod 与 qa 走同一代码路径，仅门禁更严）──
+$promoteOk = Invoke-ReleaseBatch "晋级 dev→qa" "release-rehearsal-promote.log" @(
+    "-executeMethod", "Framework.Editor.Release.ReleaseBatchEntry.PromoteRelease",
+    "-releaseEnv", "qa",
+    "-sourceEnv", "dev",
+    "-buildTarget", "Win64",
+    "-uploadRoot", $uploadRoot,
+    "-switchedBy", "release-rehearsal"
+)
+if (-not $promoteOk) { & $cleanup; exit 1 }
+
+$promotedChannelRelative = "qa/windows/$channel"
+$promotedRoot = Join-Path $uploadRoot ($promotedChannelRelative -replace '/', '\')
+foreach ($required in @("version.json", "version.json.sig", "current.json", "current.json.sig")) {
+    if (-not (Test-Path (Join-Path $promotedRoot $required))) {
+        Write-Host "晋级后 qa 渠道根缺少 $required，判定失败。"
+        & $cleanup; exit 1
+    }
+}
+
 # ── 第 4 跳：写 rehearsal.json，跑客户端契约集成测试 ─────────────────────────
 @{
     PublicKeyXml              = $publicXml
@@ -167,6 +190,9 @@ foreach ($required in @("version.json", "version.json.sig", "current.json", "cur
     ExpectedActiveReleaseId   = $releaseIdV2
     ExpectedPreviousReleaseId = $releaseIdV3
     RolledBackCodeVersion     = 3   # 被回滚 release 的代码版本（正本必须原样保留）
+    PromotedChannelRelative   = $promotedChannelRelative
+    PromotedKeyId             = $qaKeyId
+    ExpectedPromotedReleaseId = $releaseIdV2   # 回滚后 dev 激活 release 即晋级对象
 } | ConvertTo-Json | Out-File -Encoding utf8 (Join-Path $rehearsalRoot "rehearsal.json")
 
 $resultsPath = Join-Path $logsDir "release-rehearsal-results.xml"
@@ -203,7 +229,7 @@ if ($null -ne $xml) {
         }
     }
     # 全绿且确实执行（skipped 全组说明 rehearsal.json 未被识别，同样判失败）。
-    if ([int]$run.failed -eq 0 -and [int]$run.passed -ge 8) { $exitCode = 0 }
+    if ([int]$run.failed -eq 0 -and [int]$run.passed -ge 9) { $exitCode = 0 }
     elseif ([int]$run.failed -eq 0) { Write-Host "契约测试通过数不足（可能整组被跳过），判定失败。" }
 }
 else {
