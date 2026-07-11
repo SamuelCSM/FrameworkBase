@@ -14,6 +14,13 @@ MonoBehaviour:
   m_EditorClassIdentifier:
   AppEnv: dev
   UpdateServerUrl:
+  UpdateManifestPublicKeys:
+  - KeyId: dev_hotupdate_manifest
+    PublicKeyXml: <RSAKeyValue><Modulus>vgWz+iP3P6lHwvJewr///dfUPyxtcJ3+RMjlqqTXfTCXd9vsaY0hWH/+zxEVfdefcSjliTg/GJ7dhCuZeUjmAVnuMsaBy0pSuLhSJdwTNMly0zxAAufcy+oGy+00Noy/XWFVaagzwGQao2zlga/O8Sx7+Iv5oG88p5eaIyYSp2kPrzTG1yiqZJ+Ynx0l+zf+D6WmQzb/Zf/DXnGv1r332PyPlfWEQVpmh7LloTTm1BIOJ/NnFpeRMevmrkAaEeTnctc5zrFgEhXEKuVSSuLADtReHKbsiI7OsJhBumK13kWBYDYAc8mcicTYiZSCr1XwQNBe9HPUiM4ZLidL+RxvaQ==</Modulus><Exponent>AQAB</Exponent></RSAKeyValue>
+  - KeyId: qa_hotupdate_manifest
+    PublicKeyXml: <RSAKeyValue><Modulus>pOtELl8U+KdvlcjBHKIqLeb9v5WW2GVbMoA7nsNjFINen5i5EObZHzTamUdIfhvTRwjATG/WMuXt0b5kM4/UR3/HnCu1L/e+2d0G94wcSqiOAge1CwAyv6ZG+xF+l3KtE96VfN420PguO7J/OYAL9L07xDbZvYmxMz5tT8AeF7T/bNzvRYHNXQ/b2s2+KRP3bv3YbBZgyiDS8yu3l6wkd5fi5FDdtWbZ8+TEm6OwaG2lb9CwqwyJXit4sx27XkOmR6FvENxM1Tk+eHfGS5fsIWU4rr5VQIQYtG7X02iaDLEjUsYQ4cY8UjNKp7Z513ahX2JLSQn3si9yvsra5xyD3Q==</Modulus><Exponent>AQAB</Exponent></RSAKeyValue>
+  - KeyId: prod_hotupdate_manifest
+    PublicKeyXml: <RSAKeyValue><Modulus>3CT8wG6/FZE4zPtplWn3gyEOgN+R9un+blCuKEm85muxdHe8D83sLHurThF9gtGfWz2XvI4vlmX8Km4OzbQtTmdD9HJ/TqUrt/vPbLfPpyWeQ338z7IPJ42K4urGp5TTDJqUsHFmE7Q+S6Z2XDfvgm4kquG6tlDoVmaSBp20TS8bve/RQy4SwcLvqZsP5CNdsx8szwj0VdUN9SN7sllxsmXXE0hhqYdksYqrBlcBEwhaBc7+S3pneIIwht741A6liQpIrKX1pBi0fhj6SIuRzYin+AIrBGnvAP6ndfAubzj8nI+V7e8IQZ4SUsYUzaypnRd/vFYjzGUNCcYAUHIrhQ==</Modulus><Exponent>AQAB</Exponent></RSAKeyValue>
   UseNetworkLogin: 0
   AutoGuestLogin: 0
   GameServerHost: 127.0.0.1
