@@ -47,8 +47,9 @@ namespace Framework.Core
         public string AppChannel = "default";
 
         [Header("热更新")]
-        [Tooltip("version.json 所在更新服务根 URL。prod 环境必须使用 HTTPS，且应指向受控 CDN 或发布域名。")]
-        public string UpdateServerUrl = "http://127.0.0.1:80/Updates";
+        [Tooltip("更新服务渠道根 URL，指向产物仓库的 {BaseUrl}/{env}/{platform}/{channel}：version.json 别名与" +
+                 " releases/ 不可变版本目录都在其下，补丁 URL 必须位于该路径前缀内。prod 环境必须 HTTPS。")]
+        public string UpdateServerUrl = "http://127.0.0.1:80/Updates/dev/windows/default";
 
         [Tooltip("旧版单公钥兼容字段。新项目应使用带 KeyId 的公钥环；保留该字段仅用于平滑迁移。")]
         [TextArea(3, 8)]

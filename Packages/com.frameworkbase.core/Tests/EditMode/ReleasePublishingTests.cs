@@ -46,6 +46,34 @@ namespace Framework.Tests
         }
 
         [Test]
+        public void 发布作用域_产物落到环境平台渠道子目录且releases受不可变保护()
+        {
+            string releasePayload = Path.Combine(
+                _source, "releases", "1.0.0", "rid", "payloads", "hash", "HotUpdate.dll.bytes");
+            Directory.CreateDirectory(Path.GetDirectoryName(releasePayload));
+            File.WriteAllText(releasePayload, "release-payload");
+            File.WriteAllText(Path.Combine(_source, "version.json.sig"), "sig");
+            File.WriteAllText(Path.Combine(_source, "version.json"), "manifest");
+
+            ReleaseContext ctx = CreateContext();
+            ctx.PublishScopeRelative = "qa/android/default";
+            CreateStep().Execute(ctx);
+
+            string scopedRoot = Path.Combine(_target, "qa", "android", "default");
+            Assert.AreEqual("release-payload", File.ReadAllText(Path.Combine(
+                scopedRoot, "releases", "1.0.0", "rid", "payloads", "hash", "HotUpdate.dll.bytes")));
+            Assert.AreEqual("manifest", File.ReadAllText(Path.Combine(scopedRoot, "version.json")));
+
+            // 再次发布同 releaseId 且内容不同：releases/ 不可变，必须拒绝。
+            File.WriteAllText(releasePayload, "tampered-payload");
+            ReleaseContext second = CreateContext();
+            second.PublishScopeRelative = "qa/android/default";
+            Assert.Throws<IOException>(() => CreateStep().Execute(second));
+            Assert.AreEqual("release-payload", File.ReadAllText(Path.Combine(
+                scopedRoot, "releases", "1.0.0", "rid", "payloads", "hash", "HotUpdate.dll.bytes")));
+        }
+
+        [Test]
         public void 不可变路径内容冲突_拒绝覆盖且旧清单保持不变()
         {
             WriteRelease("new-manifest", "new-signature", "new-payload");

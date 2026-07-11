@@ -50,8 +50,22 @@ namespace Framework.Editor.Release
                 ctx.Profile = profile;
                 if (ctx.BuildTarget == BuildTarget.NoTarget)
                     ctx.BuildTarget = EditorUserBuildSettings.activeBuildTarget;
+
+                // 产物仓库布局事实源：{env}/{platform}/{channel} 作用域 + releases/{app}/{releaseId} 不可变目录。
+                // Channel 在此一次取定，清单字段与产物路径共用，禁止后续步骤各自读 AppConfig 造成漂移。
+                string channel = Framework.Core.AppConfig.Load()?.AppChannel;
+                ctx.Channel = string.IsNullOrWhiteSpace(channel) ? "default" : channel.Trim();
+                if (!UpdateSecurity.IsSafeManifestIdentifier(ctx.Channel))
+                    throw new Exception($"AppChannel 含非法字符，无法作为发布路径段：{ctx.Channel}");
+                ctx.PublishScopeRelative = string.Join("/",
+                    SanitizePathSegment(environment),
+                    GetPlatformId(ctx.BuildTarget),
+                    ctx.Channel);
+                ctx.ReleaseDirRelative = $"releases/{SanitizePathSegment(ctx.AppVersion)}/{ctx.ReleaseId}";
+
                 ctx.Log("[环境校验] " + report);
                 ctx.Log($"[环境校验] BuildTarget={ctx.BuildTarget} UploadRoot={profile.UploadRoot}");
+                ctx.Log($"[环境校验] 发布作用域={ctx.PublishScopeRelative} 版本目录={ctx.ReleaseDirRelative}");
             }
         }
 
@@ -168,24 +182,22 @@ namespace Framework.Editor.Release
                         throw new Exception($"未找到热更程序集：{src}\n请先执行 HybridCLR/Generate/All");
 
                     string sha256 = ComputeSHA256(src);
-                    string relativePath = Path.Combine(
-                            "payloads",
-                            SanitizePathSegment(ctx.AppVersion),
-                            $"code_{ctx.CodeVersion}",
-                            sha256.Substring(0, 16),
-                            destFileName)
-                        .Replace('\\', '/');
+                    // 补丁进入本 release 的不可变版本目录（releases/{app}/{releaseId}/payloads/…）：
+                    // releaseId 隔离每次发布，sha16 子目录保留内容寻址；旧清单继续引用旧 release 目录，
+                    // 发布窗口内新旧内容互不可见。
+                    string relativePath = $"{ctx.ReleaseDirRelative}/payloads/{sha256.Substring(0, 16)}/{destFileName}";
                     string destLocal = Path.Combine(ctx.ServerDataDir, relativePath.Replace('/', Path.DirectorySeparatorChar));
                     Directory.CreateDirectory(Path.GetDirectoryName(destLocal));
                     if (File.Exists(destLocal) && !string.Equals(ComputeSHA256(destLocal), sha256, StringComparison.OrdinalIgnoreCase))
                         throw new IOException($"不可变补丁路径已存在但内容不同：{destLocal}");
                     File.Copy(src, destLocal, overwrite: true);
 
-                    // URL 指向包含版本和摘要前缀的不可变对象。旧清单继续引用旧对象，发布过程中不会读到新旧内容混合。
+                    // URL = BaseUrl/{env}/{platform}/{channel}/releases/…，位于客户端 UpdateServerUrl
+                    // （渠道根）的路径前缀之下，满足 ResolveTrustedPatchUrl 的同源同路径根契约。
                     var patch = new PatchFile
                     {
                         FileName = destFileName,
-                        Url      = ctx.Profile.BaseUrl.TrimEnd('/') + "/" + relativePath,
+                        Url      = ctx.Profile.BaseUrl.TrimEnd('/') + "/" + ctx.PublishScopeRelative + "/" + relativePath,
                         Size     = new FileInfo(destLocal).Length,
                         SHA256   = sha256,
                         MD5      = ComputeMD5(destLocal)
@@ -205,7 +217,6 @@ namespace Framework.Editor.Release
             public void Execute(ReleaseContext ctx)
             {
                 long now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-                var appConfig = Framework.Core.AppConfig.Load();
                 ctx.ManifestJson = ReleaseManifestWriter.ToJson(new UpdateInfo
                 {
                     ManifestVersion = FrameworkRuntimeInfo.UpdateManifestVersion,
@@ -218,7 +229,8 @@ namespace Framework.Editor.Release
                     Platform = GetPlatformId(ctx.BuildTarget == BuildTarget.NoTarget
                         ? EditorUserBuildSettings.activeBuildTarget
                         : ctx.BuildTarget),
-                    Channel = string.IsNullOrWhiteSpace(appConfig?.AppChannel) ? "default" : appConfig.AppChannel,
+                    Channel = ctx.Channel, // 与产物路径作用域同一事实源（环境校验步骤取定）
+
                     MinFrameworkVersion = FrameworkRuntimeInfo.Version,
                     AppVersion = ctx.AppVersion,
                     ResourceVersion = ctx.ResourceVersion,
@@ -245,7 +257,18 @@ namespace Framework.Editor.Release
                     throw new Exception("清单 JSON 为空（GenerateManifest 步骤未执行？）");
 
                 Directory.CreateDirectory(ctx.ServerDataDir);
+                // 渠道根别名：旧客户端与迁移期直取入口（可变，manifest-last 提交）。
                 WriteOne(Path.Combine(ctx.ServerDataDir, "version.json"), ctx, required: true);
+
+                // 不可变版本目录内的正本：回滚/晋级按 releaseId 引用，永不随后续发布改变。
+                if (!string.IsNullOrEmpty(ctx.ReleaseDirRelative))
+                {
+                    string releaseDir = Path.Combine(
+                        ctx.ServerDataDir,
+                        ctx.ReleaseDirRelative.Replace('/', Path.DirectorySeparatorChar));
+                    Directory.CreateDirectory(releaseDir);
+                    WriteOne(Path.Combine(releaseDir, "version.json"), ctx, required: true);
+                }
                 ctx.Log($"      清单与签名已写入本地 staging → {ctx.ServerDataDir}");
             }
 

@@ -47,6 +47,20 @@ namespace Framework.Editor.Release
         /// <summary>Git Commit，由发布台账步骤采集。</summary>
         public string GitCommit = string.Empty;
 
+        // ── 产物仓库布局（由环境校验步骤按目标设计填充，各步骤共用同一事实源）──
+        /// <summary>发行渠道标识；清单 Channel 字段与产物路径段共用该值，禁止两处各取各的。</summary>
+        public string Channel = "default";
+        /// <summary>
+        /// 发布目标在 UploadRoot 下的作用域相对路径（{env}/{platform}/{channel}）。
+        /// 为空时按旧布局直接发布到 UploadRoot 根（单元测试与迁移期兼容）。
+        /// </summary>
+        public string PublishScopeRelative = string.Empty;
+        /// <summary>
+        /// 本次发布的不可变版本目录相对路径（releases/{appVersion}/{releaseId}）。
+        /// 目录一经发布永不修改；回滚与晋级只移动指针，不重建产物。
+        /// </summary>
+        public string ReleaseDirRelative = string.Empty;
+
         // ── 中间产物（步骤间传递）─────────────────────────────────────────────
         /// <summary>代码补丁清单（复制热更 DLL 步骤产出）。</summary>
         public List<PatchFile> PatchFiles = new List<PatchFile>();

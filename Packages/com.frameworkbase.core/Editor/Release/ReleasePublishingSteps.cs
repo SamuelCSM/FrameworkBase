@@ -62,11 +62,18 @@ namespace Framework.Editor.Release
                     throw new FileNotFoundException($"整包构建产物不存在：{ctx.BuildOutputPath}");
                 }
 
-                string destinationRoot = Path.Combine(
-                    ctx.ServerDataDir,
-                    "full-packages",
-                    HotUpdateReleaseSteps.SanitizePathSegment(ctx.AppVersion),
-                    ctx.BuildTarget.ToString());
+                // 整包产物同样进入本 release 的不可变版本目录，与热更补丁共享回滚/晋级引用单元。
+                string destinationRoot = string.IsNullOrEmpty(ctx.ReleaseDirRelative)
+                    ? Path.Combine(
+                        ctx.ServerDataDir,
+                        "full-packages",
+                        HotUpdateReleaseSteps.SanitizePathSegment(ctx.AppVersion),
+                        ctx.BuildTarget.ToString())
+                    : Path.Combine(
+                        ctx.ServerDataDir,
+                        ctx.ReleaseDirRelative.Replace('/', Path.DirectorySeparatorChar),
+                        "full-packages",
+                        ctx.BuildTarget.ToString());
                 Directory.CreateDirectory(destinationRoot);
 
                 if (File.Exists(ctx.BuildOutputPath))
@@ -158,9 +165,15 @@ namespace Framework.Editor.Release
                     }
                 }
 
-                string ledgerDir = Path.Combine(ctx.ServerDataDir, "ledger");
+                // 台账随不可变版本目录冻结（releases/{app}/{releaseId}/ledger.json），
+                // 与其审计的产物同生命周期；无版本目录时回退旧位置（单元测试/迁移期）。
+                string ledgerDir = string.IsNullOrEmpty(ctx.ReleaseDirRelative)
+                    ? Path.Combine(ctx.ServerDataDir, "ledger")
+                    : Path.Combine(ctx.ServerDataDir, ctx.ReleaseDirRelative.Replace('/', Path.DirectorySeparatorChar));
                 Directory.CreateDirectory(ledgerDir);
-                string ledgerPath = Path.Combine(ledgerDir, $"release-{ctx.ReleaseId}.json");
+                string ledgerPath = string.IsNullOrEmpty(ctx.ReleaseDirRelative)
+                    ? Path.Combine(ledgerDir, $"release-{ctx.ReleaseId}.json")
+                    : Path.Combine(ledgerDir, "ledger.json");
                 File.WriteAllText(ledgerPath, JsonUtility.ToJson(ledger, true), new UTF8Encoding(false));
                 ctx.ReleaseLedgerPath = ledgerPath;
                 ctx.GitCommit = gitCommit;
@@ -187,6 +200,11 @@ namespace Framework.Editor.Release
                     ctx.Log("      未配置 UploadRoot，保留本地 staging，不执行部署。");
                     return;
                 }
+
+                // 产物仓库作用域：{UploadRoot}/{env}/{platform}/{channel}。环境、平台、渠道
+                // 在存储层物理隔离，客户端 UpdateServerUrl 指向各自渠道根。
+                if (!string.IsNullOrEmpty(ctx.PublishScopeRelative))
+                    targetRoot = Path.Combine(targetRoot, ctx.PublishScopeRelative.Replace('/', Path.DirectorySeparatorChar));
 
                 string sourceRoot = Path.GetFullPath(ctx.ServerDataDir);
                 targetRoot = Path.GetFullPath(targetRoot);
@@ -248,7 +266,9 @@ namespace Framework.Editor.Release
             string destination = Path.Combine(targetRoot, relative.Replace('/', Path.DirectorySeparatorChar));
             Directory.CreateDirectory(Path.GetDirectoryName(destination));
 
-            bool immutable = relative.StartsWith("payloads/", StringComparison.Ordinal) ||
+            // releases/ 是目标布局的不可变版本目录；payloads/、full-packages/ 为迁移期旧布局前缀。
+            bool immutable = relative.StartsWith("releases/", StringComparison.Ordinal) ||
+                             relative.StartsWith("payloads/", StringComparison.Ordinal) ||
                              relative.StartsWith("full-packages/", StringComparison.Ordinal);
             if (File.Exists(destination))
             {

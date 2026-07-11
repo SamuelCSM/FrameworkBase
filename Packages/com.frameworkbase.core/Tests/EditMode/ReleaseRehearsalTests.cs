@@ -30,6 +30,8 @@ namespace Framework.Tests
             public string PublicKeyXml;
             public string KeyId;
             public string UploadRoot;
+            public string BaseUrl;
+            public string ChannelRelative;
             public string AppVersion;
             public int ResourceVersion;
             public int CodeVersion;
@@ -59,8 +61,12 @@ namespace Framework.Tests
             _config = JsonUtility.FromJson<RehearsalConfig>(File.ReadAllText(configPath));
             Assert.IsNotNull(_config, "rehearsal.json 解析失败。");
 
-            string manifestPath = Path.Combine(_config.UploadRoot, "version.json");
-            Assert.IsTrue(File.Exists(manifestPath), $"uploadRoot 缺少已发布清单：{manifestPath}");
+            // 切片 A 布局：清单别名位于渠道根 {uploadRoot}/{env}/{platform}/{channel}/version.json。
+            string channelRoot = Path.Combine(
+                _config.UploadRoot,
+                _config.ChannelRelative.Replace('/', Path.DirectorySeparatorChar));
+            string manifestPath = Path.Combine(channelRoot, "version.json");
+            Assert.IsTrue(File.Exists(manifestPath), $"渠道根缺少已发布清单：{manifestPath}");
             _manifestBytes = File.ReadAllBytes(manifestPath);
             _signatureBase64 = File.ReadAllText(manifestPath + UpdateSecurity.ManifestSignatureSuffix);
 
@@ -125,6 +131,19 @@ namespace Framework.Tests
             Assert.IsTrue(
                 UpdateSecurity.ValidateManifest(_server, local, appConfig?.AppEnv, appConfig?.AppChannel, out string reason),
                 $"真实发布清单未通过客户端安全准入：{reason}");
+        }
+
+        [Test]
+        public void 发布补丁URL_通过客户端同源路径根契约()
+        {
+            // 客户端 UpdateServerUrl 指向渠道根：TryResolveCodePatchFiles 内部经
+            // ResolveTrustedPatchUrl 强制补丁 URL 与渠道根同源且在其路径前缀下——
+            // 发布端布局与客户端 URL 信任契约必须同时成立，这里用真实清单验证收敛。
+            string channelRootUrl = _config.BaseUrl.TrimEnd('/') + "/" + _config.ChannelRelative;
+            Assert.IsTrue(
+                VersionManager.TryResolveCodePatchFiles(_server, channelRootUrl, out var resolved),
+                "真实发布清单未通过客户端补丁 URL 信任解析。");
+            Assert.AreEqual(_server.PatchFiles.Count, resolved.Count);
         }
 
         [Test]
@@ -229,17 +248,24 @@ namespace Framework.Tests
         }
 
         /// <summary>
-        /// 把清单中的补丁 URL 映射回本地 uploadRoot 文件路径：取 URL 中 payloads/ 起的不可变相对路径。
+        /// 把清单中的补丁 URL 映射回本地 uploadRoot 文件路径：uploadRoot 与 BaseUrl 一一对应，
+        /// 取 URL 路径去掉 BaseUrl 路径前缀后的相对部分。同时断言 URL 落在渠道根的
+        /// releases/ 不可变目录内（切片 A 布局契约）。
         /// </summary>
         private string ResolveLocalPayloadPath(PatchFile patch)
         {
             Assert.IsTrue(Uri.TryCreate(patch.Url, UriKind.Absolute, out Uri uri),
                 $"补丁 URL 不是合法绝对地址：{patch.Url}");
-            string path = uri.AbsolutePath;
-            int index = path.IndexOf("/payloads/", StringComparison.Ordinal);
-            Assert.GreaterOrEqual(index, 0, $"补丁 URL 未指向不可变 payloads 路径：{patch.Url}");
-            string relative = path.Substring(index + 1).Replace('/', Path.DirectorySeparatorChar);
-            return Path.Combine(_config.UploadRoot, relative);
+            Assert.IsTrue(Uri.TryCreate(_config.BaseUrl, UriKind.Absolute, out Uri baseUri),
+                $"演练 BaseUrl 不是合法绝对地址：{_config.BaseUrl}");
+
+            string basePath = baseUri.AbsolutePath.TrimEnd('/') + "/";
+            Assert.IsTrue(uri.AbsolutePath.StartsWith(basePath, StringComparison.Ordinal),
+                $"补丁 URL 不在发布 BaseUrl 路径前缀下：{patch.Url}");
+            string relative = uri.AbsolutePath.Substring(basePath.Length);
+            StringAssert.StartsWith(_config.ChannelRelative + "/releases/", relative,
+                "补丁 URL 未落在渠道根的 releases/ 不可变版本目录内。");
+            return Path.Combine(_config.UploadRoot, relative.Replace('/', Path.DirectorySeparatorChar));
         }
     }
 }

@@ -68,6 +68,13 @@ $devProfile = Get-Content (Join-Path $projectPath "ReleaseProfiles\dev.json") -R
 $keyId = $devProfile.SigningKeyRef
 if (-not $keyId) { throw "ReleaseProfiles/dev.json 缺少 SigningKeyRef。" }
 
+# 渠道作用域（切片 A 布局）：{env}/{platform}/{channel}。platform 与发布端 GetPlatformId(Win64)
+# 一致为 windows；channel 与发布端同源取 AppConfig.AppChannel（缺省 default）。
+$channelLine = Get-Content (Join-Path $projectPath "Assets\Resources\AppConfig.asset") |
+    Where-Object { $_ -match "^\s*AppChannel:\s*(\S+)" } | Select-Object -First 1
+$channel = if ($channelLine -match "AppChannel:\s*(\S+)") { $Matches[1] } else { "default" }
+$channelRelative = "dev/windows/$channel"
+
 $resourceVersion = 1   # v1 不发资源：与出厂基线一致即可通过防降级
 $codeVersion     = 2   # 高于出厂基线 1，触发完整代码补丁集契约
 
@@ -119,8 +126,9 @@ if ($verdict -ne 0) {
     Remove-Item Env:\FRAMEWORKBASE_MANIFEST_PRIVATE_KEY_XML_BASE64 -ErrorAction SilentlyContinue
     exit 1
 }
-if (-not (Test-Path (Join-Path $uploadRoot "version.json"))) {
-    Write-Host "发布声称成功但 uploadRoot 缺少 version.json，判定失败。"
+$channelManifest = Join-Path $uploadRoot (($channelRelative -replace '/', '\') + "\version.json")
+if (-not (Test-Path $channelManifest)) {
+    Write-Host "发布声称成功但渠道根缺少清单别名：$channelManifest，判定失败。"
     exit 1
 }
 Write-Host "第 1 跳（真实发布）通过。"
@@ -130,6 +138,8 @@ Write-Host "第 1 跳（真实发布）通过。"
     PublicKeyXml    = $publicXml
     KeyId           = $keyId
     UploadRoot      = $uploadRoot
+    BaseUrl         = $devProfile.BaseUrl
+    ChannelRelative = $channelRelative
     AppVersion      = $appVersion
     ResourceVersion = $resourceVersion
     CodeVersion     = $codeVersion
@@ -169,7 +179,7 @@ if ($null -ne $xml) {
         }
     }
     # 全绿且确实执行（skipped 全组说明 rehearsal.json 未被识别，同样判失败）。
-    if ([int]$run.failed -eq 0 -and [int]$run.passed -ge 6) { $exitCode = 0 }
+    if ([int]$run.failed -eq 0 -and [int]$run.passed -ge 7) { $exitCode = 0 }
     elseif ([int]$run.failed -eq 0) { Write-Host "契约测试通过数不足（可能整组被跳过），判定失败。" }
 }
 else {
