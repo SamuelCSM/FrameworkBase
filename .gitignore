@@ -116,6 +116,9 @@ omnisharp.json
 # Addressables build output
 /[Aa]ssets/AddressableAssetsData/Windows/
 
+# 发布 staging、演练产物与符号归档（ReleaseBatchEntry / release-rehearsal.ps1 / 构建后处理输出）
+/Artifacts/
+
 # Unity ProjectSettings 必须纳入版本控制，确保干净工作副本能够确定性还原构建输入。
 # 机器本地配置应存放在 UserSettings 或 EditorPrefs，不得混入 ProjectSettings。
 
