@@ -51,8 +51,44 @@ namespace Framework.HotUpdate
             DefaultCodePatchFileName, // 被依赖方：业务逻辑 + HotfixEntry，后加载
         };
 
-        /// <summary>承载热更入口 <c>HotUpdate.Entry.HotfixEntry</c> 的程序集名（即 HotUpdate）。</summary>
-        public static readonly string EntryHotUpdateAssemblyName = ToAssemblyName(DefaultCodePatchFileName);
+        /// <summary>热更入口类型全名默认值（AppConfig.HotUpdateEntryTypeFullName 未配置时回退）。</summary>
+        public const string DefaultHotUpdateEntryTypeFullName = "HotUpdate.Entry.HotfixEntry";
+
+        /// <summary>
+        /// 承载入口类型的热更入口程序集名。
+        /// <para>
+        /// 配置优先：<c>AppConfig.HotUpdateEntryAssembly</c> 非空时生效；留空回退框架默认（由
+        /// <see cref="DefaultCodePatchFileName"/> 推导，即 <c>HotUpdate</c>）。与 <see cref="HotUpdateAssemblyFileNames"/>
+        /// 同为配置驱动，框架不写死项目专属入口名——复用地基时改配置即可换入口程序集。
+        /// 入口程序集必须是 <see cref="HotUpdateAssemblyFileNames"/> 的成员，否则加载后反射不到入口类型。
+        /// </para>
+        /// </summary>
+        public static string EntryHotUpdateAssemblyName
+        {
+            get
+            {
+                var cfg = Core.AppConfig.Load();
+                if (cfg != null && !string.IsNullOrWhiteSpace(cfg.HotUpdateEntryAssembly))
+                    return cfg.HotUpdateEntryAssembly.Trim();
+                return ToAssemblyName(DefaultCodePatchFileName);
+            }
+        }
+
+        /// <summary>
+        /// 热更入口类型全名（含命名空间，须含无参 <c>Start</c> 方法，由 <c>HotUpdateManager.StartHotfix</c> 反射调用）。
+        /// 配置优先：<c>AppConfig.HotUpdateEntryTypeFullName</c> 非空时生效；留空回退
+        /// <see cref="DefaultHotUpdateEntryTypeFullName"/>。
+        /// </summary>
+        public static string HotUpdateEntryTypeFullName
+        {
+            get
+            {
+                var cfg = Core.AppConfig.Load();
+                if (cfg != null && !string.IsNullOrWhiteSpace(cfg.HotUpdateEntryTypeFullName))
+                    return cfg.HotUpdateEntryTypeFullName.Trim();
+                return DefaultHotUpdateEntryTypeFullName;
+            }
+        }
 
         /// <summary>
         /// 由热更 DLL 的 bytes 文件名推导程序集名（去除 <c>.dll.bytes</c> / <c>.bytes</c> / <c>.dll</c> 后缀）。

@@ -281,3 +281,46 @@ ASP.NET Core / .NET runtime 及 Unity 引擎自身 C# 层）普遍的 `internal`
 **结论修订**：删去「必须等 3b 拆 asmdef 才能收口边界」的旧表述。收口 = **包内改可见性 +
 分两步迁移 + 架构测试兜底**，与是否拆 asmdef（3b/3c）无关，另有其自身 ROI 权衡，见
 ADR-001/002。
+
+## ADR-004：网络协议契约下沉 `Framework.Protocol.Abstractions`（2026-07-12）
+
+**状态**：已实施。新增程序集 `Framework.Protocol.Abstractions`（asmdef 落 `Protocol/`）。
+
+**背景**：`INetMessage / IResponse / IRequest<T>` 三个网络消息契约接口原在 `Framework`
+运行时程序集内（`Network/INetMessage.cs`）。热更协议程序集 `GameProtocol` 仅为实现这三个
+marker 接口，却引用了**整个** `Framework`——而 `Framework` 拖着 `Unity.Addressables /
+HybridCLR.Runtime / Unity.TextMeshPro` 等重型依赖。`GameProtocol` 本身在
+`HybridCLRSettings.hotUpdateAssemblies` 中（热更程序集），等于把重型 AOT 依赖拽进了热更
+协议拓扑，且服务端无法复用纯协议程序集。
+
+**决策**：把三个契约接口从 `Framework` 抽到独立薄程序集 `Framework.Protocol.Abstractions`：
+- 仅依赖 `Google.Protobuf`（`isExplicitlyReferenced: 0`，自动引用）；`noEngineReferences: true`
+  ——**引擎无关**，服务端可原样复用协议契约。
+- **命名空间保持 `Framework.Network` 不变**（命名空间 ≠ 程序集名），故 `GameProtocol` 与
+  `Framework` 内 `Network/*` 消费方**零源码改动**，只改 asmdef 引用。
+
+**依赖重连**：
+- `Framework` → 新增引用 `Framework.Protocol.Abstractions`（NetworkManager 等仍在 `Framework`，
+  运行时逻辑不动）。
+- `GameProtocol` 引用由 `["Framework"]` 收敛为 `["Framework.Protocol.Abstractions"]`，
+  彻底脱离重型 Framework。
+- `HotUpdate`（入口约定参考实现，将经 `GameProtocol` 消息发网络请求）补引契约程序集，
+  使 `NetworkManager.RequestAsync<T>(IRequest<T>)` 可见。
+
+新依赖图仍为无环 DAG（`Protocol.Abstractions` 为 sink）：
+`Framework/GameProtocol/HotUpdate → Protocol.Abstractions`；`Framework.Network` 运行时
+`→ Protocol.Abstractions`。
+
+**入口名/入口类型可配置（已落地）**：此前入口程序集名 `HotUpdate` 与入口类型
+`HotUpdate.Entry.HotfixEntry` 硬编码在 `VersionManager` / `HotUpdateManager.StartHotfix`，而热更
+**清单**已可经 `AppConfig.HotUpdateAssemblyFiles` 配置——两者不一致。现补齐：新增
+`AppConfig.HotUpdateEntryAssembly` / `HotUpdateEntryTypeFullName`，`VersionManager.EntryHotUpdateAssemblyName`
+由 `static readonly` 改为配置优先属性，并新增 `HotUpdateEntryTypeFullName` 属性；`StartHotfix` 反射改读该属性。
+**默认值不变**（回退 `HotUpdate` / `HotUpdate.Entry.HotfixEntry`），既有项目零迁移。一致性双保险：门禁 R4
+静态校验「有效入口 ∈ 热更清单」（配置优先，回退单行解析 `DefaultCodePatchFileName`）；`VersionManagerTests`
+用编译真相锁死「入口 ∈ 清单 + 入口类型为含命名空间全名 + 默认值即历史约定」。
+
+**已落地的 asmdef 依赖门禁**：`Tools/ci/check-asmdef-deps.ps1`（纯静态、不需 Unity/License，
+秒级）把本 ADR 与 ADR-001/002 的约束焊成 CI 强约束——R1 无环、R2 分层单向且核心层不引测试/热更/
+业务、R3 被依赖的热更协议程序集不得引重型 `Framework`、R4 热更清单三方一致、R5 测试程序集
+`autoReferenced=false`。已接入 `ci.yml`（`asmdef-gate` job，`tests` 前置）与本机 `run-ci.ps1`。

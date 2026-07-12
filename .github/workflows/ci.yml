@@ -28,9 +28,19 @@ jobs:
         shell: pwsh
         run: ./Tools/ci/check-reproducibility.ps1
 
+  asmdef-gate:
+    name: asmdef 依赖门禁（分层/热更拓扑）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 静态校验 asmdef 依赖方向（无需 Unity）
+        shell: pwsh
+        run: ./Tools/ci/check-asmdef-deps.ps1
+
   tests:
     name: 编译与 EditMode/PlayMode 测试
-    needs: reproducibility
+    needs: [reproducibility, asmdef-gate]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

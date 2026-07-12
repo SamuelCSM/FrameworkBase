@@ -106,5 +106,30 @@ namespace Framework.Tests
             Assert.AreEqual("HotUpdate", VersionManager.ToAssemblyName("HotUpdate.dll"));
             Assert.AreEqual("Foo", VersionManager.ToAssemblyName("Foo.bytes"));
         }
+
+        // ── 热更入口配置（C# 源真相：入口名/类型可配置且与清单自洽）─────────────
+
+        [Test]
+        public void 热更入口_入口程序集必在热更清单内_且入口类型为含命名空间全名()
+        {
+            // 用编译后的真实值校验：入口程序集若不在加载清单内，加载完成后必反射不到入口类型。
+            // 该不变量对“默认（AppConfig 留空回退框架默认）”与“配置覆盖”两种情形都必须成立。
+            var assemblyNames = System.Array.ConvertAll(
+                VersionManager.HotUpdateAssemblyFileNames, VersionManager.ToAssemblyName);
+            CollectionAssert.Contains(assemblyNames, VersionManager.EntryHotUpdateAssemblyName,
+                "热更入口程序集必须是 HotUpdateAssemblyFileNames 的成员");
+
+            string entryType = VersionManager.HotUpdateEntryTypeFullName;
+            Assert.IsFalse(string.IsNullOrWhiteSpace(entryType), "入口类型全名不得为空");
+            StringAssert.Contains(".", entryType, "入口类型必须是含命名空间的全名");
+        }
+
+        [Test]
+        public void 热更入口_默认值与框架约定一致()
+        {
+            // 锁死默认约定：AppConfig 未配置时回退值即历史硬编码约定，保证既有项目零迁移。
+            Assert.AreEqual("HotUpdate.Entry.HotfixEntry", VersionManager.DefaultHotUpdateEntryTypeFullName);
+            Assert.AreEqual("HotUpdate", VersionManager.ToAssemblyName(VersionManager.DefaultCodePatchFileName));
+        }
     }
 }

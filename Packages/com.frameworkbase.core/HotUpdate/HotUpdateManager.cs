@@ -533,9 +533,10 @@ namespace Framework.HotUpdate
                 if (_hotUpdateAssembly == null)
                     throw new InvalidOperationException("热更新入口程序集尚未加载。");
 
-                Type entryType = _hotUpdateAssembly.GetType("HotUpdate.Entry.HotfixEntry");
+                string entryTypeName = VersionManager.HotUpdateEntryTypeFullName;
+                Type entryType = _hotUpdateAssembly.GetType(entryTypeName);
                 if (entryType == null)
-                    throw new MissingMemberException("未找到热更新入口类型 HotUpdate.Entry.HotfixEntry。");
+                    throw new MissingMemberException($"未找到热更新入口类型 {entryTypeName}。");
 
                 object entryInstance = Activator.CreateInstance(entryType);
                 MethodInfo startMethod = entryType.GetMethod("Start");

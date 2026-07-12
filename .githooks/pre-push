@@ -1,0 +1,44 @@
+#!/bin/sh
+# ─────────────────────────────────────────────────────────────────────────────
+# pre-push 钩子：推送到 master 前，先在本地跑一次 CI（Tools/ci/run-ci.ps1）。
+#   · 只拦 master：推个人分支（dev_samuel 等）不触发本地 CI，照常秒推。
+#   · 本地 CI 红 → 拦下 master 推送，避免坏代码上主干、也省掉 30 分钟云端白等。
+#
+# 一次性启用（每台开发机各设一次）：
+#     git config core.hooksPath .githooks
+# 紧急绕过（不建议）：
+#     git push --no-verify
+# 想更快：把下面的 run-ci.ps1 调用加 -SkipPlayMode（略过 PlayMode，约省一半时间）。
+# ─────────────────────────────────────────────────────────────────────────────
+
+zero=0000000000000000000000000000000000000000
+gate=0
+
+# 逐条读取本次 push 的 ref（格式：<local ref> <local sha> <remote ref> <remote sha>）
+while read local_ref local_sha remote_ref remote_sha; do
+    [ "$remote_ref" = "refs/heads/master" ] || continue   # 非 master，跳过
+    [ "$local_sha" = "$zero" ] && continue                 # 删除 master，跳过
+    gate=1
+done
+
+# 本次 push 不涉及 master —— 直接放行，不跑 CI。
+[ "$gate" = "1" ] || exit 0
+
+if [ -f "Temp/UnityLockfile" ]; then
+    echo "[pre-push] Unity 编辑器正占用工程（Temp/UnityLockfile 存在），本地 CI 无法运行。"
+    echo "[pre-push] 请关闭 Unity 编辑器后再推 master。"
+    exit 1
+fi
+
+echo "[pre-push] 目标是 master —— 先跑本地 CI：Tools/ci/run-ci.ps1（约 8 分钟，含编译+EditMode/PlayMode+资源门禁）…"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "Tools/ci/run-ci.ps1"
+status=$?
+
+if [ "$status" -ne 0 ]; then
+    echo "[pre-push] X 本地 CI 未通过（退出码 $status），已拦截 master 推送。"
+    echo "[pre-push]   修复后重推；确需强推可 'git push --no-verify'（不建议）。"
+    exit 1
+fi
+
+echo "[pre-push] OK 本地 CI 通过，放行 master 推送。"
+exit 0

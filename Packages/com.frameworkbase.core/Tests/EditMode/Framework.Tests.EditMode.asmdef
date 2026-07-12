@@ -5,6 +5,7 @@
         "Framework",
         "Framework.Foundation",
         "Framework.Kernel",
+        "Framework.Protocol.Abstractions",
         "Framework.Editor",
         "UniTask",
         "UnityEngine.TestRunner",
