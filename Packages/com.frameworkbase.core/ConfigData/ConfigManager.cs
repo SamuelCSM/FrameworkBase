@@ -346,6 +346,19 @@ namespace Framework
         }
 
         /// <summary>
+        /// 内容级出厂回退：删除持久化数据库与备份，下次 EnsureDatabaseReadyAsync 会从
+        /// StreamingAssets 重新安装出厂基线。仅由内容级崩溃循环恢复路径调用。
+        /// </summary>
+        public void ResetDatabaseToFactoryBaseline()
+        {
+            EnsureInitialized();
+            UnloadAllConfigs();
+            DeleteFileQuietly(_dbPath);
+            DeleteFileQuietly(Installer.BackupPath);
+            GameLog.Warning("[ConfigManager] 配置数据库已回退出厂基线（持久化库与备份已清除）。");
+        }
+
+        /// <summary>
         /// 启动确认前失败的恢复动作：恢复上一份已确认配置数据库（若存在备份）。
         /// 由 LaunchFlow 失败路径或下次启动早期（检测到未确认 Pending 时）调用。
         /// </summary>
