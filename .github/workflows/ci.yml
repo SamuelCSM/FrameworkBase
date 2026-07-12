@@ -1,7 +1,25 @@
+# FrameworkBase 质量门禁流水线。
+#
+# 触发策略（P0-5 CI 闭环）：
+#   - pull_request：合并前门禁（required checks 的事实来源）。20 人以上团队的质量安全边界
+#     必须在合并前，本地 pre-push hook 只是开发体验优化，可被 --no-verify 跳过，不作安全边界。
+#   - push master：合并后回归（分支保护开启后 master 只能经 PR 进入，此处兜底直推与回归基线）。
+#   - workflow_dispatch：手动全量回归。
+#
+# 分层策略：
+#   - PR Required（快速层）：可复现性 / asmdef 门禁 / 编译 + EditMode + PlayMode / 资源门禁。
+#   - PR Conditional（重型层）：Android IL2CPP / iOS Xcode 工程 / 包体回归——仅当变更触及
+#     构建关键路径（Assets/、Packages/、ProjectSettings/、HybridCLRData、Tools/ci/、workflows）
+#     时执行；master push 与手动触发始终全量。构建关键变更不允许跳过移动端验证。
+#
+# 分支保护配置见 Docs/BranchProtection.md；Tools/ci/check-workflows.ps1 静态门禁
+# 防止本文件的 pull_request 触发器或 required job 被误删。
 name: FrameworkBase CI
 
 on:
   push:
+    branches: [master]
+  pull_request:
     branches: [master]
   workflow_dispatch:
 
@@ -15,6 +33,16 @@ env:
   UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
 
 jobs:
+  workflow-gate:
+    name: workflow 静态门禁（防触发器/required job 退化）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 校验 CI/Release workflow 结构约束
+        shell: pwsh
+        run: ./Tools/ci/check-workflows.ps1
+
   reproducibility:
     name: 干净副本可复现性预检
     runs-on: ubuntu-latest
@@ -37,6 +65,41 @@ jobs:
       - name: 静态校验 asmdef 依赖方向（无需 Unity）
         shell: pwsh
         run: ./Tools/ci/check-asmdef-deps.ps1
+
+  # 变更影响分析：PR 上判断是否触及构建关键路径，决定重型移动端构建是否执行。
+  # 非 PR 事件（master push / 手动）恒为全量，保证发布基线始终经过移动端验证。
+  build-impact:
+    name: 构建影响分析（移动端分层依据）
+    runs-on: ubuntu-latest
+    outputs:
+      mobile: ${{ steps.filter.outputs.mobile }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 判定变更是否触及构建关键路径
+        id: filter
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "mobile=true" >> "$GITHUB_OUTPUT"
+            echo "非 PR 事件：移动端构建全量执行。"
+            exit 0
+          fi
+          git fetch origin "${{ github.base_ref }}" --depth=200 || git fetch origin "${{ github.base_ref }}"
+          CHANGED=$(git diff --name-only "origin/${{ github.base_ref }}...HEAD")
+          echo "变更文件："
+          echo "$CHANGED"
+          # 构建关键路径：工程资产 / 包与依赖 / 工程设置（含 HybridCLR、Addressables 配置）/
+          # 构建脚本与门禁 / workflow 自身。命中任一即不允许跳过移动端构建验证。
+          if echo "$CHANGED" | grep -E -q '^(Assets/|Packages/|ProjectSettings/|HybridCLRData/|Tools/ci/|\.github/workflows/)'; then
+            echo "mobile=true" >> "$GITHUB_OUTPUT"
+            echo "命中构建关键路径：移动端构建 required。"
+          else
+            echo "mobile=false" >> "$GITHUB_OUTPUT"
+            echo "未触及构建关键路径：本次 PR 跳过移动端构建（文档/脚本类变更）。"
+          fi
 
   tests:
     name: 编译与 EditMode/PlayMode 测试
@@ -87,7 +150,9 @@ jobs:
 
   android-player:
     name: Android Player/IL2CPP 构建验证
-    needs: asset-gate
+    needs: [asset-gate, build-impact]
+    # PR 上仅构建关键变更执行；master push/手动触发恒执行（build-impact 输出恒为 true）。
+    if: needs.build-impact.outputs.mobile == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -138,7 +203,8 @@ jobs:
 
   ios-xcode-project:
     name: iOS Xcode 工程生成验证
-    needs: android-player
+    needs: [android-player, build-impact]
+    if: needs.build-impact.outputs.mobile == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

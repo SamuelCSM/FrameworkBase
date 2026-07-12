@@ -2,12 +2,21 @@
 #
 # 设计约束：
 #   - 正式产物只允许由本 workflow 经 ReleaseBatchEntry 生成，本地出包一律视为调试产物；
-#   - job 绑定 GitHub Environment（dev/qa/prod）：审批人、保护规则与签名私钥都按环境隔离，
+#   - job 绑定 GitHub Environment（dev/qa/prod）：审批人、保护规则、签名私钥与部署目标都按环境隔离，
 #     prod 环境请在仓库 Settings → Environments 配置 Required reviewers 形成发布审批；
 #   - 签名私钥经环境 Secret MANIFEST_PRIVATE_KEY_XML_BASE64 注入
 #     （对应 UpdateManifestSigner 的 FRAMEWORKBASE_MANIFEST_PRIVATE_KEY_XML_BASE64），绝不入库；
+#   - 部署目标经环境 Variable RELEASE_UPLOAD_ROOT 注入（目录型 Store 的挂载根；
+#     云厂商 Store 由扩展包提供，主干不硬编码任何厂商）；
 #   - ReleaseBatchEntry 默认要求干净 Git 工作副本，checkout 即满足；
 #   - *ForBuilder 入口失败以 BuildFailedException 上抛，unity-builder 可靠拿到非零结果。
+#
+# 发布模式语义（见 Docs/ContentReleaseTransactionDesign.md §三）：
+#   - BuildOnly（mode=build-only）：只生成候选产物为 GitHub Artifact，不部署、不切指针。
+#     工作流成功仅代表“产物已生成”，绝不宣称“已发布”。唯一允许无部署目标的模式。
+#   - Publish（mode=publish，kind=hotupdate/fullpackage）：发布到部署目标并按
+#     “payload → 回读校验 → current.json 最后切换”顺序提交；部署目标为空直接失败。
+#   - Promote / Rollback：同产物重签晋级 / 指针回切，均要求部署目标已配置（入口自身失败关闭）。
 name: FrameworkBase Release
 
 on:
@@ -18,8 +27,13 @@ on:
         type: choice
         options: [hotupdate, fullpackage, promote, rollback]
         required: true
+      mode:
+        description: 发布模式（publish=构建并部署；build-only=只出候选产物不部署，仅对 hotupdate/fullpackage 有效）
+        type: choice
+        options: [publish, build-only]
+        default: publish
       releaseEnv:
-        description: 目标环境（决定审批链与签名密钥）
+        description: 目标环境（决定审批链、签名密钥与部署目标）
         type: choice
         options: [dev, qa, prod]
         required: true
@@ -80,7 +94,7 @@ env:
 
 jobs:
   release:
-    name: ${{ inputs.kind }} → ${{ inputs.releaseEnv }} / ${{ inputs.buildTarget }}
+    name: ${{ inputs.kind }}(${{ inputs.mode }}) → ${{ inputs.releaseEnv }} / ${{ inputs.buildTarget }}
     runs-on: ubuntu-latest
     environment: ${{ inputs.releaseEnv }}
     steps:
@@ -88,6 +102,42 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      # 部署目标闸门（失败关闭）：Publish/Promote/Rollback 模式下部署目标为空时立即失败，
+      # 绝不允许“只生成本地 staging 却显示发布成功”。稳定错误码：RELEASE_E_STORE_NOT_CONFIGURED。
+      # 只有 BuildOnly（build-only + hotupdate/fullpackage）允许无部署目标。
+      - name: 部署目标闸门（Publish/Promote/Rollback 必须配置 RELEASE_UPLOAD_ROOT）
+        id: deploy-gate
+        shell: bash
+        env:
+          RELEASE_UPLOAD_ROOT: ${{ vars.RELEASE_UPLOAD_ROOT }}
+        run: |
+          KIND="${{ inputs.kind }}"
+          MODE="${{ inputs.mode }}"
+          if [ "$KIND" = "promote" ] || [ "$KIND" = "rollback" ]; then
+            REQUIRED=true
+          elif [ "$MODE" = "publish" ]; then
+            REQUIRED=true
+          else
+            REQUIRED=false
+          fi
+          if [ "$REQUIRED" = "true" ] && [ -z "$RELEASE_UPLOAD_ROOT" ]; then
+            echo "::error title=RELEASE_E_STORE_NOT_CONFIGURED::${KIND}/${MODE} 模式要求部署目标。请在 GitHub Environment [${{ inputs.releaseEnv }}] 配置 Variable RELEASE_UPLOAD_ROOT（目录型 Store 挂载根），或改用 build-only 模式只生成候选产物。"
+            exit 1
+          fi
+          echo "required=$REQUIRED" >> "$GITHUB_OUTPUT"
+          echo "部署目标闸门通过：required=$REQUIRED root=${RELEASE_UPLOAD_ROOT:-<build-only>}"
+
+      - name: 签名私钥闸门（Secret 缺失时失败）
+        shell: bash
+        env:
+          KEY_B64: ${{ secrets.MANIFEST_PRIVATE_KEY_XML_BASE64 }}
+        run: |
+          if [ -z "$KEY_B64" ]; then
+            echo "::error title=RELEASE_E_SIGNING_KEY_MISSING::环境 [${{ inputs.releaseEnv }}] 未配置 Secret MANIFEST_PRIVATE_KEY_XML_BASE64，所有环境强制验签，发布中止。"
+            exit 1
+          fi
+          echo "签名私钥闸门通过。"
 
       - name: 执行唯一发布入口（ReleaseBatchEntry）
         uses: game-ci/unity-builder@v4
@@ -99,6 +149,8 @@ jobs:
           buildMethod: ${{ inputs.kind == 'hotupdate' && 'Framework.Editor.Release.ReleaseBatchEntry.PublishHotUpdateForBuilder' || inputs.kind == 'fullpackage' && 'Framework.Editor.Release.ReleaseBatchEntry.BuildFullPackageForBuilder' || inputs.kind == 'promote' && 'Framework.Editor.Release.ReleaseBatchEntry.PromoteReleaseForBuilder' || 'Framework.Editor.Release.ReleaseBatchEntry.RollbackReleaseForBuilder' }}
           customParameters: >-
             -releaseEnv ${{ inputs.releaseEnv }}
+            -releaseMode ${{ inputs.mode }}
+            -uploadRoot "${{ vars.RELEASE_UPLOAD_ROOT }}"
             -appVersion ${{ inputs.appVersion }}
             -resourceVersion ${{ inputs.resourceVersion }}
             -codeVersion ${{ inputs.codeVersion }}
@@ -111,6 +163,18 @@ jobs:
             -switchedBy "workflow-${{ github.run_id }}-${{ github.actor }}"
             -description "${{ inputs.description }}"
             -buildOutput build/Release/${{ inputs.buildTarget }}
+
+      # BuildOnly 模式的工作流结论必须如实描述“候选产物已生成、未部署”，
+      # 防止把“只生成 staging”误读为正式发布成功。
+      - name: 结论摘要
+        shell: bash
+        run: |
+          if [ "${{ steps.deploy-gate.outputs.required }}" = "true" ]; then
+            echo "### ✅ ${{ inputs.kind }} 已发布到环境 [${{ inputs.releaseEnv }}]（部署目标已配置，含回读校验与指针切换）" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "### 📦 BuildOnly：候选产物已生成为 Artifact，未部署到任何环境" >> "$GITHUB_STEP_SUMMARY"
+            echo "本次运行不是正式发布。如需发布请配置 RELEASE_UPLOAD_ROOT 并使用 mode=publish。" >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: 上传发布产物与台账（staging + ledger）
         if: always()

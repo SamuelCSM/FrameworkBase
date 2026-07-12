@@ -6,11 +6,39 @@ using UnityEditor;
 namespace Framework.Editor.Release
 {
     /// <summary>
+    /// 发布模式。区分"只出产物"与"真实部署"，是部署目标失败关闭闸门的判定依据。
+    /// </summary>
+    public enum ReleaseMode
+    {
+        /// <summary>只生成候选产物（GitHub Artifact），不对外部署、不切指针。唯一允许无部署目标的模式。</summary>
+        BuildOnly = 0,
+
+        /// <summary>构建产物并发布到部署目标，按 payload→回读→current.json 最后切换的顺序提交。</summary>
+        Publish = 1,
+
+        /// <summary>同产物跨环境晋级：不重建产物，从源环境读取已验证 release，重签后发布并切指针。</summary>
+        Promote = 2,
+
+        /// <summary>回切已存在版本：不重建、不重传，仅重签并切换 current.json 指针。</summary>
+        Rollback = 3,
+
+        /// <summary>只校验已发布版本完整性（回读 + 逐文件 SHA-256），不产出、不切指针。</summary>
+        VerifyOnly = 4,
+    }
+
+    /// <summary>
     /// 发布流水线上下文：装"本次发什么"（计划）、"发到哪"（环境与输出目录）与步骤间的中间产物。
     /// 由入口（Editor 窗口 / 未来的 CI 命令行）组装，供各 <see cref="IReleaseStep"/> 读写。
     /// </summary>
     public class ReleaseContext
     {
+        /// <summary>
+        /// 本次发布模式。默认 Publish（构建即部署）；CI 经 -releaseMode 注入。
+        /// BuildOnly 时 AtomicPublishArtifacts 只保留本地 staging 不部署；
+        /// Publish/Promote/Rollback 时部署目标为空由 <see cref="ReleaseArtifactStoreFactory"/> 失败关闭。
+        /// </summary>
+        public ReleaseMode Mode = ReleaseMode.Publish;
+
         // ── 计划：本次发布什么 ────────────────────────────────────────────────
         public bool PublishResource;
         public bool PublishCode;
