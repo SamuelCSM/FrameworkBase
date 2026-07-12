@@ -1,11 +1,7 @@
 {
-    "name": "HotUpdate",
-    "rootNamespace": "",
-    "references": [
-        "Framework",
-        "Framework.Protocol.Abstractions",
-        "GameProtocol"
-    ],
+    "name": "Framework.Protocol.Abstractions",
+    "rootNamespace": "Framework.Network",
+    "references": [],
     "includePlatforms": [],
     "excludePlatforms": [],
     "allowUnsafeCode": false,
@@ -14,5 +10,5 @@
     "autoReferenced": true,
     "defineConstraints": [],
     "versionDefines": [],
-    "noEngineReferences": false
+    "noEngineReferences": true
 }

@@ -4,6 +4,7 @@
     "references": [
         "Framework.Foundation",
         "Framework.Kernel",
+        "Framework.Protocol.Abstractions",
         "UniTask",
         "Unity.Addressables",
         "Unity.ResourceManager",

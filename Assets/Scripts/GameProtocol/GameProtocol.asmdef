@@ -2,7 +2,7 @@
     "name": "GameProtocol",
     "rootNamespace": "",
     "references": [
-        "Framework"
+        "Framework.Protocol.Abstractions"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],
