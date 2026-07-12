@@ -280,6 +280,13 @@ if ($LASTEXITCODE -ne 0) {
     exit 1
 }
 
+# ── asmdef 依赖门禁：分层/热更拓扑违规直接阻断（纯静态，先于 Unity）──────────
+& (Join-Path $PSScriptRoot "check-asmdef-deps.ps1")
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "asmdef 依赖门禁未通过，跳过 Unity 测试。"
+    exit 1
+}
+
 # ── 依次跑（EditMode 先行：编译失败/逻辑用例挂了就不必再起后续）──
 $finalExit = Invoke-UnityTests "EditMode"
 
