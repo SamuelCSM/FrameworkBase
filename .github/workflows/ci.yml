@@ -83,12 +83,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # 冷环境 IL2CPP 出包前必须先安装 HybridCLR 本地 il2cpp 并生成构建期依赖，
+      # 否则 CheckSettings 预处理器会以“未初始化 HybridCLR”中断出包。
+      # 产物落在工程根 HybridCLRData/（gitignore，不入库），随同 job workspace 保留给下一步。
+      - name: 安装 HybridCLR 本地 il2cpp 并生成（Android）
+        uses: game-ci/unity-builder@v4
+        with:
+          targetPlatform: Android
+          allowDirtyBuild: true
+          buildMethod: Framework.Editor.HybridCLRBuildSetup.InstallAndGenerateForBuilder
+
       - name: 构建 Android Player
         uses: game-ci/unity-builder@v4
         with:
           targetPlatform: Android
           androidExportType: androidPackage
-          allowDirtyBuild: false
+          allowDirtyBuild: true
 
       - name: 上传 Android 构建产物
         uses: actions/upload-artifact@v4
@@ -124,11 +134,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # 同 Android：iOS 出包同样走 IL2CPP，须先安装 HybridCLR 本地 il2cpp 并生成构建期依赖。
+      - name: 安装 HybridCLR 本地 il2cpp 并生成（iOS）
+        uses: game-ci/unity-builder@v4
+        with:
+          targetPlatform: iOS
+          allowDirtyBuild: true
+          buildMethod: Framework.Editor.HybridCLRBuildSetup.InstallAndGenerateForBuilder
+
       - name: 生成 iOS Xcode 工程
         uses: game-ci/unity-builder@v4
         with:
           targetPlatform: iOS
-          allowDirtyBuild: false
+          allowDirtyBuild: true
 
       - name: 上传 iOS Xcode 工程
         uses: actions/upload-artifact@v4
