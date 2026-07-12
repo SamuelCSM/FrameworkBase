@@ -5,10 +5,12 @@ namespace HotUpdate.Entry
     /// <summary>
     /// 热更新入口契约的框架参考实现。
     /// <para>
-    /// <see cref="Framework.HotUpdate.HotUpdateManager.StartHotfix"/> 通过反射查找
-    /// <c>HotUpdate.Entry.HotfixEntry</c> 类型并调用其 <see cref="Start"/> 方法——这是框架
-    /// 硬编码的启动契约。业务项目应在自己的 HotUpdate 程序集中以同名类型承接真实游戏逻辑；
-    /// 本实现保证框架仓库自身的发布 → 客户端消费链路（release-rehearsal）可在无业务代码时闭环演练。
+    /// <see cref="Framework.HotUpdate.HotUpdateManager.StartHotfix"/> 通过反射查找入口类型并调用其
+    /// <see cref="Start"/> 方法。入口类型全名与入口程序集名均<b>可配置</b>（<c>AppConfig.HotUpdateEntryTypeFullName</c>
+    /// / <c>AppConfig.HotUpdateEntryAssembly</c>），留空时回退框架默认 <c>HotUpdate.Entry.HotfixEntry</c>
+    /// / <c>HotUpdate</c>（见 <see cref="Framework.HotUpdate.VersionManager.DefaultHotUpdateEntryTypeFullName"/>）。
+    /// 业务项目可沿用该默认约定、或改配置指向自有入口类型；本实现保证框架仓库自身的发布 → 客户端消费链路
+    /// （release-rehearsal）可在无业务代码时闭环演练。
     /// </para>
     /// <para>
     /// 该程序集经 HybridCLR 以 <c>HotUpdate.dll.bytes</c> 形式热更下发，属于远程代码执行链路，

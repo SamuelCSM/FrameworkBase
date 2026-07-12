@@ -67,6 +67,12 @@ namespace Framework.Core
         [Tooltip("热更新程序集完整文件名白名单。安装槽只允许出现这里声明的程序集，禁止清单写入任意文件。")]
         public string[] HotUpdateAssemblyFiles = Array.Empty<string>();
 
+        [Tooltip("热更入口程序集名（承载入口类型的程序集，须为 HotUpdateAssemblyFiles 成员）。留空回退框架默认 HotUpdate；接入方自定义入口程序集时填写。")]
+        public string HotUpdateEntryAssembly = string.Empty;
+
+        [Tooltip("热更入口类型全名（含命名空间，须含无参 Start 方法，由框架反射调用）。留空回退框架默认 HotUpdate.Entry.HotfixEntry。")]
+        public string HotUpdateEntryTypeFullName = string.Empty;
+
         [Header("登录与连接")]
         [Tooltip("是否使用真实网络登录链路；关闭时仅允许开发或自动化测试环境使用 Mock 实现。")]
         public bool UseNetworkLogin = true;

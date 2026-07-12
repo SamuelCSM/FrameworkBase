@@ -7,7 +7,8 @@
 #   R3 热更协议保持轻量（ADR-004）：被其他热更程序集依赖的“协议层”热更程序集不得引用重型 Framework
 #      （只能引 Protocol.Abstractions / Foundation / Kernel 等轻量层）。
 #   R4 热更清单一致：HybridCLRSettings.hotUpdateAssemblies 中每个名字都须存在对应工程 asmdef；
-#      AppConfig.HotUpdateAssemblyFiles 非空时，其（去 .dll.bytes 后）集合须与 HybridCLRSettings 一致。
+#      AppConfig.HotUpdateAssemblyFiles 非空时，其（去 .dll.bytes 后）集合须与 HybridCLRSettings 一致；
+#      有效热更入口程序集（AppConfig.HotUpdateEntryAssembly 优先，回退 VersionManager 默认）须为热更清单成员。
 #   R5 测试程序集 autoReferenced=false（避免被 Assembly-CSharp 自动引用污染）。
 #
 # 用法：
@@ -148,6 +149,21 @@ function Strip-BytesSuffix([string]$n) {
     return $n
 }
 
+# ── 3b) 解析热更入口程序集名（配置优先，回退 VersionManager 的 C# 默认）──────────
+# AppConfig.HotUpdateEntryAssembly（标量，空即回退）
+$appCfgEntry = ""
+if (Test-Path $appCfgPath) {
+    $m = Select-String -Path $appCfgPath -Pattern "^\s*HotUpdateEntryAssembly:\s*(\S.*?)\s*$" | Select-Object -First 1
+    if ($m) { $appCfgEntry = $m.Matches[0].Groups[1].Value.Trim() }
+}
+# VersionManager.DefaultCodePatchFileName（单行 const，作为默认入口来源；解析不到则跳过 C# 侧校验）
+$vmDefaultEntry = ""
+$vmPath = Join-Path $root "Packages/com.frameworkbase.core/HotUpdate/VersionManager.cs"
+if (Test-Path $vmPath) {
+    $m = Select-String -Path $vmPath -Pattern 'DefaultCodePatchFileName\s*=\s*"([^"]+)"' | Select-Object -First 1
+    if ($m) { $vmDefaultEntry = Strip-BytesSuffix ($m.Matches[0].Groups[1].Value) }
+}
+
 # ── R1 无环 ───────────────────────────────────────────────────────────────────
 $WHITE = 0; $GRAY = 1; $BLACK = 2
 $color = @{}
@@ -238,6 +254,13 @@ if ($appCfgHasList) {
     if ($onlyApp.Count -gt 0 -or $onlyHy.Count -gt 0) {
         Add-Violation "R4" ("AppConfig.HotUpdateAssemblyFiles 与 HybridCLRSettings 不一致：仅 App=[{0}] 仅 Hybrid=[{1}]" -f ($onlyApp -join ","), ($onlyHy -join ","))
     }
+}
+# 入口程序集一致：有效入口（AppConfig 配置优先，回退 VersionManager 默认）须为热更清单成员，
+# 否则加载完成后必反射不到入口类型。解析不到 C# 默认（$vmDefaultEntry 为空）时跳过，交由
+# EditMode 的 VersionManagerTests 用编译真相兜底。
+if ($appCfgEntry) { $effectiveEntry = $appCfgEntry } else { $effectiveEntry = $vmDefaultEntry }
+if ($effectiveEntry -and $hotUpdate.Count -gt 0 -and -not $hotUpdate.Contains($effectiveEntry)) {
+    Add-Violation "R4" ("热更入口程序集 {0} 不在 HybridCLRSettings.hotUpdateAssemblies=[{1}] 中（入口须为热更清单成员）" -f $effectiveEntry, (@($hotUpdate) -join ","))
 }
 
 # ── R5 测试程序集 autoReferenced=false ────────────────────────────────────────
