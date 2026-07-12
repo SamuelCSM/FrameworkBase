@@ -11,6 +11,10 @@ namespace Framework.Core
             public const string Ok = "LF_OK";
             public const string FullUpdateGateBlocked = "LF_FULL_UPDATE_GATE_BLOCKED";
             public const string ResourceDownloadFailed = "LF_RESOURCE_DOWNLOAD_FAILED";
+            /// <summary>Catalog 检查或更新失败（区别于 bundle 下载失败：此时连"是否有更新"都不可知）。</summary>
+            public const string CatalogUpdateFailed = "LF_CATALOG_UPDATE_FAILED";
+            /// <summary>下载尺寸查询失败（区别于"无需下载"，失败必须中止启动更新）。</summary>
+            public const string DownloadSizeQueryFailed = "LF_DOWNLOAD_SIZE_QUERY_FAILED";
             public const string CodeDownloadFailed = "LF_CODE_DOWNLOAD_FAILED";
             public const string MetadataLoadFailed = "LF_METADATA_LOAD_FAILED";
             public const string HotUpdateAssemblyLoadFailed = "LF_HOTUPDATE_ASSEMBLY_LOAD_FAILED";

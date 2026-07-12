@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Threading;
 using UnityEngine;
 using UnityEngine.AddressableAssets;
 using UnityEngine.ResourceManagement.AsyncOperations;
@@ -109,50 +110,46 @@ namespace Framework
             GameLog.Log("[ResourceManager] Addressables 初始化完成");
         }
 
+        // Catalog 检查/更新编排：底层能力经 IAddressablesCatalogService 适配，失败路径可在 EditMode 注入复现。
+        // 所有权边界：flow 无状态、service 无状态，由本组件持有并复用，不对外暴露可变引用。
+        private CatalogUpdateFlow _catalogFlow;
+
+        private CatalogUpdateFlow CatalogFlow =>
+            _catalogFlow ??= new CatalogUpdateFlow(new AddressablesCatalogService(), GameLog.Log, GameLog.Error);
+
         /// <summary>
         /// 检查远端是否有新 Catalog，并自动更新。
-        /// 返回本次实际更新的 Catalog 数量（0 表示无更新）。
+        /// <para>
+        /// 返回 <see cref="CatalogUpdateResult"/>，显式区分"无需更新 / 更新成功 / 检查失败 / 更新失败 /
+        /// 被取消 / 无效结果"六种终态。调用方（LaunchFlow）必须检查 <see cref="CatalogUpdateResult.Succeeded"/>：
+        /// 只有"检查成功且无更新"或"更新成功"允许继续资源下载；任何失败必须中止本次启动更新，
+        /// 绝不允许提交 ResourceVersion（否则失败会被永久固化，后续启动不再重试真正的资源更新）。
+        /// </para>
         /// </summary>
-        public async UniTask<int> CheckAndUpdateCatalogsAsync()
+        /// <param name="cancellationToken">启动流程取消令牌；取消返回 Canceled 终态而非抛异常。</param>
+        public async UniTask<CatalogUpdateResult> CheckAndUpdateCatalogsAsync(CancellationToken cancellationToken = default)
         {
             GameLog.Log("[ResourceManager] 检查 Catalog 更新...");
-
-            try
+            CatalogUpdateResult result = await CatalogFlow.CheckAndUpdateAsync(cancellationToken);
+            if (result.Status == CatalogUpdateStatus.UpToDate)
             {
-                var checkHandle = Addressables.CheckForCatalogUpdates(false);
-                await checkHandle.Task;
-
-                if (checkHandle.Status != AsyncOperationStatus.Succeeded)
-                {
-                    GameLog.Warning("[ResourceManager] CheckForCatalogUpdates 失败，跳过更新");
-                    Addressables.Release(checkHandle);
-                    return 0;
-                }
-
-                var updatedCatalogs = checkHandle.Result;
-                Addressables.Release(checkHandle);
-
-                if (updatedCatalogs == null || updatedCatalogs.Count == 0)
-                {
-                    GameLog.Log("[ResourceManager] Catalog 已是最新（Editor Play Mode 下属正常，" +
-                               "如需强制测试下载流程请先调用 ClearCacheAsync）");
-                    return 0;
-                }
-
-                GameLog.Log($"[ResourceManager] 发现 {updatedCatalogs.Count} 个 Catalog 需要更新，开始下载...");
-
-                var updateHandle = Addressables.UpdateCatalogs(updatedCatalogs, false);
-                await updateHandle.Task;
-                Addressables.Release(updateHandle);
-
-                GameLog.Log($"[ResourceManager] Catalog 更新完成，共更新 {updatedCatalogs.Count} 个");
-                return updatedCatalogs.Count;
+                GameLog.Log("[ResourceManager] Catalog 已是最新（Editor Play Mode 下属正常，" +
+                            "如需强制测试下载流程请先调用 ClearCache）");
             }
-            catch (Exception e)
-            {
-                GameLog.Error($"[ResourceManager] Catalog 更新异常: {e.Message}");
-                return 0;
-            }
+            return result;
+        }
+
+        /// <summary>
+        /// 查询指定 key 的待下载字节数（结果化版本）。
+        /// 与旧的 <see cref="GetDownloadSizeAsync(object)"/> 不同：查询失败返回
+        /// <see cref="DownloadSizeStatus.Failed"/>，与"无需下载（0 字节）"严格区分。
+        /// 启动更新链路（LaunchFlow）必须使用本方法，禁止使用把失败吞成 0 的旧接口。
+        /// </summary>
+        /// <param name="key">Address / Label / AssetReference。</param>
+        /// <param name="cancellationToken">启动流程取消令牌。</param>
+        public UniTask<DownloadSizeResult> TryGetDownloadSizeAsync(object key, CancellationToken cancellationToken = default)
+        {
+            return CatalogFlow.GetDownloadSizeAsync(key, cancellationToken);
         }
 
         /// <summary>
@@ -171,6 +168,10 @@ namespace Framework
         /// 计算指定 key（Address / Label / AssetReference）需要下载的字节数。
         /// 返回 0 表示无需下载（已缓存或本地包含）。
         /// InvalidKeyException（key 不存在）会静默返回 0，不会中断流程。
+        /// <para>
+        /// 注意：本方法把"查询失败"也吞成 0，只适用于非关键的展示型查询（如设置页容量预估）。
+        /// 启动更新链路必须使用 <see cref="TryGetDownloadSizeAsync"/>，否则查询失败会被误判为"无需下载"。
+        /// </para>
         /// </summary>
         public async UniTask<long> GetDownloadSizeAsync(object key)
         {

@@ -183,9 +183,20 @@ namespace Framework.Core
                 var resourceUpdateResult = await LaunchFlowUpdateExecutor.ExecuteResourceUpdateAsync(loading, resourceUpdated);
                 if (!resourceUpdateResult.Success)
                 {
-                    LaunchTelemetryHelper.EndPhaseMetric(step4, false, "download_failed");
-                            LaunchTelemetryHelper.FinalizeRunMetric(runMetric, false, TelemetryErrorCodes.Launch.ResourceDownloadFailed);
-                            return LaunchFlowOutcome.Failed;
+                    // 失败关闭：Catalog 失败 / 尺寸查询失败 / 下载失败都中止启动，绝不提交 ResourceVersion。
+                    // 按失败阶段区分遥测终态码，避免"检查失败"与"下载失败"在告警侧混成一类。
+                    string failureCode = resourceUpdateResult.ErrorCode switch
+                    {
+                        LaunchFlowUpdateExecutor.ResourceUpdateStageErrors.CatalogFailed =>
+                            TelemetryErrorCodes.Launch.CatalogUpdateFailed,
+                        LaunchFlowUpdateExecutor.ResourceUpdateStageErrors.SizeQueryFailed =>
+                            TelemetryErrorCodes.Launch.DownloadSizeQueryFailed,
+                        _ => TelemetryErrorCodes.Launch.ResourceDownloadFailed,
+                    };
+                    LaunchTelemetryHelper.EndPhaseMetric(step4, false,
+                        $"{resourceUpdateResult.ErrorCode}:{resourceUpdateResult.Message}");
+                    LaunchTelemetryHelper.FinalizeRunMetric(runMetric, false, failureCode);
+                    return LaunchFlowOutcome.Failed;
                 }
 
                 // 资源热更成功后写回 ResourceVersion，避免下次启动重复检查/下载。
