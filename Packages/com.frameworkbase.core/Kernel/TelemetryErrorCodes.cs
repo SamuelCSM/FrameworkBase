@@ -15,6 +15,8 @@ namespace Framework.Core
             public const string CatalogUpdateFailed = "LF_CATALOG_UPDATE_FAILED";
             /// <summary>下载尺寸查询失败（区别于"无需下载"，失败必须中止启动更新）。</summary>
             public const string DownloadSizeQueryFailed = "LF_DOWNLOAD_SIZE_QUERY_FAILED";
+            /// <summary>热更配置数据库安装失败（下载/校验/替换/重载任一失败；区别于"本次发行不包含配置"）。</summary>
+            public const string ConfigApplyFailed = "LF_CONFIG_APPLY_FAILED";
             public const string CodeDownloadFailed = "LF_CODE_DOWNLOAD_FAILED";
             public const string MetadataLoadFailed = "LF_METADATA_LOAD_FAILED";
             public const string HotUpdateAssemblyLoadFailed = "LF_HOTUPDATE_ASSEMBLY_LOAD_FAILED";

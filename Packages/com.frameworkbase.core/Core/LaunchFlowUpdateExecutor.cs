@@ -105,11 +105,24 @@ namespace Framework.Core
             return new ResourceUpdateResult { Success = true, ResourceUpdated = true, ErrorCode = "", Message = "" };
         }
 
-        /// <summary>Step6c 配置应用结果。</summary>
+        /// <summary>
+        /// Step6c 配置应用结果。
+        /// Success=false 时 LaunchFlow 必须中止启动并回滚待确认代码槽——
+        /// "配置安装失败"与"本次没有配置更新"是两个语义，绝不允许混同后静默放行。
+        /// </summary>
         public struct ConfigApplyResult
         {
+            /// <summary>配置应用是否成功（NotIncluded 与 Installed 均视为成功；失败必须中止启动）。</summary>
+            public bool Success;
+
+            /// <summary>本次是否执行了配置应用（资源发生更新时才执行）。</summary>
             public bool Applied;
+
+            /// <summary>是否实际安装了新配置数据库。</summary>
             public bool Updated;
+
+            /// <summary>失败终态与诊断信息（来自 ConfigInstallResult）；成功时为空。</summary>
+            public string Message;
         }
 
         /// <summary>判断是否需要做资源更新。</summary>
@@ -262,20 +275,43 @@ namespace Framework.Core
             return configReady;
         }
 
-        /// <summary>执行 Step6c：应用配置更新（仅资源发生更新时尝试）。</summary>
+        /// <summary>
+        /// 执行 Step6c：应用配置更新（仅资源发生更新时尝试）。
+        /// 失败传播契约：配置下载失败 / 校验失败 / 替换失败 / 重载失败任一发生都返回 Success=false，
+        /// LaunchFlow 据此中止启动；"本次发行不包含配置数据库"（NotIncluded）是正常成功路径。
+        /// </summary>
         public static async UniTask<ConfigApplyResult> ExecuteConfigApplyAsync(LoadingWindow loading, bool resourceUpdated)
         {
             if (!resourceUpdated)
-                return new ConfigApplyResult { Applied = false, Updated = false };
+                return new ConfigApplyResult { Success = true, Applied = false, Updated = false, Message = "" };
 
             loading.SetStatus("正在应用配置更新...");
             loading.SetProgress(0.84f);
-            bool configUpdated = await GameEntry.RefData.UpdateDatabaseFromAddressablesAsync();
-            Debug.Log(configUpdated
-                ? "[LaunchFlow] Step 6c  热更配置数据库已应用"
-                : "[LaunchFlow] Step 6c  未发现热更配置数据库，继续使用当前配置");
+            ConfigInstallResult installResult = await GameEntry.RefData.UpdateDatabaseFromAddressablesAsync();
 
-            return new ConfigApplyResult { Applied = true, Updated = configUpdated };
+            if (!installResult.Succeeded)
+            {
+                Debug.LogError($"[LaunchFlow] Step 6c  配置数据库安装失败，中止启动: {installResult}");
+                return new ConfigApplyResult
+                {
+                    Success = false,
+                    Applied = true,
+                    Updated = false,
+                    Message = $"{installResult.Status}:{installResult.Message}",
+                };
+            }
+
+            Debug.Log(installResult.DatabaseChanged
+                ? "[LaunchFlow] Step 6c  热更配置数据库已应用（备份保留至启动确认）"
+                : "[LaunchFlow] Step 6c  本次发行不包含热更配置数据库，继续使用当前配置");
+
+            return new ConfigApplyResult
+            {
+                Success = true,
+                Applied = true,
+                Updated = installResult.DatabaseChanged,
+                Message = "",
+            };
         }
     }
 }

@@ -225,6 +225,15 @@ namespace Framework.Core
                 var configApplyResult = await LaunchFlowUpdateExecutor.ExecuteConfigApplyAsync(
                     loading,
                     resourceUpdateResult.ResourceUpdated);
+                if (!configApplyResult.Success)
+                {
+                    // 失败关闭：配置安装失败不能被当成"没有配置更新"继续提交版本。
+                    // 同时把本次待确认代码槽标记失败（若有），避免"新代码 + 旧配置"错配组合在下次启动生效。
+                    GameEntry.HotUpdate.MarkPendingUpdateFailed("config_apply_failed");
+                    LaunchTelemetryHelper.EndPhaseMetric(step6c, false, configApplyResult.Message);
+                    LaunchTelemetryHelper.FinalizeRunMetric(runMetric, false, TelemetryErrorCodes.Launch.ConfigApplyFailed);
+                    return LaunchFlowOutcome.Failed;
+                }
                 if (configApplyResult.Applied)
                     LaunchTelemetryHelper.EndPhaseMetric(step6c, true, $"resource_updated=true,config_updated={configApplyResult.Updated}");
                 else
