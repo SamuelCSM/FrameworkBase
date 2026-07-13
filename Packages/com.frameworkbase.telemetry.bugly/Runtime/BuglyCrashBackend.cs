@@ -32,8 +32,14 @@ namespace Framework.Telemetry.Bugly
         {
             if (!_options.IsConfigured)
             {
-                // 未配置 AppId：不启动原生捕获（骨架默认态）。醒目告警，避免误以为已接崩溃上报。
+                // 未配置 AppId：不启动原生捕获（骨架默认态）。
+                // 级别分环境：Editor / Development Build 属开发常态，用普通日志（不污染"零噪声"启动壳验收）；
+                // 正式包维持醒目 Error，避免带着"没有崩溃上报"的包上线而无人察觉。
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+                GameLog.Log("[BuglyCrashBackend] 未配置 AppId，Bugly 原生崩溃捕获未启动（开发环境常态，仅托管兜底后端有效）");
+#else
                 GameLog.Error("[BuglyCrashBackend] 未配置 AppId，Bugly 原生崩溃捕获未启动（仅托管兜底后端有效）");
+#endif
                 return;
             }
 
