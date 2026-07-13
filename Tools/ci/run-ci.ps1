@@ -70,7 +70,10 @@ function Invoke-UnityTests([string]$platform) {
     $exit = $LASTEXITCODE
     if ($null -eq $exit) { $exit = 1 }
 
-    for ($i = 0; $i -lt 300 -and -not (Test-Path $resultsPath); $i++) {
+    # batchmode 下 Unity 进程返回可能早于结果文件落盘（退出码不可靠的同类问题），必须轮询等待结果文件出现。
+    # 窗口取 300s：EditMode 套件随用例增长而变长，叠加本机许可握手重试的启动波动，60s 会误判「未生成」。
+    # 注：GitHub Linux CI 用 game-ci/unity-test-runner，自带更宽超时，本窗口只作用于本地 / pre-push 门禁。
+    for ($i = 0; $i -lt 1500 -and -not (Test-Path $resultsPath); $i++) {
         if ($i -gt 0 -and $i % 25 -eq 0) {
             Write-Host "等待 $platform 结果文件落盘... $([int]($i / 5))s"
         }

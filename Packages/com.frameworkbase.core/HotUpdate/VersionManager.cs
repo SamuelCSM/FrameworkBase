@@ -497,6 +497,27 @@ namespace Framework.HotUpdate
             GameLog.Log($"[VersionManager] 内容版本提交完成 Resource={local.ResourceVersion} Code={local.CodeVersion}");
         }
 
+        /// <summary>
+        /// 崩溃恢复前滚补写：确认阶段被中断（内容发行事务 CommitInProgress=true）时，下次启动依据已验签
+        /// 发行记录重建 version.json，无需重新联网。语义等价于用当时的 serverVersion 调用
+        /// <see cref="CommitHotUpdate"/>——CodeVersion 仍取自已验证活动槽（事实源），
+        /// ResourceVersion / MinCompatibleVersion 取自发行记录。幂等：重复调用用同一结果覆盖写。
+        /// </summary>
+        /// <param name="record">被中断提交的发行记录（来自 ContentReleaseTransaction 的提交日志）。</param>
+        public static void CommitHotUpdateFromRecord(ContentReleaseRecord record)
+        {
+            if (record == null || record.IsEmpty)
+                return;
+
+            var reconstructed = new UpdateInfo
+            {
+                AppVersion = record.AppVersion,
+                ResourceVersion = record.ResourceVersion,
+                MinCompatibleVersion = record.MinCompatibleVersion,
+            };
+            CommitHotUpdate(reconstructed, record.ResourceChanged, record.CodeChanged);
+        }
+
         public static void SaveLocalVersion(UpdateInfo versionInfo)
         {
             if (versionInfo == null) return;

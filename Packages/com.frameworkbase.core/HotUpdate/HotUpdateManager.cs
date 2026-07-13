@@ -70,7 +70,20 @@ namespace Framework.HotUpdate
         public override void OnInit()
         {
             base.OnInit();
-            HotUpdateSlotManager.PrepareForLaunch();
+            // 代码槽启动恢复必须与内容发行事务的确认阶段崩溃日志保持一致：
+            // 若上次确认阶段被中断（CommitInProgress=true），该发行已被证明可启动，代码槽执行
+            // 幂等的“前滚确认”而非回滚——否则会出现“槽回滚到旧代码 + Catalog/配置已前滚到新内容”的错配
+            // （确认第一步之前崩溃的 W0 窗口）。状态损坏时读不到日志（返回 false），退化为常规回滚，
+            // 与内容侧的安全兜底一致。
+            if (ContentRelease.IsCommitInProgress)
+            {
+                HotUpdateSlotManager.ConfirmPendingSlot();
+                GameLog.Log("[HotUpdateManager] 检测到中断的确认提交，代码槽已前滚确认（与内容事务一致）。");
+            }
+            else
+            {
+                HotUpdateSlotManager.PrepareForLaunch();
+            }
             _patchDownloader = new PatchDownloader();
             _fileVerifier = new FileVerifier();
             GameLog.Log("[HotUpdateManager] 已初始化事务代码槽与强制验签链路。");
