@@ -270,22 +270,25 @@ namespace Framework.Tests
             tx1.BeginPending(NewRecord());
             WriteCatalogCache("new catalog");
 
-            // 模拟恢复失败：独占句柄锁住缓存文件，Directory.Delete 抛异常
+            // 模拟恢复时的 I/O 故障，且要求跨平台确定性成立：把缓存目录替换成同名文件。
+            // 恢复逻辑（CatalogCacheSnapshotManager.RestoreSnapshot）此时 Directory.Exists(缓存路径)
+            // 为 false 而跳过删除，随后 Directory.CreateDirectory(缓存路径) 因路径被文件占用，
+            // 在 Windows 与 Linux（CI）上都抛 IOException，走进"恢复失败保留快照"分支。
+            // 不用独占文件句柄：POSIX 文件锁是劝告性的，句柄无法阻断删除/覆盖，独占锁方案仅在
+            // Windows 成立，会让本用例在 Linux 容器里"恢复照样成功"从而误判失败。
             var snapshotDir = Path.Combine(_txRoot, "catalog-lkg");
-            ContentReleaseTransaction lockedTx;
-            using (new FileStream(
-                       Path.Combine(_cacheDir, "catalog_v.json"),
-                       FileMode.Open, FileAccess.Read, FileShare.None))
-            {
-                lockedTx = NewTransaction();
-                var report = lockedTx.PrepareForLaunch();
-                Assert.IsTrue(report.PendingRolledBack, "Pending 依旧被判定回滚");
-                Assert.IsFalse(report.CatalogRestored, "恢复失败必须如实上报");
-                Assert.IsTrue(Directory.Exists(snapshotDir), "恢复失败时快照必须保留，等待下次启动重试");
-                Assert.IsTrue(lockedTx.HasPending, "恢复失败时 Pending 必须保留作为回滚凭据");
-            }
+            Directory.Delete(_cacheDir, true);
+            File.WriteAllText(_cacheDir, "缓存路径被同名文件占用，恢复必然失败");
 
-            // 句柄释放后（模拟下次启动）：PrepareForLaunch 自动重试恢复成功
+            var lockedTx = NewTransaction();
+            var report = lockedTx.PrepareForLaunch();
+            Assert.IsTrue(report.PendingRolledBack, "Pending 依旧被判定回滚");
+            Assert.IsFalse(report.CatalogRestored, "恢复失败必须如实上报");
+            Assert.IsTrue(Directory.Exists(snapshotDir), "恢复失败时快照必须保留，等待下次启动重试");
+            Assert.IsTrue(lockedTx.HasPending, "恢复失败时 Pending 必须保留作为回滚凭据");
+
+            // 障碍清除后（模拟下次启动）：PrepareForLaunch 自动重试恢复成功
+            File.Delete(_cacheDir);
             var retryReport = NewTransaction().PrepareForLaunch();
             Assert.IsTrue(retryReport.PendingRolledBack);
             Assert.IsTrue(retryReport.CatalogRestored, "下次启动自动重试恢复成功");
