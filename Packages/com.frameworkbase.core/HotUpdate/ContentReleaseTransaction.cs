@@ -129,7 +129,20 @@ namespace Framework.HotUpdate
         /// 代码槽在启动恢复时执行<b>前滚确认</b>（幂等）而非回滚，与内容/配置/version 的前滚保持一致。
         /// 状态文件损坏时读不到日志，返回 false，退化为常规回滚（由启动准备阶段的安全兜底另行处理）。
         /// </summary>
-        public bool IsCommitInProgress => State.CommitInProgress;
+        /// <summary>确认提交重放所需的不可变发行记录；无有效提交日志时为空记录。</summary>
+        public ContentReleaseRecord Committing => State.Committing?.Clone() ?? new ContentReleaseRecord();
+
+        public bool IsCommitInProgress
+        {
+            get
+            {
+                ContentReleaseState state = State;
+                // 整包升级后旧版本提交日志绝不能驱动新原生运行时前滚。该判断必须在任何
+                // 代码槽恢复动作之前可用，因此不能只依赖 PrepareForLaunch 中稍后的版本隔离。
+                return state.CommitInProgress &&
+                       string.Equals(state.AppVersion, _appVersion, StringComparison.Ordinal);
+            }
+        }
 
         /// <summary>
         /// 启动准备（必须在 Addressables 初始化之前调用）。优先级从高到低：
@@ -379,6 +392,14 @@ namespace Framework.HotUpdate
         public void MarkPendingFailed(string reason)
         {
             ContentReleaseState state = State;
+            if (state.CommitInProgress)
+            {
+                // BeginCommit 是“回滚 → 前滚”的持久化决策点。提交日志一旦存在，任何异常都必须
+                // 保留日志和恢复材料，由本次重试或下次启动幂等前滚；此处再回滚会制造
+                // “提交日志要求前滚、实际内容却已回滚”的自相矛盾状态。
+                _logError($"[ContentRelease] 提交阶段已开始，忽略回滚请求（{reason}）；保留提交日志等待前滚重放。");
+                return;
+            }
             if (state.Pending.IsEmpty)
                 return;
 
@@ -430,6 +451,13 @@ namespace Framework.HotUpdate
                 state.Active ??= new ContentReleaseRecord();
                 state.LastKnownGood ??= new ContentReleaseRecord();
                 state.Committing ??= new ContentReleaseRecord();
+                if (state.CommitInProgress && state.Committing.IsEmpty)
+                {
+                    // 提交标志存在却缺失发行事实，无法判断应前滚到哪个版本；按状态损坏走快照恢复/出厂兜底。
+                    _logError("[ContentRelease] 提交日志缺少 Committing 发行记录，按状态损坏处理安全兜底。");
+                    _stateWasCorrupt = true;
+                    return NewState();
+                }
                 return state;
             }
             catch (Exception ex)

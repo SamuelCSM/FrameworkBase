@@ -13,6 +13,7 @@ namespace Framework.Core.Auth
         private IAuthBackend _backend;
         private IAuthPopupPresenter _popupPresenter;
         private CancellationTokenSource _loginCts;
+        private long _authOperationEpoch;
         private LoginRequestContext? _lastContext;
 
         /// <summary>当前登录状态。</summary>
@@ -105,13 +106,13 @@ namespace Framework.Core.Auth
             return ExecuteLoginAsync(context);
         }
 
-        /// <summary>取消当前登录。</summary>
+        /// <summary>
+        /// 取消当前登录。取消动作会先推进鉴权操作世代，使已经在网络层飞行中的旧响应即使迟到，
+        /// 也不能再写入会话、持久化令牌或覆盖后续登录状态。
+        /// </summary>
         public void CancelLogin()
         {
-            if (_loginCts == null) return;
-            _loginCts.Cancel();
-            _loginCts.Dispose();
-            _loginCts = null;
+            InvalidateActiveAuthOperation();
             SetState(LoginFlowState.Cancelled, "cancel_requested", TelemetryErrorCodes.Auth.LoginCancelled);
         }
 
@@ -119,21 +120,17 @@ namespace Framework.Core.Auth
         /// 统一登出：清空鉴权层自持的凭据 / 会话状态（内存 + 持久化），回到未登录态。
         /// 用户主动登出、服务端强制登出（顶号 / 封禁 / 会话失效）、渠道会话失效均汇聚到此。
         /// <para>
-        /// 覆盖：取消进行中的登录（若有）、清 <see cref="AuthSession"/> 内存态、清 <see cref="AuthSessionStore"/>
-        /// 持久化会话（防下次冷启动自动恢复已失效会话）、清空历史登录上下文 <c>_lastContext</c>
-        /// （防断线重连静默重鉴权一个已登出身份）。
+        /// 第一个动作必须是推进鉴权操作世代并取消当前请求：底层传输即使忽略取消、稍后返回成功，
+        /// 旧操作也会因世代不匹配被丢弃，禁止出现“登出后迟到响应重新保存 Token”的凭据复活。
         /// </para>
         /// <para>
         /// 边界：只清鉴权层自持状态。跨模块身份清理（存档目录 / 埋点 / 远配 / 崩溃归因）由组合根
-        /// （GameEntry）在收到登出 / 互踢信号时统一编排，鉴权层不反向依赖这些模块；平台渠道登出
-        /// （SDK LogoutAsync）由业务在需要时另行调用。
+        /// GameEntry 统一编排；平台渠道登出由渠道扩展或业务流程按产品语义调用。
         /// </para>
         /// </summary>
         public void Logout(string reason = "user")
         {
-            // 取消进行中的登录（若有）：让其观察到取消并自行收尾，避免登出后残留的登录结果污染状态。
-            _loginCts?.Cancel();
-
+            InvalidateActiveAuthOperation();
             AuthSession.Clear();
             AuthSessionStore.Clear();
             _lastContext = null;
@@ -141,7 +138,6 @@ namespace Framework.Core.Auth
             SetState(LoginFlowState.Idle, string.IsNullOrEmpty(reason) ? "logout" : $"logout:{reason}", string.Empty);
             GameLog.Log($"[AuthManager] 已登出并清除本地凭据 reason={reason}");
         }
-
         /// <summary>基于最近一次上下文重试。</summary>
         public UniTask<LoginResult> RetryLastLoginAsync()
         {
@@ -172,6 +168,7 @@ namespace Framework.Core.Auth
                 return true;
             }
 
+            long operationEpoch = Volatile.Read(ref _authOperationEpoch);
             LoginRequestContext context = _lastContext.Value;
 
             // 优先走令牌重绑：清空凭据字段，只携带令牌。
@@ -191,8 +188,16 @@ namespace Framework.Core.Auth
                 try
                 {
                     LoginResult result = await _backend.LoginAsync(attemptContext, timeoutController.Token);
+                    if (!IsAuthEpochCurrent(operationEpoch))
+                        return false;
+
                     if (result.Success)
                     {
+                        // 登出、切换账号或新的登录已经发生时，旧连接的重鉴权响应必须丢弃，
+                        // 不能把已失效身份重新写回内存和安全存储。
+                        if (!IsAuthEpochCurrent(operationEpoch))
+                            return false;
+
                         // 刷新会话令牌，保持与服务端最新签发一致，并同步刷新持久化会话。
                         AuthSession.Apply(result);
                         AuthSessionStore.Save(AuthSessionStore.BuildRecord(context.Mode, result, context.Account));
@@ -212,6 +217,9 @@ namespace Framework.Core.Auth
                         LoginResult guestResult = await _backend.LoginAsync(guestContext, timeoutController.Token);
                         if (guestResult.Success)
                         {
+                            if (!IsAuthEpochCurrent(operationEpoch))
+                                return false;
+
                             AuthSession.Apply(guestResult);
                             AuthSessionStore.Save(AuthSessionStore.BuildRecord(context.Mode, guestResult, context.Account));
                             GameLog.Log("[AuthManager] 令牌失效，已回退访客身份重新鉴权成功");
@@ -253,6 +261,11 @@ namespace Framework.Core.Auth
             if (_backend == null)
                 return LoginResult.Fail(TelemetryErrorCodes.Auth.Unknown, "backend not configured");
 
+            // 冷启动恢复作为新的身份操作参与世代竞争：玩家若在恢复期间主动登录或登出，
+            // 迟到的恢复响应不得覆盖更新的身份决策。
+            InvalidateActiveAuthOperation();
+            long operationEpoch = Volatile.Read(ref _authOperationEpoch);
+
             if (!AuthSessionStore.TryLoad(out AuthSessionStore.AuthSessionRecord record))
                 return LoginResult.Fail(TelemetryErrorCodes.Auth.Unknown, "no persisted session");
 
@@ -281,6 +294,9 @@ namespace Framework.Core.Auth
                     LoginResult result = await _backend.LoginAsync(context, timeoutController.Token);
                     if (result.Success)
                     {
+                        if (!IsAuthEpochCurrent(operationEpoch))
+                            return LoginResult.Fail(TelemetryErrorCodes.Auth.LoginCancelled, "stale session restore");
+
                         AuthSession.Apply(result);
                         AuthSessionStore.Save(AuthSessionStore.BuildRecord(mode, result, context.Account));
                         SetState(LoginFlowState.Success, "session_restored", string.Empty);
@@ -288,6 +304,9 @@ namespace Framework.Core.Auth
                         GameLog.Log("[AuthManager] 冷启动会话恢复成功");
                         return result;
                     }
+
+                    if (!IsAuthEpochCurrent(operationEpoch))
+                        return LoginResult.Fail(TelemetryErrorCodes.Auth.LoginCancelled, "stale session restore");
 
                     // 令牌被服务端拒绝：清持久化会话与内存态，回登录界面（不再静默）。
                     AuthSessionStore.Clear();
@@ -297,6 +316,9 @@ namespace Framework.Core.Auth
                 }
                 catch (Exception ex)
                 {
+                    if (!IsAuthEpochCurrent(operationEpoch))
+                        return LoginResult.Fail(TelemetryErrorCodes.Auth.LoginCancelled, "stale session restore");
+
                     // 网络异常/超时：不清持久化（可能只是暂时断网），本次回登录界面，下次冷启动可再试。
                     GameLog.Warning($"[AuthManager] 冷启动会话恢复异常: {ex.Message}");
                     return LoginResult.Fail(TelemetryErrorCodes.Auth.NetworkOffline, ex.Message);
@@ -307,11 +329,10 @@ namespace Framework.Core.Auth
         private async UniTask<LoginResult> ExecuteLoginAsync(LoginRequestContext context)
         {
             if (_backend == null)
-            {
                 return LoginResult.Fail(TelemetryErrorCodes.Auth.Unknown, "backend not configured");
-            }
 
-            // 同一时刻只允许一个登录流程，避免并发 race。
+            // 同一时刻只允许一个前台登录流程。真正的并发正确性不只依赖状态枚举，
+            // 还由下方 operationEpoch 保证：登出或新操作会使旧响应永久失效。
             if (State == LoginFlowState.Preparing ||
                 State == LoginFlowState.Connecting ||
                 State == LoginFlowState.Authenticating)
@@ -319,35 +340,42 @@ namespace Framework.Core.Auth
                 return LoginResult.Fail(TelemetryErrorCodes.Auth.LoginInProgress, "login in progress");
             }
 
+            long operationEpoch = BeginAuthOperation(out CancellationTokenSource operationCts);
             _lastContext = context;
             LastErrorCode = string.Empty;
-            RecreateLoginCts();
 
             try
             {
                 SetState(LoginFlowState.Preparing, "prepare_request", string.Empty);
-                await UniTask.Yield(PlayerLoopTiming.Update, _loginCts.Token);
+                await UniTask.Yield(PlayerLoopTiming.Update, operationCts.Token);
+                if (!IsCurrentAuthOperation(operationEpoch, operationCts))
+                    return LoginResult.Fail(TelemetryErrorCodes.Auth.LoginCancelled, "stale login operation");
 
                 SetState(LoginFlowState.Connecting, "connect_phase", string.Empty);
-                await UniTask.Delay(100, cancellationToken: _loginCts.Token);
+                await UniTask.Delay(100, cancellationToken: operationCts.Token);
+                if (!IsCurrentAuthOperation(operationEpoch, operationCts))
+                    return LoginResult.Fail(TelemetryErrorCodes.Auth.LoginCancelled, "stale login operation");
 
                 SetState(LoginFlowState.Authenticating, "auth_phase", string.Empty);
-                var timeoutController = new TimeoutController(context.TimeoutMs);
-                using (timeoutController)
-                using (CancellationTokenSource linked = CancellationTokenSource.CreateLinkedTokenSource(_loginCts.Token, timeoutController.Token))
+                using (var timeoutController = new TimeoutController(context.TimeoutMs))
+                using (CancellationTokenSource linked = CancellationTokenSource.CreateLinkedTokenSource(
+                           operationCts.Token, timeoutController.Token))
                 {
                     try
                     {
                         LoginResult result = await _backend.LoginAsync(context, linked.Token);
+
+                        // 这是所有凭据写入前的硬闸门。Logout/ForceLogout/新登录任一发生都会推进世代；
+                        // 即便底层 HTTP 忽略 CancellationToken 并返回成功，过期响应也只能被丢弃。
+                        if (!IsCurrentAuthOperation(operationEpoch, operationCts))
+                            return LoginResult.Fail(TelemetryErrorCodes.Auth.LoginCancelled, "stale login response");
+
                         if (result.Success)
                         {
                             AuthSession.Apply(result);
-                            // 会话持久化：供跨重启静默重登（冷启动恢复）。明文密码从不持久化。
                             AuthSessionStore.Save(AuthSessionStore.BuildRecord(context.Mode, result, context.Account));
 
-                            // 登录成功即从内存丢弃明文密码：后续断线重连改用会话令牌重绑
-                            // （ReauthenticateAsync），不再重放密码。保留账号名与模式供遥测/展示。
-                            // 失败路径不清——弹窗「重试」需要原始凭据重放。
+                            // 登录成功即从内存丢弃明文密码：后续断线重连只允许使用会话令牌。
                             context.Password = string.Empty;
                             _lastContext = context;
 
@@ -360,7 +388,10 @@ namespace Framework.Core.Auth
                     }
                     catch (Exception ex)
                     {
-                        bool isTimeout = timeoutController.IsTimeoutReached && !_loginCts.IsCancellationRequested;
+                        if (!IsCurrentAuthOperation(operationEpoch, operationCts))
+                            return LoginResult.Fail(TelemetryErrorCodes.Auth.LoginCancelled, "stale login operation");
+
+                        bool isTimeout = timeoutController.IsTimeoutReached && !operationCts.IsCancellationRequested;
                         string errorCode = AuthErrorMapper.MapException(ex, isTimeout);
                         return await HandleLoginFailureAsync(errorCode, ex.Message);
                     }
@@ -368,15 +399,17 @@ namespace Framework.Core.Auth
             }
             catch (Exception ex)
             {
+                if (!IsCurrentAuthOperation(operationEpoch, operationCts))
+                    return LoginResult.Fail(TelemetryErrorCodes.Auth.LoginCancelled, "stale login operation");
+
                 string errorCode = AuthErrorMapper.MapException(ex, isTimeout: false);
                 return await HandleLoginFailureAsync(errorCode, ex.Message);
             }
             finally
             {
-                DisposeLoginCts();
+                CompleteAuthOperation(operationEpoch, operationCts);
             }
         }
-
         private async UniTask<LoginResult> HandleLoginFailureAsync(string errorCode, string errorMessage)
         {
             LastErrorCode = string.IsNullOrEmpty(errorCode) ? TelemetryErrorCodes.Auth.Unknown : errorCode;
@@ -412,19 +445,46 @@ namespace Framework.Core.Auth
             GameLog.Log($"[AuthFlow] state={state}, reason={snapshot.Reason}, code={snapshot.ErrorCode}");
         }
 
-        private void RecreateLoginCts()
+        /// <summary>
+        /// 开启新的前台鉴权操作，并返回该操作独占的 CTS。旧 CTS 只取消、不由新操作释放；
+        /// 创建者在 finally 中释放自己的 CTS，避免旧操作退出时误释放新登录的取消源。
+        /// </summary>
+        private long BeginAuthOperation(out CancellationTokenSource operationCts)
         {
-            DisposeLoginCts();
-            _loginCts = new CancellationTokenSource();
+            long epoch = Interlocked.Increment(ref _authOperationEpoch);
+            operationCts = new CancellationTokenSource();
+            CancellationTokenSource previous = Interlocked.Exchange(ref _loginCts, operationCts);
+            try { previous?.Cancel(); } catch (ObjectDisposedException) { }
+            return epoch;
         }
 
-        private void DisposeLoginCts()
+        /// <summary>
+        /// 使当前及更早的所有异步鉴权结果失效。调用者不释放 CTS，所有权仍属于创建该操作的异步流程。
+        /// </summary>
+        private void InvalidateActiveAuthOperation()
         {
-            if (_loginCts == null) return;
-            _loginCts.Dispose();
-            _loginCts = null;
+            Interlocked.Increment(ref _authOperationEpoch);
+            CancellationTokenSource current = Interlocked.Exchange(ref _loginCts, null);
+            try { current?.Cancel(); } catch (ObjectDisposedException) { }
         }
 
+        /// <summary>判断回调是否仍属于当前有效鉴权操作。</summary>
+        private bool IsCurrentAuthOperation(long epoch, CancellationTokenSource operationCts)
+        {
+            return Volatile.Read(ref _authOperationEpoch) == epoch &&
+                   ReferenceEquals(Volatile.Read(ref _loginCts), operationCts);
+        }
+
+        /// <summary>仅释放调用方自己创建的 CTS；旧操作不得清理新操作字段。</summary>
+        private void CompleteAuthOperation(long epoch, CancellationTokenSource operationCts)
+        {
+            if (Volatile.Read(ref _authOperationEpoch) == epoch)
+                Interlocked.CompareExchange(ref _loginCts, null, operationCts);
+            operationCts.Dispose();
+        }
+
+        /// <summary>仅检查操作世代，用于没有占用前台登录 CTS 的冷启动恢复与重鉴权流程。</summary>
+        private bool IsAuthEpochCurrent(long epoch) => Volatile.Read(ref _authOperationEpoch) == epoch;
         /// <summary>
         /// 小型超时控制器：避免把超时逻辑散落在主流程里。
         /// </summary>

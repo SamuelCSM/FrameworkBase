@@ -115,6 +115,11 @@ namespace Framework.Core
                 //   - 配置：恢复上一份已确认数据库（.bak 由 ConfigDatabaseInstaller 保留至确认点）；
                 //   - 代码槽：HotUpdateSlotManager.PrepareForLaunch 在程序集加载前自行回滚（既有机制）。
                 // 内容级 Crash-loop（已确认发行连续启动失败）触发出厂回退：清 Catalog 缓存 + 恢复出厂配置。
+                // 提交阶段中断时必须先前滚代码槽。只有代码槽校验并确认成功后，内容事务才可
+                // 丢弃 Catalog 快照并继续前滚配置和 version；否则应保留提交日志，等待修复或下次重试。
+                if (GameEntry.HotUpdate.ContentRelease.IsCommitInProgress)
+                    GameEntry.HotUpdate.ReplayPendingCommitCodeSlot(GameEntry.HotUpdate.ContentRelease.Committing);
+
                 var recovery = GameEntry.HotUpdate.ContentRelease.PrepareForLaunch();
                 if (recovery.CommitReplayed)
                 {
@@ -411,6 +416,15 @@ namespace Framework.Core
         /// </summary>
         private static void AbortPendingContent(string reason)
         {
+            // BeginCommit 已经把事务决策持久化为“必须前滚”。此后任何确认步骤异常都不得再执行
+            // 代码槽、Catalog 和配置回滚，否则会留下“提交日志要求前滚、实际内容已回滚”的矛盾状态。
+            // 保留提交日志和所有恢复材料，本次启动失败退出；重试或下次启动由 Step1.5 幂等补完。
+            if (GameEntry.HotUpdate?.ContentRelease?.IsCommitInProgress == true)
+            {
+                Debug.LogError($"[LaunchFlow] 确认提交阶段异常（{reason}），已保留提交日志等待前滚重放，禁止回滚待确认内容。");
+                return;
+            }
+
             try { GameEntry.HotUpdate?.MarkPendingUpdateFailed(reason); }
             catch (Exception ex) { Debug.LogError($"[LaunchFlow] 代码槽回滚异常：{ex.Message}"); }
 

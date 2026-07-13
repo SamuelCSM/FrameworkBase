@@ -74,6 +74,38 @@ namespace Framework.Tests
         }
 
         [Test]
+        public void 确认提交重放_新进程直接前滚Pending槽_不得先执行普通启动回滚()
+        {
+            Commit(CreateUpdate(2, 0x22));
+            HotUpdateSlotManager.ConfirmPendingSlot();
+            UpdateInfo version3 = CreateUpdate(3, 0x33);
+            Commit(version3);
+            var committing = new ContentReleaseRecord
+            {
+                ReleaseId = version3.ManifestId,
+                AppVersion = version3.AppVersion,
+                ResourceVersion = version3.ResourceVersion,
+                CodeVersion = version3.CodeVersion,
+                ResourceChanged = false,
+                CodeChanged = true,
+            };
+
+            // 模拟确认提交日志已经落盘后进程退出：新进程静态内存状态为空。
+            // 专用重放入口必须直接读盘确认 v3；若内部误走 CurrentState→PrepareForLaunch，v3 会先被回滚到 v2。
+            HotUpdateSlotManager.ResetStateForTests();
+            HotUpdateSlotManager.ReplayPendingConfirmationForCommit(committing);
+
+            Assert.IsTrue(HotUpdateSlotManager.TryGetActiveCodeVersion(out int replayed));
+            Assert.AreEqual(3, replayed, "确认提交重放必须前滚新代码槽，不能回滚到旧 LKG");
+
+            // 再次重放必须幂等，不得误伤已经确认的活动槽。
+            HotUpdateSlotManager.ResetStateForTests();
+            HotUpdateSlotManager.ReplayPendingConfirmationForCommit(committing);
+            Assert.IsTrue(HotUpdateSlotManager.TryGetActiveCodeVersion(out int replayedAgain));
+            Assert.AreEqual(3, replayedAgain);
+        }
+
+        [Test]
         public void Staging夹带清单外文件_拒绝提交()
         {
             UpdateInfo update = CreateUpdate(2, 0x44);

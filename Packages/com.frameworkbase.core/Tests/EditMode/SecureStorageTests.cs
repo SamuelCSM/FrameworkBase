@@ -1,7 +1,9 @@
 using System.Collections.Generic;
+using System.Text.RegularExpressions;
 using Framework.Security;
 using NUnit.Framework;
 using UnityEngine;
+using UnityEngine.TestTools;
 
 namespace Framework.Tests
 {
@@ -136,6 +138,7 @@ namespace Framework.Tests
 
             // 业务误用保留键 "__index__"：应被拒绝（不写入、读不到、Contains=false），
             // 且不覆盖 / 污染 DeleteAll 依赖的键索引。
+            LogAssert.Expect(LogType.Error, new Regex(".*撞内部保留键.*"));
             s.Set("__index__", "attacker");
             Assert.IsFalse(s.Contains("__index__"));
             Assert.IsFalse(s.TryGet("__index__", out _));

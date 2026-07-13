@@ -373,6 +373,88 @@ namespace Framework.HotUpdate
         }
 
         /// <summary>
+        /// 确认阶段崩溃恢复专用：从磁盘直接读取代码槽状态，并把待确认槽幂等前滚为 LKG。
+        /// <para>
+        /// 与 <see cref="ConfirmPendingSlot"/> 的普通运行时入口不同，本方法禁止经
+        /// <see cref="PrepareForLaunch"/> 初始化，因为普通启动准备会把 Pending 解释为“上次启动失败”并先行回滚，
+        /// 从而破坏内容事务 <c>CommitInProgress</c> 已经作出的前滚决策。
+        /// </para>
+        /// <para>
+        /// 安全边界：整包版本不一致、Pending/Active 不一致、槽文件完整性失败均抛异常并保留提交日志，
+        /// 上层不得继续提交 Catalog、配置或版本事实状态。无 Pending 表示此前已完成代码槽确认，按幂等成功处理。
+        /// </para>
+        /// </summary>
+        internal static void ReplayPendingConfirmationForCommit(ContentReleaseRecord record)
+        {
+            if (record == null || record.IsEmpty)
+                throw new InvalidDataException("中断提交缺少有效内容发行记录，拒绝猜测代码槽版本。");
+            lock (Sync)
+            {
+                EnsureDirectories();
+                CleanupStagingDirectories();
+
+                // 直接读盘，刻意绕过 CurrentState() → PrepareForLaunch() 的普通回滚语义。
+                InstallState state = LoadState();
+                if (!string.Equals(state.AppVersion, Application.version, StringComparison.Ordinal))
+                {
+                    throw new InvalidDataException(
+                        $"中断提交的代码槽 AppVersion={state.AppVersion} 与当前整包 {Application.version} 不一致，拒绝跨整包前滚。");
+                }
+
+                if (string.IsNullOrEmpty(state.PendingConfirmationSlot))
+                {
+                    // 幂等重放：可能在上次进程中代码槽已经确认，只是后续内容确认尚未完成。
+                    if (!string.IsNullOrEmpty(state.ActiveSlot) && !ValidateSlot(state.ActiveSlot, out string activeReason))
+                        throw new InvalidDataException($"中断提交的活动代码槽无效：{activeReason}");
+
+                    if (record.CodeChanged)
+                    {
+                        if (string.IsNullOrEmpty(state.ActiveSlot) ||
+                            !TryReadSlotManifest(state.ActiveSlot, out SlotManifest activeManifest) ||
+                            activeManifest.CodeVersion != record.CodeVersion)
+                        {
+                            throw new InvalidDataException(
+                                $"中断提交要求代码版本 {record.CodeVersion}，但已确认活动槽版本不一致或不存在。");
+                        }
+                    }
+
+                    state.UnconfirmedLaunchCount = 0;
+                    state.UpdatedAtUnixSeconds = Now();
+                    SaveState(state);
+                    _state = state;
+                    return;
+                }
+
+                if (!record.CodeChanged)
+                    throw new InvalidDataException("内容提交记录声明未更新代码，但代码槽仍存在 Pending，拒绝不一致状态前滚。");
+
+                string reason = null;
+                if (!string.Equals(state.PendingConfirmationSlot, state.ActiveSlot, StringComparison.Ordinal) ||
+                    !ValidateSlot(state.ActiveSlot, out reason))
+                {
+                    throw new InvalidDataException(
+                        $"中断提交的待确认代码槽无效：{reason ?? "Pending 与 Active 状态不一致"}");
+                }
+
+                if (!TryReadSlotManifest(state.ActiveSlot, out SlotManifest pendingManifest) ||
+                    pendingManifest.CodeVersion != record.CodeVersion)
+                {
+                    throw new InvalidDataException(
+                        $"中断提交代码槽版本={pendingManifest?.CodeVersion.ToString() ?? "未知"}，与发行记录版本={record.CodeVersion} 不一致。");
+                }
+
+                state.LastKnownGoodSlot = state.ActiveSlot;
+                state.PendingConfirmationSlot = string.Empty;
+                state.UnconfirmedLaunchCount = 0;
+                state.UpdatedAtUnixSeconds = Now();
+                SaveState(state);
+                _state = state;
+                CleanupObsoleteSlots(state);
+                GameLog.Log($"[HotUpdateSlots] 中断提交的代码槽已前滚确认并提升为 LKG：{state.ActiveSlot}");
+            }
+        }
+
+        /// <summary>
         /// 将当前 Pending 槽标记为启动失败，并立即把持久化 Active 指针回滚到上一 LKG。
         /// 当前进程已加载的程序集无法从 AppDomain 卸载，因此调用方仍应结束本次启动或重启进程，不能在同一进程内假装完成代码回滚。
         /// </summary>

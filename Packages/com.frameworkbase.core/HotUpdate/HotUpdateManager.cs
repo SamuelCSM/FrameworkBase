@@ -70,19 +70,16 @@ namespace Framework.HotUpdate
         public override void OnInit()
         {
             base.OnInit();
-            // 代码槽启动恢复必须与内容发行事务的确认阶段崩溃日志保持一致：
-            // 若上次确认阶段被中断（CommitInProgress=true），该发行已被证明可启动，代码槽执行
-            // 幂等的“前滚确认”而非回滚——否则会出现“槽回滚到旧代码 + Catalog/配置已前滚到新内容”的错配
-            // （确认第一步之前崩溃的 W0 窗口）。状态损坏时读不到日志（返回 false），退化为常规回滚，
-            // 与内容侧的安全兜底一致。
-            if (ContentRelease.IsCommitInProgress)
+            // 普通启动必须先执行代码槽回滚准备；但确认提交日志存在时不能调用 PrepareForLaunch，
+            // 因为它会把 Pending 槽解释为“上次启动失败”并回滚。前滚确认延后到 LaunchFlow Step1.5，
+            // 由内容事务恢复编排先确认代码槽成功，再允许 Catalog、配置和 version 继续前滚。
+            if (!ContentRelease.IsCommitInProgress)
             {
-                HotUpdateSlotManager.ConfirmPendingSlot();
-                GameLog.Log("[HotUpdateManager] 检测到中断的确认提交，代码槽已前滚确认（与内容事务一致）。");
+                HotUpdateSlotManager.PrepareForLaunch();
             }
             else
             {
-                HotUpdateSlotManager.PrepareForLaunch();
+                GameLog.Warning("[HotUpdateManager] 检测到中断的确认提交，代码槽普通启动回滚已暂停，等待 Step1.5 前滚重放。");
             }
             _patchDownloader = new PatchDownloader();
             _fileVerifier = new FileVerifier();
@@ -577,6 +574,13 @@ namespace Framework.HotUpdate
         }
 
         public void ConfirmPendingUpdate() => HotUpdateSlotManager.ConfirmPendingSlot();
+
+        /// <summary>
+        /// 确认阶段崩溃恢复专用：幂等前滚代码槽，不得触发普通启动的 Pending 回滚逻辑。
+        /// 仅由 LaunchFlow Step1.5 在内容事务确认 <c>CommitInProgress</c> 后调用。
+        /// </summary>
+        public void ReplayPendingCommitCodeSlot(ContentReleaseRecord record) =>
+            HotUpdateSlotManager.ReplayPendingConfirmationForCommit(record);
 
         public void MarkPendingUpdateFailed(string reason) => HotUpdateSlotManager.MarkPendingSlotFailed(reason);
 
