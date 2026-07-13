@@ -27,6 +27,12 @@ namespace Framework.HotUpdate
         /// <summary>发行代码版本。</summary>
         public int CodeVersion;
 
+        /// <summary>
+        /// 发行要求的最低兼容整包版本（来自已签名清单 UpdateInfo.MinCompatibleVersion）。
+        /// 随发行记录持久化，使确认阶段崩溃后能在不重新联网的情况下前滚重建 version.json。
+        /// </summary>
+        public string MinCompatibleVersion = string.Empty;
+
         /// <summary>关联的代码槽 ID（HotUpdateSlotManager）；本次无代码更新时为空。</summary>
         public string CodeSlotId = string.Empty;
 
@@ -55,6 +61,7 @@ namespace Framework.HotUpdate
             AppVersion = AppVersion,
             ResourceVersion = ResourceVersion,
             CodeVersion = CodeVersion,
+            MinCompatibleVersion = MinCompatibleVersion,
             CodeSlotId = CodeSlotId,
             ResourceChanged = ResourceChanged,
             CodeChanged = CodeChanged,
@@ -75,11 +82,27 @@ namespace Framework.HotUpdate
     [Serializable]
     public sealed class ContentReleaseState
     {
-        /// <summary>状态文件结构版本；字段变更必须递增并保持旧版本可读（失败安全：读不懂即重置）。</summary>
-        public int SchemaVersion = 1;
+        /// <summary>
+        /// 状态文件结构版本；字段变更必须递增并保持旧版本可读（失败安全：读不懂即重置）。
+        /// v1→v2：新增确认阶段崩溃原子性日志（<see cref="CommitInProgress"/> / <see cref="Committing"/>）。
+        /// </summary>
+        public int SchemaVersion = 2;
 
         /// <summary>状态所属整包版本；不一致时整个状态被隔离重置。</summary>
         public string AppVersion = string.Empty;
+
+        /// <summary>
+        /// 确认阶段崩溃原子性日志：进入统一确认点后、四类内容（代码槽/Catalog/配置/version）
+        /// 全部确认落盘之前，此标记为 true。它是"回滚 ↔ 前滚"的原子开关——在第一步确认之前落盘、
+        /// 全部确认之后清除。下次启动若发现此标记为 true，说明本次发行已被证明可启动
+        /// （日志只在 HotfixEntry.Start 成功后写入），必须<b>前滚补完</b>剩余确认而非回滚，
+        /// 避免"新代码 + 旧 Catalog/配置"或"version.json 滞后"的错配。
+        /// </summary>
+        public bool CommitInProgress;
+
+        /// <summary>正在确认（提交中）的发行记录；<see cref="CommitInProgress"/> 为 true 时有效，
+        /// 承载前滚重放 version.json 所需的资源/代码版本与最低兼容版本。</summary>
+        public ContentReleaseRecord Committing = new ContentReleaseRecord();
 
         /// <summary>已安装未确认的发行。存在即说明上次启动未走到统一确认点，下次启动必须回滚。</summary>
         public ContentReleaseRecord Pending = new ContentReleaseRecord();

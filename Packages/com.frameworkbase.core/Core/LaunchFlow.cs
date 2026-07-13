@@ -116,17 +116,33 @@ namespace Framework.Core
                 //   - 代码槽：HotUpdateSlotManager.PrepareForLaunch 在程序集加载前自行回滚（既有机制）。
                 // 内容级 Crash-loop（已确认发行连续启动失败）触发出厂回退：清 Catalog 缓存 + 恢复出厂配置。
                 var recovery = GameEntry.HotUpdate.ContentRelease.PrepareForLaunch();
-                if (recovery.PendingRolledBack || GameEntry.RefData.HasUnconfirmedDatabaseBackup)
+                if (recovery.CommitReplayed)
                 {
-                    GameEntry.RefData.RestoreLastConfirmedDatabaseIfAny();
+                    // 确认阶段被中断：内容侧已前滚（PrepareForLaunch 内），代码槽已前滚（HotUpdateManager.OnInit）。
+                    // 此处幂等前滚补完配置与 version.json，最后清除提交日志，使四类内容一致地停在“新内容”。
+                    GameEntry.RefData.ConfirmHotUpdateDatabase();
+                    HotUpdate.VersionManager.CommitHotUpdateFromRecord(recovery.CommittingRecord);
+                    GameEntry.HotUpdate.ContentRelease.EndCommit();
+                    Debug.LogWarning($"[LaunchFlow] Step 1.5  检测到确认阶段被中断的提交 {recovery.CommittingRecord.ReleaseId}，已前滚补完全部内容");
                 }
-                if (recovery.FactoryResetPerformed)
+                else
                 {
-                    GameEntry.RefData.ResetDatabaseToFactoryBaseline();
-                    Debug.LogWarning("[LaunchFlow] Step 1.5  内容级崩溃循环，已回退出厂内容基线（安全恢复模式）");
+                    if (recovery.PendingRolledBack || recovery.StateCorruptionHandled ||
+                        GameEntry.RefData.HasUnconfirmedDatabaseBackup)
+                    {
+                        GameEntry.RefData.RestoreLastConfirmedDatabaseIfAny();
+                    }
+                    if (recovery.FactoryResetPerformed)
+                    {
+                        GameEntry.RefData.ResetDatabaseToFactoryBaseline();
+                        string cause = recovery.StateCorruptionHandled ? "状态损坏且无快照" : "内容级崩溃循环";
+                        Debug.LogWarning($"[LaunchFlow] Step 1.5  {cause}，已回退出厂内容基线（安全恢复模式）");
+                    }
+                    if (recovery.StateCorruptionHandled && !recovery.FactoryResetPerformed)
+                        Debug.LogWarning("[LaunchFlow] Step 1.5  状态文件损坏，已恢复上一份 LKG 内容（安全兜底）");
+                    if (recovery.PendingRolledBack)
+                        Debug.LogWarning($"[LaunchFlow] Step 1.5  未确认发行 {recovery.RolledBackReleaseId} 已回滚");
                 }
-                if (recovery.PendingRolledBack)
-                    Debug.LogWarning($"[LaunchFlow] Step 1.5  未确认发行 {recovery.RolledBackReleaseId} 已回滚");
 
                 // ── Step 2: 初始化 Addressables ───────────────────
                 var step2 = LaunchTelemetryHelper.BeginPhaseMetric(runMetric, LaunchPhase.AddressablesInit, "step02_addressables_init");
@@ -208,6 +224,7 @@ namespace Framework.Core
                             AppVersion = Application.version,
                             ResourceVersion = serverVersion.ResourceVersion,
                             CodeVersion = serverVersion.CodeVersion,
+                            MinCompatibleVersion = serverVersion.MinCompatibleVersion ?? string.Empty,
                             ResourceChanged = resourceUpdated,
                             CodeChanged = codeWillUpdate,
                         }))
@@ -289,12 +306,15 @@ namespace Framework.Core
                     loading.SetProgress(0.95f);
                     Debug.Log("[LaunchFlow] 热更已关闭（AppConfig.EnableHotUpdate=false），跳过 AOT 元数据 / 热更程序集 / StartHotfix");
                     // 纯框架模式的统一确认点：无 Hotfix 入口即视为启动就绪，内容事务在此确认。
+                    // 同样用 BeginCommit/EndCommit 包裹，确保确认阶段中断可前滚补完（无代码槽，仅内容/配置/version）。
+                    GameEntry.HotUpdate.ContentRelease.BeginCommit();
                     GameEntry.HotUpdate.ContentRelease.ConfirmPending();
                     GameEntry.RefData.ConfirmHotUpdateDatabase();
                     HotUpdate.VersionManager.CommitHotUpdate(
                         serverVersion,
                         resourceUpdateResult.ResourceUpdated,
                         codeUpdated: false);
+                    GameEntry.HotUpdate.ContentRelease.EndCommit();
                     await loading.HideAsync();
                     Debug.Log("[LaunchFlow] ========== 启动流程完成（纯框架模式）==========");
                     LaunchTelemetryHelper.FinalizeRunMetric(runMetric, true, TelemetryErrorCodes.Launch.Ok);
@@ -342,11 +362,16 @@ namespace Framework.Core
                     return LaunchFlowOutcome.Failed;
                 }
                 // ── 统一启动确认点：只有走到这里，本次发行的全部内容才被承认 ──────
-                // 确认顺序（任一步抛异常都会走 catch 的 AbortPendingContent 整体回滚）：
+                // 崩溃原子性：四类内容分属四个独立持久化文件，无法一次原子提交。BeginCommit 先落盘
+                // 提交日志（回滚↔前滚的原子开关），四步确认之后 EndCommit 清除日志。进程若在任意两步之间
+                // 被杀，下次启动检测到提交日志即“前滚补完”而非回滚（HotUpdateManager 前滚代码槽、
+                // Step1.5 前滚内容/配置/version），杜绝“新代码 + 旧 Catalog/配置”错配。
+                // 确认顺序（进程内任一步抛异常仍走 catch 的 AbortPendingContent 整体回滚）：
                 //   1. 代码槽 Pending → LKG（HotUpdateSlotManager）；
                 //   2. 内容事务 Pending → Active + LKG，丢弃 Catalog 快照（当前缓存成为新 LKG Catalog）；
                 //   3. 配置数据库备份清理（新库正式生效）；
                 //   4. version.json 提交（事实源：槽清单代码版本 + 本次确认的资源版本）。
+                GameEntry.HotUpdate.ContentRelease.BeginCommit();
                 GameEntry.HotUpdate.ConfirmPendingUpdate();
                 GameEntry.HotUpdate.ContentRelease.ConfirmPending();
                 GameEntry.RefData.ConfirmHotUpdateDatabase();
@@ -354,6 +379,7 @@ namespace Framework.Core
                     serverVersion,
                     resourceUpdateResult.ResourceUpdated,
                     codeUpdated);
+                GameEntry.HotUpdate.ContentRelease.EndCommit();
                 Debug.Log("[LaunchFlow] Step 9  游戏逻辑启动完成");
                 LaunchTelemetryHelper.EndPhaseMetric(step9, true);
 

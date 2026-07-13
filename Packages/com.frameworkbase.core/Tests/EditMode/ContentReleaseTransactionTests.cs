@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using Framework.HotUpdate;
+using Framework.Serialization;
 using NUnit.Framework;
 
 namespace Framework.Tests
@@ -58,6 +59,23 @@ namespace Framework.Tests
 
         private string ReadCatalogCache() =>
             File.ReadAllText(Path.Combine(_cacheDir, "catalog_v.json"));
+
+        private string StatePath => Path.Combine(_txRoot, "release-state.json");
+        private string SnapshotDir => Path.Combine(_txRoot, "catalog-lkg");
+
+        /// <summary>把状态文件写坏（模拟落盘掉电写坏），触发启动准备阶段的安全兜底。</summary>
+        private void CorruptStateFile()
+        {
+            Directory.CreateDirectory(_txRoot);
+            File.WriteAllText(StatePath, "not a valid json !!!");
+        }
+
+        /// <summary>用指定结构版本写出一份状态（格式无关，避免依赖 JSON 缩进/大小写）。</summary>
+        private void WriteRawState(ContentReleaseState state)
+        {
+            Directory.CreateDirectory(_txRoot);
+            File.WriteAllText(StatePath, JsonSerializers.Shared.ToJson(state, true));
+        }
 
         // ── 成功路径：统一确认 ────────────────────────────────────────────────
 
@@ -204,7 +222,7 @@ namespace Framework.Tests
         // ── 失败安全 ─────────────────────────────────────────────────────────
 
         [Test]
-        public void 状态文件损坏_失败安全视为无状态_不执行半信半疑的回滚()
+        public void 状态文件损坏_失败安全不抛异常且走安全兜底_不静默信任当前内容()
         {
             Directory.CreateDirectory(_txRoot);
             File.WriteAllText(Path.Combine(_txRoot, "release-state.json"), "{ 这不是合法 JSON ///");
@@ -213,8 +231,14 @@ namespace Framework.Tests
             var tx = NewTransaction();
             ContentReleaseTransaction.LaunchRecoveryReport report = null;
             Assert.DoesNotThrow(() => report = tx.PrepareForLaunch(), "损坏状态不得抛异常中断启动");
-            Assert.IsFalse(report.PendingRolledBack, "损坏状态视为无 Pending，禁止猜测性回滚");
-            Assert.AreEqual("catalog", ReadCatalogCache(), "Catalog 缓存不被触碰");
+            // 策略变更（#2）：损坏状态不再"当作无状态继续信任当前 Catalog"——那样可能放行事务中途
+            // 写坏的、与旧代码槽错配的新 Catalog。改为安全兜底：无法证明已确认时优先恢复快照，无快照则回退出厂。
+            Assert.IsTrue(report.StateCorruptionHandled,
+                "损坏状态必须走安全兜底（恢复快照/回退出厂），不得静默继续信任当前内容");
+            Assert.IsFalse(report.PendingRolledBack, "损坏时不基于垃圾数据做猜测性 Pending 回滚");
+            // 本用例无快照 → 回退出厂：分层兜底的两个分支分别由
+            // 状态文件损坏_有快照_恢复快照不回退出厂 / 状态文件损坏_无快照_回退出厂 详测。
+            Assert.IsTrue(report.FactoryResetPerformed, "无快照可恢复时回退出厂");
         }
 
         [Test]
@@ -309,6 +333,193 @@ namespace Framework.Tests
             Assert.IsFalse(restored, "损坏快照不得执行半信半疑的恢复");
             Assert.AreEqual("current", ReadCatalogCache(), "缓存不被触碰");
             Assert.IsFalse(snapshot.HasSnapshot, "损坏快照被丢弃，不再反复尝试");
+        }
+
+        // ── #1 确认阶段崩溃原子性：Committing 日志 + 前滚重放 ──────────────────────
+
+        [Test]
+        public void 确认阶段中断_内容确认前崩溃_下次启动前滚不回滚()
+        {
+            WriteCatalogCache("old catalog");
+            var tx = NewTransaction();
+            tx.PrepareForLaunch();
+            tx.BeginPending(NewRecord("rel-commit"));
+            WriteCatalogCache("new catalog"); // UpdateCatalogs 覆盖缓存
+            tx.BeginCommit();                 // 进入提交（代码槽已在别处确认，本用例不建模）
+            // 崩溃：ConfirmPending 之前进程被杀 → 用全新事务模拟下次启动重新加载
+
+            var replayer = NewTransaction();
+            var report = replayer.PrepareForLaunch();
+            Assert.IsTrue(report.CommitReplayed, "检测到中断提交必须前滚，绝不回滚");
+            Assert.AreEqual("rel-commit", report.CommittingRecord.ReleaseId);
+            Assert.AreEqual("new catalog", ReadCatalogCache(), "前滚：Catalog 停在新内容");
+
+            var after = NewTransaction();
+            Assert.IsFalse(after.HasPending, "前滚后 Pending 已清空");
+            Assert.AreEqual("rel-commit", after.Active.ReleaseId, "前滚后发行提升为 Active");
+            Assert.IsTrue(after.IsCommitInProgress, "内容侧前滚后提交日志仍在，待调用方 EndCommit");
+
+            replayer.EndCommit(); // 模拟 LaunchFlow 补完配置/version 后清日志
+            Assert.IsFalse(NewTransaction().IsCommitInProgress, "EndCommit 后提交日志清除");
+        }
+
+        [Test]
+        public void 确认阶段中断_内容已确认配置前崩溃_前滚补完清日志()
+        {
+            WriteCatalogCache("old catalog");
+            var tx = NewTransaction();
+            tx.PrepareForLaunch();
+            tx.BeginPending(NewRecord("rel-commit"));
+            WriteCatalogCache("new catalog");
+            tx.BeginCommit();
+            tx.ConfirmPending(); // 内容已确认（Pending→Active），配置/version 未提交即崩溃
+
+            var replayer = NewTransaction();
+            var report = replayer.PrepareForLaunch();
+            Assert.IsTrue(report.CommitReplayed);
+            Assert.AreEqual("rel-commit", report.CommittingRecord.ReleaseId, "Pending 已空时记录取自提交日志");
+            Assert.AreEqual("new catalog", ReadCatalogCache());
+            replayer.EndCommit();
+            Assert.IsFalse(NewTransaction().IsCommitInProgress);
+        }
+
+        [Test]
+        public void 确认提交完整完成_下次启动正常无前滚()
+        {
+            WriteCatalogCache("old catalog");
+            var tx = NewTransaction();
+            tx.PrepareForLaunch();
+            tx.BeginPending(NewRecord("rel-commit"));
+            WriteCatalogCache("new catalog");
+            tx.BeginCommit();
+            tx.ConfirmPending();
+            tx.EndCommit();
+
+            var report = NewTransaction().PrepareForLaunch();
+            Assert.IsFalse(report.CommitReplayed, "提交已完成，下次启动不前滚");
+            Assert.IsFalse(report.PendingRolledBack, "已确认发行不回滚");
+            Assert.AreEqual("new catalog", ReadCatalogCache());
+        }
+
+        [Test]
+        public void 无Pending时BeginCommit空操作_不产生提交日志()
+        {
+            WriteCatalogCache("old catalog");
+            var tx = NewTransaction();
+            tx.PrepareForLaunch();
+            tx.BeginCommit(); // 本次无新发行
+            Assert.IsFalse(tx.IsCommitInProgress, "无 Pending 不产生提交日志");
+            Assert.IsFalse(NewTransaction().PrepareForLaunch().CommitReplayed);
+        }
+
+        [Test]
+        public void 前滚重放幂等_重放中再崩溃下次启动结果一致()
+        {
+            WriteCatalogCache("old catalog");
+            var tx = NewTransaction();
+            tx.PrepareForLaunch();
+            tx.BeginPending(NewRecord("rel-commit"));
+            WriteCatalogCache("new catalog");
+            tx.BeginCommit();
+
+            // 第一次前滚（模拟 EndCommit 之前又崩溃：不清日志）
+            Assert.IsTrue(NewTransaction().PrepareForLaunch().CommitReplayed);
+            // 第二次前滚（下次启动重放）
+            var replayer = NewTransaction();
+            var r2 = replayer.PrepareForLaunch();
+            Assert.IsTrue(r2.CommitReplayed, "重放仍前滚，幂等");
+            Assert.AreEqual("rel-commit", r2.CommittingRecord.ReleaseId);
+            Assert.AreEqual("new catalog", ReadCatalogCache());
+            replayer.EndCommit();
+            Assert.IsFalse(NewTransaction().PrepareForLaunch().CommitReplayed, "清日志后不再前滚");
+        }
+
+        [Test]
+        public void 确认阶段中断后整包升级_旧版本提交被隔离不前滚()
+        {
+            WriteCatalogCache("old catalog");
+            var tx = NewTransaction(AppV1);
+            tx.PrepareForLaunch();
+            tx.BeginPending(NewRecord("rel-commit", AppV1));
+            WriteCatalogCache("new catalog");
+            tx.BeginCommit(); // 提交中断（CommitInProgress=true，AppVersion=1.0.0）
+
+            // 整包升级到 2.0.0 后再启动：旧版本的中断提交必须被整包隔离，绝不前滚
+            var afterUpgrade = NewTransaction("2.0.0");
+            var report = afterUpgrade.PrepareForLaunch();
+            Assert.IsFalse(report.CommitReplayed, "旧整包版本的中断提交不得前滚（版本隔离优先于提交前滚）");
+            Assert.IsFalse(afterUpgrade.IsCommitInProgress, "跨整包版本状态已隔离重置");
+            Assert.IsTrue(afterUpgrade.Active.IsEmpty, "隔离后无 Active");
+        }
+
+        // ── #2 状态损坏分层兜底：有快照优先恢复，无快照回退出厂 ──────────────────
+
+        [Test]
+        public void 状态文件损坏_有快照_恢复快照不回退出厂()
+        {
+            WriteCatalogCache("old catalog");
+            var tx = NewTransaction();
+            tx.PrepareForLaunch();
+            tx.BeginPending(NewRecord("rel-x")); // 建快照（内容 = old catalog）
+            WriteCatalogCache("new catalog");    // 缓存被新 Catalog 覆盖
+            CorruptStateFile();                  // 状态损坏，无法证明当前内容已确认
+
+            var report = NewTransaction().PrepareForLaunch();
+            Assert.IsTrue(report.StateCorruptionHandled, "损坏必须走安全兜底");
+            Assert.IsTrue(report.CatalogRestored, "有快照优先恢复");
+            Assert.IsFalse(report.FactoryResetPerformed, "有快照绝不回退出厂");
+            Assert.AreEqual("old catalog", ReadCatalogCache(), "恢复到快照的旧 Catalog");
+        }
+
+        [Test]
+        public void 状态文件损坏_无快照_回退出厂()
+        {
+            WriteCatalogCache("current catalog");
+            var tx = NewTransaction();
+            tx.PrepareForLaunch();
+            tx.BeginPending(NewRecord("rel-x"));
+            tx.BeginCommit();
+            tx.ConfirmPending(); // 确认后快照被丢弃
+            tx.EndCommit();
+            Assert.IsFalse(Directory.Exists(SnapshotDir), "前置条件：确认后快照已丢弃");
+            CorruptStateFile();
+
+            var report = NewTransaction().PrepareForLaunch();
+            Assert.IsTrue(report.StateCorruptionHandled);
+            Assert.IsFalse(report.CatalogRestored, "无快照可恢复");
+            Assert.IsTrue(report.FactoryResetPerformed, "无快照才回退出厂");
+            Assert.IsFalse(Directory.Exists(_cacheDir), "出厂回退清空 Catalog 缓存");
+        }
+
+        [Test]
+        public void 状态结构版本过高_按损坏安全兜底_有快照则恢复()
+        {
+            WriteCatalogCache("old catalog");
+            var tx = NewTransaction();
+            tx.PrepareForLaunch();
+            tx.BeginPending(NewRecord("rel-x")); // 建快照
+            WriteCatalogCache("new catalog");
+            // 降级安装：状态结构版本高于当前实现，无法解释语义
+            WriteRawState(new ContentReleaseState { SchemaVersion = 999, AppVersion = AppV1 });
+
+            var report = NewTransaction().PrepareForLaunch();
+            Assert.IsTrue(report.StateCorruptionHandled, "版本过高按损坏兜底");
+            Assert.IsTrue(report.CatalogRestored, "有快照优先恢复");
+            Assert.AreEqual("old catalog", ReadCatalogCache());
+        }
+
+        [Test]
+        public void 旧版本v1状态_向前兼容不按损坏处理()
+        {
+            WriteCatalogCache("old catalog");
+            // 模拟旧版本 v1 状态文件（无提交日志字段）：SchemaVersion=1 必须被接受
+            var v1 = new ContentReleaseState { SchemaVersion = 1, AppVersion = AppV1 };
+            v1.Pending = NewRecord("rel-legacy");
+            WriteRawState(v1);
+
+            var report = NewTransaction().PrepareForLaunch();
+            Assert.IsFalse(report.StateCorruptionHandled, "v1 向前兼容，不按损坏处理");
+            Assert.IsTrue(report.PendingRolledBack, "v1 的未确认 Pending 正常回滚");
         }
 
         [Test]
