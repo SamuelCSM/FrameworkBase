@@ -33,12 +33,20 @@ namespace Framework.Core.Auth
         }
 
         /// <summary>
-        /// 创建默认登录后端：本地 Mock（框架级、无协议依赖）。
-        /// 真实网络后端（NetworkAuthBackend）由业务层组合根按配置经 <see cref="SetBackend"/> 注入，
-        /// 使框架鉴权层不依赖任何具体登录协议。
+        /// 创建默认登录后端：配置了 <c>AppConfig.AuthServerUrl</c> 且启用网络登录时用框架参考
+        /// <see cref="HttpAuthBackend"/>（中性 HTTP 契约、无业务协议依赖），否则回退本地 <see cref="MockAuthBackend"/>。
+        /// 业务若有自有登录协议，可经 <see cref="SetBackend"/> 注入替换，框架鉴权层不依赖任何具体实现。
         /// </summary>
         private static IAuthBackend CreateDefaultBackend()
         {
+            AppConfigAsset config = AppConfig.Load();
+            if (config != null && config.UseNetworkLogin && !string.IsNullOrEmpty(config.AuthServerUrl))
+            {
+                GameLog.Log($"[AuthManager] 使用 HTTP 登录后端: {config.AuthServerUrl}");
+                return new HttpAuthBackend(config.AuthServerUrl);
+            }
+
+            GameLog.Log("[AuthManager] 使用 Mock 登录后端（未配置 AuthServerUrl 或已关闭网络登录）");
             return new MockAuthBackend();
         }
 
@@ -158,8 +166,9 @@ namespace Framework.Core.Auth
                     LoginResult result = await _backend.LoginAsync(attemptContext, timeoutController.Token);
                     if (result.Success)
                     {
-                        // 刷新会话令牌，保持与服务端最新签发一致。
+                        // 刷新会话令牌，保持与服务端最新签发一致，并同步刷新持久化会话。
                         AuthSession.Apply(result);
+                        AuthSessionStore.Save(AuthSessionStore.BuildRecord(context.Mode, result, context.Account));
                         GameLog.Log("[AuthManager] 断线重连重新鉴权成功");
                         return true;
                     }
@@ -177,6 +186,7 @@ namespace Framework.Core.Auth
                         if (guestResult.Success)
                         {
                             AuthSession.Apply(guestResult);
+                            AuthSessionStore.Save(AuthSessionStore.BuildRecord(context.Mode, guestResult, context.Account));
                             GameLog.Log("[AuthManager] 令牌失效，已回退访客身份重新鉴权成功");
                             return true;
                         }
@@ -194,6 +204,75 @@ namespace Framework.Core.Auth
                 {
                     GameLog.Warning($"[AuthManager] 断线重连重新鉴权异常: {ex.Message}");
                     return false;
+                }
+            }
+        }
+
+        /// <summary>
+        /// 冷启动会话恢复：读取上次登录持久化的会话，静默重登以跳过登录界面。
+        /// <para>
+        /// 与 <see cref="ReauthenticateAsync"/>（对局中传输重连、不驱动状态机）不同，本方法是
+        /// 冷启动首次进入登录阶段的「记住登录」：成功后驱动状态机到 <see cref="LoginFlowState.Success"/>
+        /// 并发布 <see cref="GameMessage.PlayerLoginSuccess"/>，语义等价一次正常登录成功。
+        /// </para>
+        /// <para>
+        /// 同时重建 <c>_lastContext</c>，修复「冷启动后从未走过登录、断线重连缺历史上下文无法重鉴权」的隐患。
+        /// 账号模式若无令牌（明文密码从不持久化）不做静默恢复，返回失败引导重新登录（安全边界不破）。
+        /// </para>
+        /// </summary>
+        /// <returns>恢复成功返回带 UserId/Token 的成功结果；无持久会话/令牌被拒/网络异常返回失败（应回登录界面）。</returns>
+        public async UniTask<LoginResult> TryRestorePersistedSessionAsync()
+        {
+            if (_backend == null)
+                return LoginResult.Fail(TelemetryErrorCodes.Auth.Unknown, "backend not configured");
+
+            if (!AuthSessionStore.TryLoad(out AuthSessionStore.AuthSessionRecord record))
+                return LoginResult.Fail(TelemetryErrorCodes.Auth.Unknown, "no persisted session");
+
+            var mode = (LoginMode)record.Mode;
+            bool hasToken = !string.IsNullOrEmpty(record.SessionToken);
+
+            // 账号模式且无令牌：密码已丢弃、无法静默恢复，必须回登录界面重新输入。
+            if (!hasToken && mode == LoginMode.Account)
+                return LoginResult.Fail(TelemetryErrorCodes.Auth.TokenExpired, "account session requires re-login");
+
+            var context = new LoginRequestContext
+            {
+                Mode = mode,
+                Account = record.Account ?? string.Empty,
+                Password = string.Empty,
+                SessionToken = record.SessionToken ?? string.Empty,
+                TimeoutMs = mode == LoginMode.Guest ? 3000 : 5000,
+            };
+            // 重建历史上下文：让冷启动后的断线重连(ReauthenticateAsync)同样有据可依。
+            _lastContext = context;
+
+            using (var timeoutController = new TimeoutController(context.TimeoutMs))
+            {
+                try
+                {
+                    LoginResult result = await _backend.LoginAsync(context, timeoutController.Token);
+                    if (result.Success)
+                    {
+                        AuthSession.Apply(result);
+                        AuthSessionStore.Save(AuthSessionStore.BuildRecord(mode, result, context.Account));
+                        SetState(LoginFlowState.Success, "session_restored", string.Empty);
+                        GameEntry.Event?.Publish(GameMessage.PlayerLoginSuccess);
+                        GameLog.Log("[AuthManager] 冷启动会话恢复成功");
+                        return result;
+                    }
+
+                    // 令牌被服务端拒绝：清持久化会话与内存态，回登录界面（不再静默）。
+                    AuthSessionStore.Clear();
+                    AuthSession.Clear();
+                    GameLog.Warning($"[AuthManager] 冷启动会话恢复被拒: code={result.ErrorCode}, msg={result.ErrorMessage}");
+                    return LoginResult.Fail(TelemetryErrorCodes.Auth.TokenExpired, result.ErrorMessage);
+                }
+                catch (Exception ex)
+                {
+                    // 网络异常/超时：不清持久化（可能只是暂时断网），本次回登录界面，下次冷启动可再试。
+                    GameLog.Warning($"[AuthManager] 冷启动会话恢复异常: {ex.Message}");
+                    return LoginResult.Fail(TelemetryErrorCodes.Auth.NetworkOffline, ex.Message);
                 }
             }
         }
@@ -236,6 +315,8 @@ namespace Framework.Core.Auth
                         if (result.Success)
                         {
                             AuthSession.Apply(result);
+                            // 会话持久化：供跨重启静默重登（冷启动恢复）。明文密码从不持久化。
+                            AuthSessionStore.Save(AuthSessionStore.BuildRecord(context.Mode, result, context.Account));
 
                             // 登录成功即从内存丢弃明文密码：后续断线重连改用会话令牌重绑
                             // （ReauthenticateAsync），不再重放密码。保留账号名与模式供遥测/展示。
