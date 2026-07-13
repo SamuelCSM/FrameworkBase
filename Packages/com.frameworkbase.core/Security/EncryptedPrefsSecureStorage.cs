@@ -16,14 +16,15 @@ namespace Framework.Security
     /// deviceUniqueIdentifier，非硬件级</b>。高价值凭证请接 iOS Keychain / Android Keystore 扩展包
     /// （实现 <see cref="ISecureStorage"/> 经 <see cref="SecureStorage.SetBackend"/> 注入）。</para>
     /// </summary>
-    public sealed class EncryptedPrefsSecureStorage : ISecureStorage
+    public sealed class EncryptedPrefsSecureStorage : ISecureStorage, ISecureStorageBulkErase
     {
         /// <summary>PlayerPrefs 键前缀（与其它 PlayerPrefs 用途隔离；测试也据此定位键）。</summary>
         public const string KeyPrefix = "fb_secure_";
 
         /// <summary>
         /// 键索引 PlayerPrefs 键：PlayerPrefs 无法枚举键，维护一份已写入全键清单以支持
-        /// <see cref="DeleteAll"/>（RTBF 抹除机密）。业务键不得等于保留名 <c>__index__</c>。
+        /// <see cref="DeleteAll"/>（RTBF 抹除机密）。业务键若映射到此保留键会破坏索引，
+        /// 故读写全路径经 <see cref="IsReservedKey"/> 拒绝（见各 API），不再只靠文档约定。
         /// </summary>
         private const string IndexKey = KeyPrefix + "__index__";
         private const char IndexSeparator = '\n';
@@ -37,6 +38,12 @@ namespace Framework.Security
             if (string.IsNullOrEmpty(key))
             {
                 GameLog.Error("[SecureStorage] Set: key 为空，忽略");
+                return;
+            }
+            if (IsReservedKey(key))
+            {
+                // 撞内部保留键：写入会用密文覆盖键索引、令 DeleteAll 漏删，直接拒绝。
+                GameLog.Error($"[SecureStorage] Set: key=\"{key}\" 撞内部保留键，忽略（会破坏 DeleteAll 索引）");
                 return;
             }
 
@@ -59,7 +66,7 @@ namespace Framework.Security
         public bool TryGet(string key, out string value)
         {
             value = null;
-            if (string.IsNullOrEmpty(key))
+            if (string.IsNullOrEmpty(key) || IsReservedKey(key))
                 return false;
 
             string full = FullKey(key);
@@ -96,13 +103,14 @@ namespace Framework.Security
         /// <inheritdoc />
         public bool Contains(string key)
         {
-            return !string.IsNullOrEmpty(key) && PlayerPrefs.HasKey(FullKey(key));
+            return !string.IsNullOrEmpty(key) && !IsReservedKey(key) && PlayerPrefs.HasKey(FullKey(key));
         }
 
         /// <inheritdoc />
         public void Delete(string key)
         {
-            if (string.IsNullOrEmpty(key))
+            // 保留键不由业务写入（Set 已拒绝），故此处一并忽略，避免误删整份索引。
+            if (string.IsNullOrEmpty(key) || IsReservedKey(key))
                 return;
 
             string full = FullKey(key);
@@ -122,6 +130,9 @@ namespace Framework.Security
         }
 
         private static string FullKey(string key) => KeyPrefix + key;
+
+        /// <summary>业务键是否映射到内部保留键（键索引）。撞上会破坏 <see cref="DeleteAll"/> 索引，一律拒绝。</summary>
+        private static bool IsReservedKey(string key) => FullKey(key) == IndexKey;
 
         // ── 键索引维护（支持 DeleteAll）────────────────────────────────────────
         private static System.Collections.Generic.HashSet<string> ReadIndex()

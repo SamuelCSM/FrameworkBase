@@ -96,9 +96,11 @@ namespace Framework.Sdk
             if (result.Success)
             {
                 // 渠道确定（初始化后不再切换）：挂接会话失效转发，供组合根统一登出清凭据。
-                if (!_sessionInvalidatedHooked)
+                // 会话失效属账号能力（ISdkAccountService.OnSessionInvalidated）；渠道不支持账号能力时
+                // Account 为 null，跳过挂接（此时也不会有会话失效可转发）。
+                if (!_sessionInvalidatedHooked && provider.Account != null)
                 {
-                    provider.OnSessionInvalidated += RaiseSessionInvalidated;
+                    provider.Account.OnSessionInvalidated += RaiseSessionInvalidated;
                     _sessionInvalidatedHooked = true;
                 }
                 GameLog.Log($"[SdkManager] SDK 初始化完成 channel={provider.ChannelName}");
@@ -113,8 +115,10 @@ namespace Framework.Sdk
 
         public override void OnShutdown()
         {
-            if (_provider != null && _sessionInvalidatedHooked)
-                _provider.OnSessionInvalidated -= RaiseSessionInvalidated;
+            // 仅当当初挂接过（_sessionInvalidatedHooked，蕴含挂接时 Account 非 null）才解绑；
+            // 渠道初始化后不切换、Account 实例稳定，故此处解绑的是同一账号服务实例。
+            if (_sessionInvalidatedHooked && _provider?.Account != null)
+                _provider.Account.OnSessionInvalidated -= RaiseSessionInvalidated;
             _sessionInvalidatedHooked = false;
             _provider = null;
             _initialized = false;

@@ -127,6 +127,57 @@ namespace Framework.Tests
             Assert.IsFalse(s.TryGet(k2, out _));
         }
 
+        [Test]
+        public void EncryptedPrefs_ReservedIndexKey_IsRejected_AndKeepsIndexIntact()
+        {
+            var s = new EncryptedPrefsSecureStorage();
+            string real = UniqueKey();
+            s.Set(real, "v");
+
+            // 业务误用保留键 "__index__"：应被拒绝（不写入、读不到、Contains=false），
+            // 且不覆盖 / 污染 DeleteAll 依赖的键索引。
+            s.Set("__index__", "attacker");
+            Assert.IsFalse(s.Contains("__index__"));
+            Assert.IsFalse(s.TryGet("__index__", out _));
+
+            // 真实键仍在，索引未被污染，DeleteAll 仍能抹除它。
+            Assert.IsTrue(s.Contains(real));
+            s.DeleteAll();
+            Assert.IsFalse(s.Contains(real));
+        }
+
+        // ── 能力接口（ISecureStorageBulkErase）兼容降级 ──────────────────────
+
+        /// <summary>只实现 ISecureStorage、不实现 ISecureStorageBulkErase 的后端（模拟既有 / 扩展包后端）。</summary>
+        private sealed class NoBulkEraseStorage : ISecureStorage
+        {
+            public string Name => "no-bulk-erase";
+            public bool TryGet(string key, out string value) { value = null; return false; }
+            public void Set(string key, string value) { }
+            public bool Contains(string key) => false;
+            public void Delete(string key) { }
+            // 刻意不实现 ISecureStorageBulkErase：验证不支持整体抹除的后端能正常编译（无破坏）。
+        }
+
+        [Test]
+        public void SecureStorage_DeleteAll_Throws_WhenBackendLacksBulkErase()
+        {
+            SecureStorage.SetBackend(new NoBulkEraseStorage());
+            // 后端未声明批量抹除能力：统一入口显式失败（而非静默漏删机密），供 RTBF 报告如实计失败。
+            Assert.Throws<System.NotSupportedException>(() => SecureStorage.DeleteAll());
+        }
+
+        [Test]
+        public void SecureStorage_DeleteAll_Erases_WhenBackendSupportsBulkErase()
+        {
+            var mem = new InMemorySecureStorage();
+            mem.Set("a", "1");
+            SecureStorage.SetBackend(mem);
+
+            SecureStorage.DeleteAll(); // InMemory 实现 ISecureStorageBulkErase
+            Assert.IsFalse(mem.Contains("a"));
+        }
+
         // ── InMemory DeleteAll ──────────────────────────────────────────────
 
         [Test]

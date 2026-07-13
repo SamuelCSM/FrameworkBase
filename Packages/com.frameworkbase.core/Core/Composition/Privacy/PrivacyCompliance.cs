@@ -61,10 +61,11 @@ namespace Framework.Core.Privacy
             Run(report, "加密存档（全部账号）", () => Save.SaveManager.Instance.DeleteAllSaves());
             Run(report, "PlayerPrefs", () => Save.SaveManager.Instance.DeleteAllPrefs());
 
-            // 4. 安全存储（登录令牌等机密）：经抽象 DeleteAll 抹除，覆盖硬件级 Keychain/Keystore 后端；
-            //    否则残留会话令牌可被下次冷启动静默恢复，等同「没删干净」。默认 PlayerPrefs 后端虽已被上
-            //    一步波及，但仍显式走抽象，保证注入自定义后端时同样彻底。
-            Run(report, "安全存储（凭证/令牌）", () => Security.SecureStorage.Shared.DeleteAll());
+            // 4. 安全存储（登录令牌等机密）：经统一入口 SecureStorage.DeleteAll 抹除，覆盖硬件级
+            //    Keychain/Keystore 后端；否则残留会话令牌可被下次冷启动静默恢复，等同「没删干净」。默认
+            //    PlayerPrefs 后端虽已被上一步波及，但仍显式走入口，保证注入自定义后端时同样彻底。后端未实现
+            //    ISecureStorageBulkErase 时该入口抛异常，被 Run 捕获后如实计入失败项（不静默漏删）。
+            Run(report, "安全存储（凭证/令牌）", () => Security.SecureStorage.DeleteAll());
 
             // 5. 遥测残留：崩溃记录、启动指标快照
             Run(report, "崩溃记录", () => DeleteFile("crash_reports.jsonl"));
