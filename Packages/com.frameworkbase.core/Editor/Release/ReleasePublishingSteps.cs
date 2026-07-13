@@ -192,14 +192,23 @@ namespace Framework.Editor.Release
 
             public void Execute(ReleaseContext ctx)
             {
-                string targetRoot = !string.IsNullOrWhiteSpace(ctx.Profile?.UploadRoot)
+                string deployTarget = !string.IsNullOrWhiteSpace(ctx.Profile?.UploadRoot)
                     ? ctx.Profile.UploadRoot
                     : ctx.VersionOutputDir;
-                if (string.IsNullOrWhiteSpace(targetRoot))
+
+                // 部署目标失败关闭闸门（P0）：旧实现在目标为空时静默保留本地 staging 并返回，
+                // 导致 Publish 模式的工作流"看起来成功"却从未部署。现在按模式判定：
+                //   - BuildOnly：允许无部署目标，只保留 staging（此时才是合法的"不部署"）；
+                //   - Publish/Promote/Rollback：目标为空由工厂抛 RELEASE_E_STORE_NOT_CONFIGURED。
+                if (ctx.Mode == ReleaseMode.BuildOnly)
                 {
-                    ctx.Log("      未配置 UploadRoot，保留本地 staging，不执行部署。");
+                    ctx.Log("      BuildOnly 模式：只生成候选产物，保留本地 staging，不执行部署。");
                     return;
                 }
+
+                IReleaseArtifactStore store = ReleaseArtifactStoreFactory.Resolve(ctx.Mode, deployTarget);
+                string targetRoot = ((LocalFileSystemReleaseStore)store).Root;
+                ctx.Log($"      发布存储：{store.Describe()}");
 
                 // 产物仓库作用域：{UploadRoot}/{env}/{platform}/{channel}。环境、平台、渠道
                 // 在存储层物理隔离，客户端 UpdateServerUrl 指向各自渠道根。
@@ -401,9 +410,9 @@ namespace Framework.Editor.Release
         /// <param name="targetReleaseId">回滚目标 releaseId；为空时取当前指针的 PreviousReleaseId。</param>
         public static void ExecuteRollback(ReleaseContext ctx, string targetReleaseId)
         {
-            string uploadRoot = ctx.Profile?.UploadRoot;
-            if (string.IsNullOrWhiteSpace(uploadRoot))
-                throw new InvalidOperationException("回滚要求配置 UploadRoot（无部署目标何谈回滚）。");
+            // 失败关闭：回滚要求非空部署目标，经统一存储工厂发出稳定错误码 RELEASE_E_STORE_NOT_CONFIGURED。
+            string uploadRoot = ((LocalFileSystemReleaseStore)
+                ReleaseArtifactStoreFactory.Resolve(ReleaseMode.Rollback, ctx.Profile?.UploadRoot)).Root;
             string publishedRoot = string.IsNullOrEmpty(ctx.PublishScopeRelative)
                 ? Path.GetFullPath(uploadRoot)
                 : Path.GetFullPath(Path.Combine(uploadRoot, ctx.PublishScopeRelative.Replace('/', Path.DirectorySeparatorChar)));
@@ -497,9 +506,9 @@ namespace Framework.Editor.Release
             if (sourceProfile == null)
                 throw new InvalidOperationException($"源环境 {sourceEnv} 加载失败：{loadError}");
 
-            string uploadRoot = ctx.Profile?.UploadRoot;
-            if (string.IsNullOrWhiteSpace(uploadRoot))
-                throw new InvalidOperationException("晋级要求配置 UploadRoot（产物仓库单一物理根）。");
+            // 失败关闭：晋级要求非空部署目标（产物仓库单一物理根），经统一存储工厂发出稳定错误码。
+            string uploadRoot = ((LocalFileSystemReleaseStore)
+                ReleaseArtifactStoreFactory.Resolve(ReleaseMode.Promote, ctx.Profile?.UploadRoot)).Root;
 
             // 单一产物仓库根：源与目标只是根下不同 {env}/{platform}/{channel} 作用域。
             string platformSegment = HotUpdateReleaseSteps.GetPlatformId(ctx.BuildTarget);
@@ -647,6 +656,36 @@ namespace Framework.Editor.Release
             };
             CommitPointer(targetRoot, pointer, ctx.Log);
             ctx.Log($"      晋级完成：{sourceEnv}:{releaseId} → {ctx.EnvironmentName}（同产物重签，payload 零重建）。");
+        }
+
+        /// <summary>
+        /// 只校验（VerifyOnly，状态机不迁移）：对已发布 release 的不可变产物集回读并逐文件校验 SHA-256。
+        /// 不产出、不切指针；部署目标为空由存储工厂失败关闭。用于发布后独立复核或告警自愈校验。
+        /// </summary>
+        /// <param name="ctx">已通过环境校验的上下文（Profile/作用域已填充，Mode=VerifyOnly）。</param>
+        /// <param name="targetReleaseId">要校验的 releaseId。</param>
+        public static void ExecuteVerifyOnly(ReleaseContext ctx, string targetReleaseId)
+        {
+            if (string.IsNullOrWhiteSpace(targetReleaseId))
+                throw new ArgumentException("VerifyOnly 必须指定 -targetReleaseId。");
+
+            // 复用存储工厂的失败关闭闸门：VerifyOnly 目标为空同样直接失败（无目标何谈校验）。
+            IReleaseArtifactStore store = ReleaseArtifactStoreFactory.Resolve(ctx.Mode, ctx.Profile?.UploadRoot);
+            string publishedRoot = string.IsNullOrEmpty(ctx.PublishScopeRelative)
+                ? ((LocalFileSystemReleaseStore)store).Root
+                : Path.Combine(((LocalFileSystemReleaseStore)store).Root,
+                    ctx.PublishScopeRelative.Replace('/', Path.DirectorySeparatorChar));
+
+            string releasesRoot = Path.Combine(publishedRoot, "releases");
+            string targetDir = Directory.Exists(releasesRoot)
+                ? Directory.GetDirectories(releasesRoot, targetReleaseId, SearchOption.AllDirectories)
+                    .FirstOrDefault(dir => string.Equals(Path.GetFileName(dir), targetReleaseId, StringComparison.Ordinal))
+                : null;
+            if (targetDir == null)
+                throw new DirectoryNotFoundException($"渠道根 releases/ 下找不到校验目标版本目录：{targetReleaseId}");
+
+            int verified = VerifyLedgerArtifacts(publishedRoot, Path.Combine(targetDir, "ledger.json"), immutableOnly: true);
+            ctx.Log($"      VerifyOnly 通过：release {targetReleaseId} 的 {verified} 个不可变产物 SHA-256 与台账一致。");
         }
 
         private static void ReplaceFile(string source, string destination)

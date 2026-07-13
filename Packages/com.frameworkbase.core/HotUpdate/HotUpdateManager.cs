@@ -566,6 +566,25 @@ namespace Framework.HotUpdate
         public void ConfirmPendingUpdate() => HotUpdateSlotManager.ConfirmPendingSlot();
 
         public void MarkPendingUpdateFailed(string reason) => HotUpdateSlotManager.MarkPendingSlotFailed(reason);
+
+        // 内容发行事务：把代码槽、Addressables Catalog、配置数据库纳入统一确认边界。
+        // 所有权边界：实例由本 Manager 独占持有，路径绑定当前 persistentDataPath 与整包版本。
+        private ContentReleaseTransaction _contentRelease;
+
+        /// <summary>
+        /// 内容发行事务（Pending/Active/LKG 状态机）。
+        /// LaunchFlow 在 Addressables 初始化前调用 PrepareForLaunch 执行恢复，
+        /// 在任何内容安装前 BeginPending，在统一启动确认点 ConfirmPending。
+        /// </summary>
+        public ContentReleaseTransaction ContentRelease =>
+            _contentRelease ??= new ContentReleaseTransaction(
+                // 状态根目录与代码槽（FrameworkBase/HotUpdate）平级，按子系统隔离。
+                Path.Combine(Application.persistentDataPath, "FrameworkBase", "ContentRelease"),
+                Application.version,
+                // Addressables 远端 Catalog 缓存的固定落点（com.unity.addressables，1.x 全系稳定）。
+                Path.Combine(Application.persistentDataPath, "com.unity.addressables"),
+                GameLog.Log,
+                GameLog.Error);
         
         public override void OnShutdown()
         {

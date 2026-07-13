@@ -109,6 +109,25 @@ namespace Framework.Core
                           $"Resource={localVersion.ResourceVersion} Code={localVersion.CodeVersion}");
                 LaunchTelemetryHelper.EndPhaseMetric(step1, true, $"app={localVersion.AppVersion},res={localVersion.ResourceVersion},code={localVersion.CodeVersion}");
 
+                // ── Step 1.5: 内容发行事务恢复（必须在 Addressables 初始化之前）───
+                // 上次启动若安装了新内容（Catalog/配置/代码槽）但未走到统一确认点：
+                //   - Catalog：用 LKG 快照覆写 Addressables 缓存目录（初始化前恢复，Addressables 无感知）；
+                //   - 配置：恢复上一份已确认数据库（.bak 由 ConfigDatabaseInstaller 保留至确认点）；
+                //   - 代码槽：HotUpdateSlotManager.PrepareForLaunch 在程序集加载前自行回滚（既有机制）。
+                // 内容级 Crash-loop（已确认发行连续启动失败）触发出厂回退：清 Catalog 缓存 + 恢复出厂配置。
+                var recovery = GameEntry.HotUpdate.ContentRelease.PrepareForLaunch();
+                if (recovery.PendingRolledBack || GameEntry.RefData.HasUnconfirmedDatabaseBackup)
+                {
+                    GameEntry.RefData.RestoreLastConfirmedDatabaseIfAny();
+                }
+                if (recovery.FactoryResetPerformed)
+                {
+                    GameEntry.RefData.ResetDatabaseToFactoryBaseline();
+                    Debug.LogWarning("[LaunchFlow] Step 1.5  内容级崩溃循环，已回退出厂内容基线（安全恢复模式）");
+                }
+                if (recovery.PendingRolledBack)
+                    Debug.LogWarning($"[LaunchFlow] Step 1.5  未确认发行 {recovery.RolledBackReleaseId} 已回滚");
+
                 // ── Step 2: 初始化 Addressables ───────────────────
                 var step2 = LaunchTelemetryHelper.BeginPhaseMetric(runMetric, LaunchPhase.AddressablesInit, "step02_addressables_init");
                 loading.SetStatus("正在初始化资源系统...");
@@ -171,21 +190,54 @@ namespace Framework.Core
                 }
                 LaunchTelemetryHelper.EndPhaseMetric(fullUpdateGate, true, "full_update_required=false");
 
-                // 事务边界声明：代码更新走 HotUpdateSlotManager 的 staging→原子槽切换→确认/回滚事务；
-                // 资源（Addressables Catalog/内容）不在该事务内，本步即写入本地缓存。可接受的依据：
-                //   1. Addressables 内容按哈希寻址且幂等，半下载/中断由其缓存层自愈，不存在半安装态；
-                //   2. persistent/version.json 的 ResourceVersion 只在启动确认点之后提交（CommitHotUpdate），
-                //      启动失败时下次仍会按旧版本号重新走检查，不会把未确认状态当作事实；
-                //   3. 资源不含可执行代码，错误资源不会像错误 DLL 一样阻断启动自愈。
-                // 若未来引入不兼容的 Catalog 变更，必须先把 Catalog 切换点移到启动确认之后再放开。
-                var step4 = LaunchTelemetryHelper.BeginPhaseMetric(runMetric, LaunchPhase.ResourceUpdate, "step04_resource_update");
+                // 事务边界声明（内容发行事务）：代码槽、Addressables Catalog、配置数据库共享同一个
+                // 确认边界。任何内容安装动作之前先 BeginPending（内含 Catalog 缓存快照 + Pending 落盘），
+                // 统一确认点在 Step9 HotfixEntry.Start 成功之后；确认前任何失败（含进程被杀）都会在
+                // 本进程（AbortPendingContent）或下次启动（Step1.5 恢复）回滚全部三类内容。
                 bool resourceUpdated = LaunchFlowUpdateExecutor.ShouldUpdateResources(serverVersion, localVersion);
+                bool codeWillUpdate = LaunchFlowUpdateExecutor.ShouldUpdateCode(serverVersion, localVersion);
+                if ((resourceUpdated || codeWillUpdate) && serverVersion != null)
+                {
+                    // ReleaseId 统一身份：复用已签名清单的 ManifestId（发布侧即 ReleaseContext.ReleaseId），
+                    // 代码、资源、配置与服务端发布台账共享同一发行身份。
+                    if (!GameEntry.HotUpdate.ContentRelease.BeginPending(new HotUpdate.ContentReleaseRecord
+                        {
+                            ReleaseId = string.IsNullOrEmpty(serverVersion.ManifestId)
+                                ? $"local-{serverVersion.AppVersion}-r{serverVersion.ResourceVersion}-c{serverVersion.CodeVersion}"
+                                : serverVersion.ManifestId,
+                            AppVersion = Application.version,
+                            ResourceVersion = serverVersion.ResourceVersion,
+                            CodeVersion = serverVersion.CodeVersion,
+                            ResourceChanged = resourceUpdated,
+                            CodeChanged = codeWillUpdate,
+                        }))
+                    {
+                        // 快照或落盘失败即失败关闭：没有回滚能力就不允许开始安装。
+                        Debug.LogError("[LaunchFlow] Step 4  内容发行事务开启失败，中止本次更新");
+                        LaunchTelemetryHelper.FinalizeRunMetric(runMetric, false, TelemetryErrorCodes.Launch.CatalogUpdateFailed);
+                        return LaunchFlowOutcome.Failed;
+                    }
+                }
+
+                var step4 = LaunchTelemetryHelper.BeginPhaseMetric(runMetric, LaunchPhase.ResourceUpdate, "step04_resource_update");
                 var resourceUpdateResult = await LaunchFlowUpdateExecutor.ExecuteResourceUpdateAsync(loading, resourceUpdated);
                 if (!resourceUpdateResult.Success)
                 {
-                    LaunchTelemetryHelper.EndPhaseMetric(step4, false, "download_failed");
-                            LaunchTelemetryHelper.FinalizeRunMetric(runMetric, false, TelemetryErrorCodes.Launch.ResourceDownloadFailed);
-                            return LaunchFlowOutcome.Failed;
+                    // 失败关闭：Catalog 失败 / 尺寸查询失败 / 下载失败都中止启动，绝不提交 ResourceVersion。
+                    // 按失败阶段区分遥测终态码，避免"检查失败"与"下载失败"在告警侧混成一类。
+                    string failureCode = resourceUpdateResult.ErrorCode switch
+                    {
+                        LaunchFlowUpdateExecutor.ResourceUpdateStageErrors.CatalogFailed =>
+                            TelemetryErrorCodes.Launch.CatalogUpdateFailed,
+                        LaunchFlowUpdateExecutor.ResourceUpdateStageErrors.SizeQueryFailed =>
+                            TelemetryErrorCodes.Launch.DownloadSizeQueryFailed,
+                        _ => TelemetryErrorCodes.Launch.ResourceDownloadFailed,
+                    };
+                    AbortPendingContent($"resource_update_failed:{resourceUpdateResult.ErrorCode}");
+                    LaunchTelemetryHelper.EndPhaseMetric(step4, false,
+                        $"{resourceUpdateResult.ErrorCode}:{resourceUpdateResult.Message}");
+                    LaunchTelemetryHelper.FinalizeRunMetric(runMetric, false, failureCode);
+                    return LaunchFlowOutcome.Failed;
                 }
 
                 // 资源热更成功后写回 ResourceVersion，避免下次启动重复检查/下载。
@@ -198,6 +250,7 @@ namespace Framework.Core
                     loading, serverVersion, localVersion, updateUrl);
                 if (LaunchFlowUpdateExecutor.ShouldUpdateCode(serverVersion, localVersion) && !codeUpdated)
                 {
+                    AbortPendingContent("code_download_failed");
                     LaunchTelemetryHelper.EndPhaseMetric(step5, false, "download_failed");
                     LaunchTelemetryHelper.FinalizeRunMetric(runMetric, false, TelemetryErrorCodes.Launch.CodeDownloadFailed);
                     return LaunchFlowOutcome.Failed;
@@ -214,6 +267,16 @@ namespace Framework.Core
                 var configApplyResult = await LaunchFlowUpdateExecutor.ExecuteConfigApplyAsync(
                     loading,
                     resourceUpdateResult.ResourceUpdated);
+                if (!configApplyResult.Success)
+                {
+                    // 失败关闭：配置安装失败不能被当成"没有配置更新"继续提交版本。
+                    // 同时回滚整个待确认发行（代码槽 + Catalog 快照 + 配置备份），
+                    // 避免"新代码 + 旧配置"或"新 Catalog + 旧配置"错配组合在下次启动生效。
+                    AbortPendingContent("config_apply_failed");
+                    LaunchTelemetryHelper.EndPhaseMetric(step6c, false, configApplyResult.Message);
+                    LaunchTelemetryHelper.FinalizeRunMetric(runMetric, false, TelemetryErrorCodes.Launch.ConfigApplyFailed);
+                    return LaunchFlowOutcome.Failed;
+                }
                 if (configApplyResult.Applied)
                     LaunchTelemetryHelper.EndPhaseMetric(step6c, true, $"resource_updated=true,config_updated={configApplyResult.Updated}");
                 else
@@ -225,6 +288,9 @@ namespace Framework.Core
                     loading.SetStatus("正在进入游戏...");
                     loading.SetProgress(0.95f);
                     Debug.Log("[LaunchFlow] 热更已关闭（AppConfig.EnableHotUpdate=false），跳过 AOT 元数据 / 热更程序集 / StartHotfix");
+                    // 纯框架模式的统一确认点：无 Hotfix 入口即视为启动就绪，内容事务在此确认。
+                    GameEntry.HotUpdate.ContentRelease.ConfirmPending();
+                    GameEntry.RefData.ConfirmHotUpdateDatabase();
                     HotUpdate.VersionManager.CommitHotUpdate(
                         serverVersion,
                         resourceUpdateResult.ResourceUpdated,
@@ -243,7 +309,7 @@ namespace Framework.Core
                 if (!metadataOk)
                 {
                     LaunchTelemetryHelper.EndPhaseMetric(step7, false, "metadata_load_failed");
-                    GameEntry.HotUpdate.MarkPendingUpdateFailed("metadata_load_failed");
+                    AbortPendingContent("metadata_load_failed");
                     LaunchTelemetryHelper.FinalizeRunMetric(runMetric, false, TelemetryErrorCodes.Launch.MetadataLoadFailed);
                     return LaunchFlowOutcome.Failed;
                 }
@@ -258,7 +324,7 @@ namespace Framework.Core
                 if (!assemblyOk)
                 {
                     LaunchTelemetryHelper.EndPhaseMetric(step8, false, "assembly_load_failed");
-                    GameEntry.HotUpdate.MarkPendingUpdateFailed("assembly_load_failed");
+                    AbortPendingContent("assembly_load_failed");
                     LaunchTelemetryHelper.FinalizeRunMetric(runMetric, false, TelemetryErrorCodes.Launch.HotUpdateAssemblyLoadFailed);
                     return LaunchFlowOutcome.Failed;
                 }
@@ -271,11 +337,19 @@ namespace Framework.Core
                 loading.SetProgress(0.95f);
                 if (!GameEntry.HotUpdate.StartHotfix())
                 {
-                    GameEntry.HotUpdate.MarkPendingUpdateFailed("hotfix_start_returned_false");
+                    AbortPendingContent("hotfix_start_returned_false");
                     LaunchTelemetryHelper.EndPhaseMetric(step9, false, "hotfix_start_failed");
                     return LaunchFlowOutcome.Failed;
                 }
+                // ── 统一启动确认点：只有走到这里，本次发行的全部内容才被承认 ──────
+                // 确认顺序（任一步抛异常都会走 catch 的 AbortPendingContent 整体回滚）：
+                //   1. 代码槽 Pending → LKG（HotUpdateSlotManager）；
+                //   2. 内容事务 Pending → Active + LKG，丢弃 Catalog 快照（当前缓存成为新 LKG Catalog）；
+                //   3. 配置数据库备份清理（新库正式生效）；
+                //   4. version.json 提交（事实源：槽清单代码版本 + 本次确认的资源版本）。
                 GameEntry.HotUpdate.ConfirmPendingUpdate();
+                GameEntry.HotUpdate.ContentRelease.ConfirmPending();
+                GameEntry.RefData.ConfirmHotUpdateDatabase();
                 HotUpdate.VersionManager.CommitHotUpdate(
                     serverVersion,
                     resourceUpdateResult.ResourceUpdated,
@@ -290,12 +364,35 @@ namespace Framework.Core
             }
             catch (Exception ex)
             {
-                GameEntry.HotUpdate?.MarkPendingUpdateFailed(ex.Message);
+                AbortPendingContent($"unhandled_exception:{ex.Message}");
                 Debug.LogError($"[LaunchFlow] 启动流程异常: {ex.Message}\n{ex.StackTrace}");
                 LaunchTelemetryHelper.FinalizeRunMetric(runMetric, false, TelemetryErrorCodes.Launch.UnhandledException);
                 return LaunchFlowOutcome.Failed;
             }
             }
+        }
+
+        /// <summary>
+        /// 统一失败回滚：把本次待确认发行的全部内容标记失败并尽力恢复。
+        /// <para>
+        /// 回滚顺序与语义：
+        ///   1. 代码槽 Pending 标记失败并回滚指针（本进程已加载的程序集无法卸载，调用方必须中止启动）；
+        ///   2. 内容事务 Pending 清除并恢复 Catalog 缓存快照（本进程已激活的 Catalog 同样无法卸载，
+        ///      文件恢复对下一次进程启动生效）；
+        ///   3. 配置数据库恢复上一份已确认版本（.bak 消费）。
+        /// 每一步各自失败安全：恢复失败时保留恢复凭据（快照/备份），下次启动 Step1.5 兜底重试。
+        /// </para>
+        /// </summary>
+        private static void AbortPendingContent(string reason)
+        {
+            try { GameEntry.HotUpdate?.MarkPendingUpdateFailed(reason); }
+            catch (Exception ex) { Debug.LogError($"[LaunchFlow] 代码槽回滚异常：{ex.Message}"); }
+
+            try { GameEntry.HotUpdate?.ContentRelease.MarkPendingFailed(reason); }
+            catch (Exception ex) { Debug.LogError($"[LaunchFlow] 内容事务回滚异常：{ex.Message}"); }
+
+            try { GameEntry.RefData?.RestoreLastConfirmedDatabaseIfAny(); }
+            catch (Exception ex) { Debug.LogError($"[LaunchFlow] 配置恢复异常：{ex.Message}"); }
         }
 
         // ── 工具方法 ──────────────────────────────────────────────────────────

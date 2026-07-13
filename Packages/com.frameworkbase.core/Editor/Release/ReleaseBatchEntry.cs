@@ -78,11 +78,44 @@ namespace Framework.Editor.Release
             RunForBuilder(ExecutePromoteRelease);
         }
 
+        /// <summary>
+        /// 只校验入口：<c>-releaseEnv &lt;env&gt; [-uploadRoot &lt;root&gt;] -targetReleaseId &lt;id&gt;</c>。
+        /// 对已发布 release 回读产物并逐文件校验 SHA-256，不产出、不切指针。部署目标为空即失败关闭。
+        /// </summary>
+        public static void VerifyRelease()
+        {
+            RunAndExit(ExecuteVerifyRelease);
+        }
+
+        /// <summary>外部构建器专用只校验入口；失败以 BuildFailedException 上抛。</summary>
+        public static void VerifyReleaseForBuilder()
+        {
+            RunForBuilder(ExecuteVerifyRelease);
+        }
+
+        private static void ExecuteVerifyRelease()
+        {
+            Dictionary<string, string> args = ParseArgs();
+            var context = new ReleaseContext
+            {
+                Mode = ReleaseMode.VerifyOnly,
+                EnvironmentName = Require(args, "releaseEnv"),
+                UploadRootOverride = Get(args, "uploadRoot", string.Empty),
+                BuildTarget = ResolveBuildTarget(args),
+                AppVersion = "verify",
+                ServerDataDir = string.Empty,
+                Log = message => UnityEngine.Debug.Log("[ReleaseBatch] " + message),
+            };
+            new HotUpdateReleaseSteps.ValidateReleaseEnvironment().Execute(context);
+            ReleasePublishingSteps.ExecuteVerifyOnly(context, Require(args, "targetReleaseId"));
+        }
+
         private static void ExecutePromoteRelease()
         {
             Dictionary<string, string> args = ParseArgs();
             var context = new ReleaseContext
             {
+                Mode = ReleaseMode.Promote,
                 EnvironmentName = Require(args, "releaseEnv"),
                 UploadRootOverride = Get(args, "uploadRoot", string.Empty),
                 BuildTarget = ResolveBuildTarget(args),
@@ -104,6 +137,7 @@ namespace Framework.Editor.Release
             Dictionary<string, string> args = ParseArgs();
             var context = new ReleaseContext
             {
+                Mode = ReleaseMode.Rollback,
                 EnvironmentName = Require(args, "releaseEnv"),
                 UploadRootOverride = Get(args, "uploadRoot", string.Empty),
                 BuildTarget = ResolveBuildTarget(args),
@@ -134,6 +168,7 @@ namespace Framework.Editor.Release
                 var context = new ReleaseContext
                 {
                     ReleaseId = releaseId,
+                    Mode = ParseMode(args),
                     EnvironmentName = Require(args, "releaseEnv"),
                     UploadRootOverride = Get(args, "uploadRoot", string.Empty),
                     BuildTarget = target,
@@ -188,6 +223,7 @@ namespace Framework.Editor.Release
                 var context = new FullPackageReleaseContext
                 {
                     ReleaseId = releaseId,
+                    Mode = ParseMode(args),
                     EnvironmentName = Require(args, "releaseEnv"),
                     UploadRootOverride = Get(args, "uploadRoot", string.Empty),
                     BuildTarget = target,
@@ -282,6 +318,23 @@ namespace Framework.Editor.Release
                 result[key] = value;
             }
             return result;
+        }
+
+        /// <summary>
+        /// 解析发布模式（仅 hotupdate/fullpackage 入口用）：-releaseMode publish|build-only，缺省 publish。
+        /// promote/rollback/verify 各自入口硬定模式，不读该参数。
+        /// </summary>
+        private static ReleaseMode ParseMode(Dictionary<string, string> args)
+        {
+            string raw = Get(args, "releaseMode", "publish").Trim().ToLowerInvariant();
+            switch (raw)
+            {
+                case "publish": return ReleaseMode.Publish;
+                case "build-only":
+                case "buildonly": return ReleaseMode.BuildOnly;
+                default:
+                    throw new ArgumentException($"不支持的 -releaseMode：{raw}（仅 publish / build-only）。");
+            }
         }
 
         private static string Require(Dictionary<string, string> args, string key)

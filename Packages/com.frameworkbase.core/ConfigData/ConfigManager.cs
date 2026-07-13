@@ -211,9 +211,16 @@ namespace Framework
         }
 
         /// <summary>
-        /// 从 Addressables 下载热更数据库，并在校验通过后安装。
+        /// 从 Addressables 下载热更数据库，并以事务方式安装。
+        /// <para>
+        /// 返回 <see cref="ConfigInstallResult"/>，显式区分：本次发行不包含配置（NotIncluded，正常）/
+        /// 安装成功（Installed，旧库备份保留至启动确认点）/ 下载失败 / 校验失败 / 替换失败 / 重载失败。
+        /// 调用方（LaunchFlow）必须检查 <see cref="ConfigInstallResult.Succeeded"/>：
+        /// 任何失败终态都要中止本次启动更新，禁止继续提交版本状态——
+        /// 旧实现的单 bool 返回把"没有配置更新"和"安装失败"混成一类，失败会被静默放行。
+        /// </para>
         /// </summary>
-        public async UniTask<bool> UpdateDatabaseFromAddressablesAsync(
+        public async UniTask<ConfigInstallResult> UpdateDatabaseFromAddressablesAsync(
             string address = DefaultAddressableConfigAddress,
             bool reloadLoadedConfigs = true)
         {
@@ -222,9 +229,11 @@ namespace Framework
             if (string.IsNullOrEmpty(address))
             {
                 GameLog.Error("[ConfigManager] Address must not be empty.");
-                return false;
+                return ConfigInstallResult.Failed(ConfigInstallStatus.DownloadFailed, "配置数据库地址为空");
             }
 
+            // ── 阶段 1：从 Addressables 加载载荷（区分"不存在"与"下载失败"两种终态）──
+            byte[] payload;
             AsyncOperationHandle<TextAsset> handle = default;
             try
             {
@@ -233,28 +242,31 @@ namespace Framework
 
                 if (handle.Status != AsyncOperationStatus.Succeeded || handle.Result == null)
                 {
-                    GameLog.Warning($"[ConfigManager] Hot-update database not found: {address}");
-                    return false;
+                    // key 存在但下载/加载失败（网络、bundle 损坏）必须阻断；
+                    // 只有 key 不存在（InvalidKeyException）才是"本次发行不包含配置"。
+                    if (handle.OperationException != null &&
+                        handle.OperationException.GetType().Name == "InvalidKeyException")
+                    {
+                        GameLog.Log($"[ConfigManager] 本次发行不包含热更配置数据库：{address}");
+                        return ConfigInstallResult.NotIncluded();
+                    }
+
+                    string reason = handle.OperationException?.Message ?? $"状态={handle.Status}";
+                    GameLog.Error($"[ConfigManager] 热更配置数据库下载失败 [{address}]：{reason}");
+                    return ConfigInstallResult.Failed(ConfigInstallStatus.DownloadFailed, reason);
                 }
 
-                bool installed = InstallDatabaseBytes(handle.Result.bytes, $"Addressables:{address}", reloadLoadedConfigs);
-                if (installed)
-                {
-                    // 热更配置替换后，刷新可能受 language 表影响的 UI 文本。
-                    Language.Refresh();
-                }
-
-                return installed;
+                payload = handle.Result.bytes;
             }
             catch (Exception ex) when (ex.GetType().Name == "InvalidKeyException")
             {
-                GameLog.Warning($"[ConfigManager] Hot-update database key does not exist: {address}");
-                return false;
+                GameLog.Log($"[ConfigManager] 本次发行不包含热更配置数据库（key 不存在）：{address}");
+                return ConfigInstallResult.NotIncluded();
             }
             catch (Exception ex)
             {
-                GameLog.Error($"[ConfigManager] Failed to update database from Addressables [{address}]: {ex.Message}");
-                return false;
+                GameLog.Error($"[ConfigManager] 热更配置数据库下载异常 [{address}]：{ex.Message}");
+                return ConfigInstallResult.Failed(ConfigInstallStatus.DownloadFailed, ex.Message);
             }
             finally
             {
@@ -262,6 +274,107 @@ namespace Framework
                 {
                     Addressables.Release(handle);
                 }
+            }
+
+            // ── 阶段 2：事务化安装（备份保留至启动确认点，见 ConfigDatabaseInstaller）──
+            ConfigInstallResult installResult = Installer.Install(payload, $"Addressables:{address}");
+            if (!installResult.DatabaseChanged)
+                return installResult;
+
+            // ── 阶段 3：重载已缓存配置（失败即恢复备份并失败关闭）───────────────
+            if (reloadLoadedConfigs)
+            {
+                var loadedConfigTypes = new List<Type>(_tableConfigCache.Keys);
+                loadedConfigTypes.AddRange(_generalConfigCache.Keys);
+                if (loadedConfigTypes.Count > 0)
+                {
+                    try
+                    {
+                        ReloadConfigs(loadedConfigTypes);
+                    }
+                    catch (Exception ex)
+                    {
+                        GameLog.Error($"[ConfigManager] 新配置数据库重载失败，恢复上一份已确认库：{ex.Message}");
+                        try
+                        {
+                            Installer.RestoreLastConfirmed();
+                            ReloadConfigs(loadedConfigTypes);
+                        }
+                        catch (Exception restoreEx)
+                        {
+                            GameLog.Error($"[ConfigManager] 恢复旧配置数据库失败（备份保留待下次启动）：{restoreEx.Message}");
+                        }
+                        return ConfigInstallResult.Failed(ConfigInstallStatus.LoadFailed, ex.Message);
+                    }
+                }
+            }
+
+            // 热更配置替换后，刷新可能受 language 表影响的 UI 文本。
+            Language.Refresh();
+            return installResult;
+        }
+
+        // 配置数据库事务化安装器：备份生命周期延伸到统一启动确认点。
+        // 所有权边界：installer 由本组件独占持有；dbPath 在 Initialize 后不再变化。
+        private ConfigDatabaseInstaller _installer;
+
+        private ConfigDatabaseInstaller Installer =>
+            _installer ??= new ConfigDatabaseInstaller(_dbPath, ValidateDatabaseFile, GameLog.Log, GameLog.Error);
+
+        /// <summary>
+        /// 是否存在未确认的配置数据库备份。
+        /// 存在即说明上次启动安装了新配置但未走到统一确认点（进程被杀 / 启动失败），
+        /// 启动早期应调用 <see cref="RestoreLastConfirmedDatabaseIfAny"/> 恢复。
+        /// </summary>
+        public bool HasUnconfirmedDatabaseBackup
+        {
+            get
+            {
+                EnsureInitialized();
+                return Installer.HasUnconfirmedBackup;
+            }
+        }
+
+        /// <summary>
+        /// 统一启动确认点动作：本次启动的全部内容（代码/资源/配置）都确认成功后，
+        /// 由 LaunchFlow 调用以清理配置数据库备份。确认前禁止调用。
+        /// </summary>
+        public void ConfirmHotUpdateDatabase()
+        {
+            EnsureInitialized();
+            Installer.ConfirmInstalled();
+        }
+
+        /// <summary>
+        /// 内容级出厂回退：删除持久化数据库与备份，下次 EnsureDatabaseReadyAsync 会从
+        /// StreamingAssets 重新安装出厂基线。仅由内容级崩溃循环恢复路径调用。
+        /// </summary>
+        public void ResetDatabaseToFactoryBaseline()
+        {
+            EnsureInitialized();
+            UnloadAllConfigs();
+            DeleteFileQuietly(_dbPath);
+            DeleteFileQuietly(Installer.BackupPath);
+            GameLog.Warning("[ConfigManager] 配置数据库已回退出厂基线（持久化库与备份已清除）。");
+        }
+
+        /// <summary>
+        /// 启动确认前失败的恢复动作：恢复上一份已确认配置数据库（若存在备份）。
+        /// 由 LaunchFlow 失败路径或下次启动早期（检测到未确认 Pending 时）调用。
+        /// </summary>
+        /// <returns>实际发生了恢复返回 true。</returns>
+        public bool RestoreLastConfirmedDatabaseIfAny()
+        {
+            EnsureInitialized();
+            try
+            {
+                return Installer.RestoreLastConfirmed();
+            }
+            catch (Exception ex)
+            {
+                // 恢复失败已在 installer 内保留备份供下次启动重试；这里只向上暴露日志，不再抛出中断恢复链。
+                GameLog.Error($"[ConfigManager] 配置数据库恢复失败：{ex.Message}");
+                return false;
             }
         }
 
@@ -1048,64 +1161,9 @@ namespace Framework
 #endif
         }
 
-        /// <summary>
-        /// 以临时文件方式安装数据库字节，校验通过后替换，并按需重载缓存配置。
-        /// </summary>
-        private bool InstallDatabaseBytes(byte[] bytes, string sourceName, bool reloadLoadedConfigs)
-        {
-            if (bytes == null || bytes.Length == 0)
-            {
-                GameLog.Warning($"[ConfigManager] Database payload is empty: {sourceName}");
-                return false;
-            }
-
-            EnsureDatabaseDirectory(_dbPath);
-
-            string tempPath = _dbPath + ".tmp";
-            string backupPath = _dbPath + ".bak";
-            var loadedConfigTypes = reloadLoadedConfigs ? new List<Type>(_tableConfigCache.Keys) : null;
-
-            if (reloadLoadedConfigs && loadedConfigTypes != null)
-            {
-                // 数据库热更替换后，需要同时恢复普通表加载器和 general 单例配置的缓存类型。
-                loadedConfigTypes.AddRange(_generalConfigCache.Keys);
-            }
-
-            try
-            {
-                File.WriteAllBytes(tempPath, bytes);
-                if (!ValidateDatabaseFile(tempPath))
-                {
-                    DeleteFileQuietly(tempPath);
-                    GameLog.Error($"[ConfigManager] Database validation failed: {sourceName}");
-                    return false;
-                }
-
-                if (File.Exists(_dbPath))
-                {
-                    File.Copy(_dbPath, backupPath, overwrite: true);
-                }
-
-                File.Copy(tempPath, _dbPath, overwrite: true);
-                DeleteFileQuietly(tempPath);
-
-                if (reloadLoadedConfigs && loadedConfigTypes != null && loadedConfigTypes.Count > 0)
-                {
-                    ReloadConfigs(loadedConfigTypes);
-                }
-
-                DeleteFileQuietly(backupPath);
-                GameLog.Log($"[ConfigManager] Updated database from {sourceName}.");
-                return true;
-            }
-            catch (Exception ex)
-            {
-                GameLog.Error($"[ConfigManager] Failed to install database bytes: {ex.Message}");
-                RestoreDatabaseBackup(backupPath, loadedConfigTypes);
-                DeleteFileQuietly(tempPath);
-                return false;
-            }
-        }
+        // 说明：旧的 InstallDatabaseBytes（临时文件→校验→备份→替换→立即删备份）已收敛进
+        // ConfigDatabaseInstaller。行为差异：备份不再在安装成功后立即删除，而是保留到统一启动
+        // 确认点（ConfirmHotUpdateDatabase），使配置回滚与代码槽回滚保持一致的事务边界。
 
         /// <summary>
         /// 打开数据库文件，并校验 SQLite 能否读取其表结构。
@@ -1135,31 +1193,6 @@ namespace Framework
         {
             UnloadAllConfigs();
             PreloadConfigs(configTypes.ToArray());
-        }
-
-        /// <summary>
-        /// 当新数据库安装失败时恢复旧数据库备份。
-        /// </summary>
-        private void RestoreDatabaseBackup(string backupPath, List<Type> loadedConfigTypes)
-        {
-            try
-            {
-                if (!string.IsNullOrEmpty(backupPath) && File.Exists(backupPath))
-                {
-                    File.Copy(backupPath, _dbPath, overwrite: true);
-                    DeleteFileQuietly(backupPath);
-                    GameLog.Warning("[ConfigManager] Restored previous database backup.");
-
-                    if (loadedConfigTypes != null && loadedConfigTypes.Count > 0)
-                    {
-                        ReloadConfigs(loadedConfigTypes);
-                    }
-                }
-            }
-            catch (Exception restoreEx)
-            {
-                GameLog.Error($"[ConfigManager] Failed to restore backup database: {restoreEx.Message}");
-            }
         }
 
         /// <summary>

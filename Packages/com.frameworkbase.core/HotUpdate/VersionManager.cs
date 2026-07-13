@@ -463,10 +463,16 @@ namespace Framework.HotUpdate
         }
 
         /// <summary>
-        /// 保存版本信息到本地
+        /// 仅在统一启动确认点之后提交资源与代码版本，避免把未验证安装提前标记为已生效。
+        /// <para>
+        /// 调用契约（内容发行事务）：本方法只能在 LaunchFlow 统一确认点（HotfixEntry.Start 成功、
+        /// 代码槽 ConfirmPendingSlot、内容事务 ConfirmPending、配置 ConfirmHotUpdateDatabase 之后）调用。
+        /// 事实源约束：CodeVersion 只取自已验证活动槽的槽清单（TryGetActiveCodeVersion），
+        /// 不信任清单声明；resourceUpdated 只能由本次启动实际完成的资源更新链路给出，
+        /// 禁止仅凭"服务端版本更高"或"执行过更新流程"提交。启动确认前的任何失败都会经
+        /// AbortPendingContent / 下次启动 PrepareForLaunch 回滚，绝不会走到本方法。
+        /// </para>
         /// </summary>
-        /// <param name="versionInfo">版本信息</param>
-        /// <summary>仅在新运行时成功启动后提交资源与代码版本，避免把未验证安装提前标记为已生效。</summary>
         public static void CommitHotUpdate(UpdateInfo serverVersion, bool resourceUpdated, bool codeUpdated)
         {
             if (serverVersion == null || (!resourceUpdated && !codeUpdated))
