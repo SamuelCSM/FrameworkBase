@@ -107,6 +107,41 @@ namespace Framework.Tests
             Assert.IsFalse(s.TryGet(key, out _));
         }
 
+        [Test]
+        public void EncryptedPrefs_DeleteAll_RemovesAllKeys()
+        {
+            var s = new EncryptedPrefsSecureStorage();
+            string k1 = UniqueKey();
+            string k2 = UniqueKey();
+            s.Set(k1, "v1");
+            s.Set(k2, "v2");
+            Assert.IsTrue(s.Contains(k1));
+            Assert.IsTrue(s.Contains(k2));
+
+            // RTBF / 账号注销：一次抹除后端写入的全部键。
+            s.DeleteAll();
+
+            Assert.IsFalse(s.Contains(k1));
+            Assert.IsFalse(s.Contains(k2));
+            Assert.IsFalse(s.TryGet(k1, out _));
+            Assert.IsFalse(s.TryGet(k2, out _));
+        }
+
+        // ── InMemory DeleteAll ──────────────────────────────────────────────
+
+        [Test]
+        public void InMemory_DeleteAll_Clears()
+        {
+            var s = new InMemorySecureStorage();
+            s.Set("a", "1");
+            s.Set("b", "2");
+
+            s.DeleteAll();
+
+            Assert.IsFalse(s.Contains("a"));
+            Assert.IsFalse(s.Contains("b"));
+        }
+
         // ── SecureStorage 注入路由 ──────────────────────────────────────────
 
         [Test]

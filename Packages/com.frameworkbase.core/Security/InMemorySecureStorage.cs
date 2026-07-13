@@ -39,5 +39,8 @@ namespace Framework.Security
             if (!string.IsNullOrEmpty(key))
                 _map.Remove(key);
         }
+
+        /// <inheritdoc />
+        public void DeleteAll() => _map.Clear();
     }
 }

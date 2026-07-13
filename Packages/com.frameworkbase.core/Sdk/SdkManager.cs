@@ -1,3 +1,4 @@
+using System;
 using Cysharp.Threading.Tasks;
 using Framework.Core;
 
@@ -23,6 +24,13 @@ namespace Framework.Sdk
     {
         private ISdkProvider _provider;
         private bool _initialized;
+        private bool _sessionInvalidatedHooked;
+
+        /// <summary>
+        /// 渠道会话失效（被顶号 / token 过期 / 家长控制强制下线）转发事件，参数为渠道原因串。
+        /// 由 <see cref="InitializeAsync"/> 完成后从当前渠道实现转发；组合根订阅它统一执行登出清凭据。
+        /// </summary>
+        public event Action<string> OnSessionInvalidated;
 
         /// <summary>当前渠道名（未注册时为 mock）。</summary>
         public string ChannelName => ProviderOrMock().ChannelName;
@@ -87,6 +95,12 @@ namespace Framework.Sdk
 
             if (result.Success)
             {
+                // 渠道确定（初始化后不再切换）：挂接会话失效转发，供组合根统一登出清凭据。
+                if (!_sessionInvalidatedHooked)
+                {
+                    provider.OnSessionInvalidated += RaiseSessionInvalidated;
+                    _sessionInvalidatedHooked = true;
+                }
                 GameLog.Log($"[SdkManager] SDK 初始化完成 channel={provider.ChannelName}");
                 // 渠道名作为崩溃归因维度：分渠道排查崩溃（不同渠道 SDK / 机型分布差异大）。
                 Framework.Core.Telemetry.CrashReporter.SetCustomKey("channel", provider.ChannelName);
@@ -99,8 +113,17 @@ namespace Framework.Sdk
 
         public override void OnShutdown()
         {
+            if (_provider != null && _sessionInvalidatedHooked)
+                _provider.OnSessionInvalidated -= RaiseSessionInvalidated;
+            _sessionInvalidatedHooked = false;
             _provider = null;
             _initialized = false;
+        }
+
+        private void RaiseSessionInvalidated(string reason)
+        {
+            GameLog.Warning($"[SdkManager] 渠道会话失效: {reason}");
+            OnSessionInvalidated?.Invoke(reason ?? string.Empty);
         }
 
         /// <summary>取当前渠道实现；未注册时惰性创建 Mock 兜底（正式包告警）。</summary>

@@ -21,6 +21,13 @@ namespace Framework.Security
         /// <summary>PlayerPrefs 键前缀（与其它 PlayerPrefs 用途隔离；测试也据此定位键）。</summary>
         public const string KeyPrefix = "fb_secure_";
 
+        /// <summary>
+        /// 键索引 PlayerPrefs 键：PlayerPrefs 无法枚举键，维护一份已写入全键清单以支持
+        /// <see cref="DeleteAll"/>（RTBF 抹除机密）。业务键不得等于保留名 <c>__index__</c>。
+        /// </summary>
+        private const string IndexKey = KeyPrefix + "__index__";
+        private const char IndexSeparator = '\n';
+
         /// <inheritdoc />
         public string Name => "encrypted-prefs";
 
@@ -35,9 +42,11 @@ namespace Framework.Security
 
             try
             {
+                string full = FullKey(key);
                 byte[] enc = AesHelper.Encrypt(value ?? string.Empty);
                 string mac = AesHelper.HmacSha256Hex(enc);
-                PlayerPrefs.SetString(FullKey(key), Convert.ToBase64String(enc) + "." + mac);
+                PlayerPrefs.SetString(full, Convert.ToBase64String(enc) + "." + mac);
+                AddToIndex(full);
                 PlayerPrefs.Save();
             }
             catch (Exception ex)
@@ -96,10 +105,67 @@ namespace Framework.Security
             if (string.IsNullOrEmpty(key))
                 return;
 
-            PlayerPrefs.DeleteKey(FullKey(key));
+            string full = FullKey(key);
+            PlayerPrefs.DeleteKey(full);
+            RemoveFromIndex(full);
+            PlayerPrefs.Save();
+        }
+
+        /// <inheritdoc />
+        public void DeleteAll()
+        {
+            foreach (string full in ReadIndex())
+                PlayerPrefs.DeleteKey(full);
+
+            PlayerPrefs.DeleteKey(IndexKey);
             PlayerPrefs.Save();
         }
 
         private static string FullKey(string key) => KeyPrefix + key;
+
+        // ── 键索引维护（支持 DeleteAll）────────────────────────────────────────
+        private static System.Collections.Generic.HashSet<string> ReadIndex()
+        {
+            var set = new System.Collections.Generic.HashSet<string>();
+            if (!PlayerPrefs.HasKey(IndexKey))
+                return set;
+
+            string raw = PlayerPrefs.GetString(IndexKey);
+            if (string.IsNullOrEmpty(raw))
+                return set;
+
+            foreach (string entry in raw.Split(IndexSeparator))
+            {
+                if (!string.IsNullOrEmpty(entry))
+                    set.Add(entry);
+            }
+            return set;
+        }
+
+        private static void WriteIndex(System.Collections.Generic.HashSet<string> set)
+        {
+            if (set.Count == 0)
+            {
+                PlayerPrefs.DeleteKey(IndexKey);
+                return;
+            }
+            PlayerPrefs.SetString(IndexKey, string.Join(IndexSeparator.ToString(), set));
+        }
+
+        private static void AddToIndex(string fullKey)
+        {
+            if (fullKey == IndexKey)
+                return; // 索引键自身不入索引
+            var set = ReadIndex();
+            if (set.Add(fullKey))
+                WriteIndex(set);
+        }
+
+        private static void RemoveFromIndex(string fullKey)
+        {
+            var set = ReadIndex();
+            if (set.Remove(fullKey))
+                WriteIndex(set);
+        }
     }
 }

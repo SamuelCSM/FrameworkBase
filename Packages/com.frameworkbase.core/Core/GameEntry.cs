@@ -21,6 +21,10 @@ namespace Framework.Core
         // 所有框架组件列表
         private List<FrameworkComponent> _components = new List<FrameworkComponent>();
 
+        // 强制登出 / 玩家主动登出的清凭据编排订阅（进程级，退出时释放）。
+        private IDisposable _forceLogoutSub;
+        private IDisposable _playerLogoutSub;
+
         // ── Inspector 序列化字段 ──────────────────────────────────────────────
 
         /// <summary>UI 基础设施引导组件（场景中放置的 UIBootstrap Prefab 实例）。持有 UIRoot Canvas，在 InitializeManagers 时注入给 UIManager。</summary>
@@ -250,6 +254,43 @@ namespace Framework.Core
         }
 
         /// <summary>
+        /// 组合根编排：把「服务端强制登出（顶号/封禁/会话失效）」「玩家主动登出」「渠道会话失效」三条
+        /// 信号统一汇聚到一次登出清理。业务仍可各自订阅 <see cref="GameMessage.ServerForceLogout"/> 做界面
+        /// 跳转——这里只负责清理框架自持状态（凭据 + 身份），与业务导航互补、互不替代。
+        /// </summary>
+        private void WireForcedLogoutHandling()
+        {
+            _forceLogoutSub = Event.Subscribe<int>(GameMessage.ServerForceLogout,
+                code => ForceLogoutAndClear($"server_force_logout:{code}"));
+            _playerLogoutSub = Event.Subscribe(GameMessage.PlayerLogout,
+                () => ForceLogoutAndClear("player_logout"));
+            Sdk.OnSessionInvalidated += OnSdkSessionInvalidated;
+        }
+
+        private void OnSdkSessionInvalidated(string reason)
+            => ForceLogoutAndClear($"sdk_session_invalidated:{reason}");
+
+        /// <summary>清空鉴权凭据（内存 + 持久化）并复位跨模块玩家身份，回到未登录态（业务据此跳登录界面）。</summary>
+        private void ForceLogoutAndClear(string reason)
+        {
+            Debug.LogWarning($"[GameEntry] 触发统一登出清理 reason={reason}");
+            Auth?.Logout(reason);
+            ClearLoggedInIdentity();
+        }
+
+        /// <summary>
+        /// 登出 / 互踢时把 <see cref="BindLoggedInIdentity"/> 贯通的玩家身份逐一复位，避免残留身份错配到
+        /// 下一个账号：存档切回 guest 目录、埋点 / 远配 / 崩溃归因清空用户维度。
+        /// </summary>
+        private void ClearLoggedInIdentity()
+        {
+            Framework.Save.SaveManager.Instance.ClearCurrentUser();
+            Analytics?.SetUserId(string.Empty);
+            RemoteConfig?.SetUserId(string.Empty);
+            Telemetry.CrashReporter.SetUser(string.Empty);
+        }
+
+        /// <summary>
         /// 初始化所有 Manager（按依赖顺序）。
         /// UIManager 创建后立即注入 UIBootstrap，确保后续 OpenUIAsync 调用时 Canvas 层级已就绪。
         /// </summary>
@@ -301,6 +342,9 @@ namespace Framework.Core
                 // 服务端错误留面包屑：崩溃前的错误码链常是根因线索。
                 Telemetry.CrashReporter.LeaveBreadcrumb($"error:{decision.Code} reaction={decision.Reaction}");
             };
+
+            // 组合根编排：强制登出 / 玩家登出 / 渠道会话失效统一清鉴权凭据与跨模块身份。
+            WireForcedLogoutHandling();
 
             RefData         = AddComponent<ConfigManager>();
             Audio           = AddComponent<AudioManager>();
@@ -410,6 +454,14 @@ namespace Framework.Core
             Debug.Log("[GameEntry] 开始清理框架...");
 
             Application.lowMemory -= HandleLowMemory;
+
+            // 释放登出编排订阅，避免组件关闭后回调仍被触发。
+            if (Sdk != null)
+                Sdk.OnSessionInvalidated -= OnSdkSessionInvalidated;
+            _forceLogoutSub?.Dispose();
+            _playerLogoutSub?.Dispose();
+            _forceLogoutSub = null;
+            _playerLogoutSub = null;
 
             // 反向顺序关闭所有组件；逐个 try/catch 隔离，确保某组件清理异常不影响其余组件关闭
             for (int i = _components.Count - 1; i >= 0; i--)

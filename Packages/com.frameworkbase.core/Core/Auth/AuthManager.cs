@@ -115,6 +115,33 @@ namespace Framework.Core.Auth
             SetState(LoginFlowState.Cancelled, "cancel_requested", TelemetryErrorCodes.Auth.LoginCancelled);
         }
 
+        /// <summary>
+        /// 统一登出：清空鉴权层自持的凭据 / 会话状态（内存 + 持久化），回到未登录态。
+        /// 用户主动登出、服务端强制登出（顶号 / 封禁 / 会话失效）、渠道会话失效均汇聚到此。
+        /// <para>
+        /// 覆盖：取消进行中的登录（若有）、清 <see cref="AuthSession"/> 内存态、清 <see cref="AuthSessionStore"/>
+        /// 持久化会话（防下次冷启动自动恢复已失效会话）、清空历史登录上下文 <c>_lastContext</c>
+        /// （防断线重连静默重鉴权一个已登出身份）。
+        /// </para>
+        /// <para>
+        /// 边界：只清鉴权层自持状态。跨模块身份清理（存档目录 / 埋点 / 远配 / 崩溃归因）由组合根
+        /// （GameEntry）在收到登出 / 互踢信号时统一编排，鉴权层不反向依赖这些模块；平台渠道登出
+        /// （SDK LogoutAsync）由业务在需要时另行调用。
+        /// </para>
+        /// </summary>
+        public void Logout(string reason = "user")
+        {
+            // 取消进行中的登录（若有）：让其观察到取消并自行收尾，避免登出后残留的登录结果污染状态。
+            _loginCts?.Cancel();
+
+            AuthSession.Clear();
+            AuthSessionStore.Clear();
+            _lastContext = null;
+            LastErrorCode = string.Empty;
+            SetState(LoginFlowState.Idle, string.IsNullOrEmpty(reason) ? "logout" : $"logout:{reason}", string.Empty);
+            GameLog.Log($"[AuthManager] 已登出并清除本地凭据 reason={reason}");
+        }
+
         /// <summary>基于最近一次上下文重试。</summary>
         public UniTask<LoginResult> RetryLastLoginAsync()
         {

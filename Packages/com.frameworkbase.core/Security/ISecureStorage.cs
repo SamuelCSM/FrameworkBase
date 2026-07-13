@@ -31,5 +31,12 @@ namespace Framework.Security
 
         /// <summary>删除该键（不存在时静默）。</summary>
         void Delete(string key);
+
+        /// <summary>
+        /// 删除本后端写入的<b>全部</b>键（账号注销 / RTBF 被遗忘权抹除机密用）。
+        /// <para>实现须清空自己管理的所有条目；无法枚举底层存储的实现（如 PlayerPrefs）
+        /// 应自行维护键索引以支持整体清除。硬件级实现（Keychain / Keystore）按各自命名空间清除。</para>
+        /// </summary>
+        void DeleteAll();
     }
 }
