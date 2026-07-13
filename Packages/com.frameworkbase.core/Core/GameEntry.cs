@@ -211,11 +211,42 @@ namespace Framework.Core
             }
 
             LoginResult loginResult = await LoginFlow.RunAsync(_loginViewPrefab, systemRoot);
-            // 登录后把用户 ID 交给崩溃回捞做归因，使后续崩溃报告可按玩家定位。
-            if (!string.IsNullOrEmpty(loginResult.UserId))
-                Telemetry.CrashReporter.SetUser(loginResult.UserId);
+            // 登录成功后统一贯通玩家身份到存档隔离 / 埋点 / 远配 / 崩溃归因（组合根职责）。
+            BindLoggedInIdentity(loginResult);
             Debug.Log($"[GameEntry] 登录完成 userId={loginResult.UserId} token={(string.IsNullOrEmpty(loginResult.SessionToken) ? "(none)" : "ok")}");
             // 登录成功后由业务层接管（如 StageNavigation.ReplaceStageAsync）。
+            // 业务若接入 AB 实验扩展包（com.frameworkbase.experiment，主干不引用），
+            // 请在此后调用 Experiments.Instance.SetUnitId(loginResult.UserId) 切换分桶单元。
+        }
+
+        /// <summary>
+        /// 登录成功后把「玩家身份」统一贯通到所有需要按用户归因 / 隔离的框架子系统。
+        /// 这是组合根的职责：必须在业务层接管（读写账号存档、拉取用户维度远配 / 实验）之前调用，
+        /// 否则会出现存档落在 guest 目录、埋点 / 远配 / 崩溃归因缺失用户维度等隐性错配。
+        /// <para>
+        /// 贯通范围（框架主干可达子系统）：
+        ///   1. <see cref="Framework.Save.SaveManager"/> — 切换存档目录到该账号，实现账号级存档隔离；
+        ///   2. <see cref="Analytics"/> — 设置埋点用户维度；
+        ///   3. <see cref="RemoteConfig"/> — 设置远程配置用户维度（服务端按用户定向）；
+        ///   4. <see cref="Telemetry.CrashReporter"/> — 崩溃归因按玩家定位。
+        /// AB 实验（com.frameworkbase.experiment）是可选扩展包、主干不引用，业务须在登录成功后
+        /// 自行调用 Experiments.Instance.SetUnitId(userId) 切换分桶单元（见调用点注释）。
+        /// </para>
+        /// </summary>
+        private void BindLoggedInIdentity(LoginResult loginResult)
+        {
+            if (!loginResult.Success || string.IsNullOrEmpty(loginResult.UserId))
+                return;
+
+            string userId = loginResult.UserId;
+
+            // 存档账号目录隔离：必须早于业务读写账号存档，否则数据会默默落进 guest 目录。
+            Framework.Save.SaveManager.Instance.SetCurrentUser(userId);
+            // 运营维度贯通：埋点 / 远程配置按玩家归因与定向（Manager 未就绪时静默跳过）。
+            Analytics?.SetUserId(userId);
+            RemoteConfig?.SetUserId(userId);
+            // 崩溃归因按玩家定位。
+            Telemetry.CrashReporter.SetUser(userId);
         }
 
         /// <summary>
