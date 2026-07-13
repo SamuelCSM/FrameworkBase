@@ -105,7 +105,7 @@ namespace Framework
             if (_eventSystem == null && eventSystems.Length > 0)
             {
                 _eventSystem = eventSystems[0];
-                Debug.LogError("[UIBootstrap] EventSystem 未在 Inspector 显式配置，已临时绑定场景中的实例。请使用 Tools/ClientBase/Setup UIBootstrap in Scene 修复配置。");
+                Debug.LogError("[UIBootstrap] EventSystem 未在 Inspector 显式配置，已临时绑定场景中的实例。请使用 Framework/Template/Setup Launch Scene 重建接线。");
             }
 #endif
 
@@ -137,7 +137,15 @@ namespace Framework
 
             _eventSystem.enabled = true;
             _inputModule.enabled = true;
-            DontDestroyOnLoad(_eventSystem.gameObject);
+
+            // EventSystem 按本组件文档结构通常是 UIBootstrap 的子节点（根节点已整体 DontDestroyOnLoad），
+            // 对非根节点重复调用只会触发 Unity "only works for root GameObjects" 告警；
+            // 仅当它是独立根节点时才需要单独保活，挂在其它非常驻根下则明确告警。
+            if (_eventSystem.transform.parent == null)
+                DontDestroyOnLoad(_eventSystem.gameObject);
+            else if (_eventSystem.transform.root != transform.root)
+                Debug.LogWarning("[UIBootstrap] EventSystem 挂在其它根节点下，场景切换时可能被销毁；" +
+                                 "建议移到 UIBootstrap 下或作为独立根节点。");
         }
 
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
