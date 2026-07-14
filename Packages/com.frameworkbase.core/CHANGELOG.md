@@ -7,6 +7,7 @@
 
 ### 新增
 
+- `AppFlow` 应用主状态机（Login ⇄ InGame，骑在通用 `AsyncStateMachine` 上）：登录活动 → 身份贯通 → 业务入口（InGame.Enter）→ 挂起等登出 → 拆卸（InGame.Exit：业务退出→鉴权登出→清身份）→ 自动回登录页（此前登出只拆卸、无回登录路径）。纯逻辑全注入，EditMode 脱离 Play 单测 7 例；三个登出源（服务端互踢/玩家主动/渠道会话失效）统一改调 `RequestLogout(reason)`——只记原因+唤醒主循环，拆卸不再发生在事件回调栈深处，同会话多信号合并首个原因生效，登录态收到登出为 no-op，业务入口 await 期间的登出后置合并（入口完成后立即拆卸）；全部钩子异常隔离上报，主循环含 Faulted 防御恢复。`OnBusinessEntryAsync` 语义更新为每登录会话调用一次（业务须支持重入，Clicker 样例已天然满足）。
 - `AsyncStateMachine<TState,TTrigger>` 强类型串行异步状态机（Framework.Foundation）：Builder 一次性构建并做拓扑校验（目标未声明/规则不可达/非法超时构建期即拒绝），运行期拓扑不可变；事务化提交（Exit+Enter 全成功才切状态），失败走显式 `OnRollback` 补偿且 fail-closed（缺补偿或补偿失败进 Faulted，须显式 `RecoverAsync`）；处理器内重入触发入队串行执行（链式超限判死循环）；同状态 Ignore/Reject/Reenter 策略先于守卫求值；支持同触发器多守卫规则选路与内部转换；有界审计历史 + 观察者异常隔离到诊断出口。EditMode 测试 19 例。
 - 网络生命周期恢复：单调时间记录后台窗口，后台暂停心跳/请求计时/重连退避；短后台主动探活，长后台或 Wi-Fi↔蜂窝/网络代际变化废弃旧 Epoch 后串行重连与重鉴权；Token 过期停止空转重试，离线队列仅接受显式 ReadOnly/服务端去重请求。
 - 可信多 CDN 回退：包内 Host 允许列表、环境/路径隔离、ManifestId+相对路径+Size+SHA-256 内容身份、每 Host 重试与熔断；current/清单/伴生签名/DLL 同策略回退，哈希异常立即隔离，跨 Host 无 ETag 证明时强制全量重下。

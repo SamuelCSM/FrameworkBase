@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Threading;
 using Cysharp.Threading.Tasks;
 using Framework;
 using Framework.Core.Auth;
@@ -24,6 +25,10 @@ namespace Framework.Core
         // 强制登出 / 玩家主动登出的清凭据编排订阅（进程级，退出时释放）。
         private IDisposable _forceLogoutSub;
         private IDisposable _playerLogoutSub;
+
+        // 应用主状态机（Login ⇄ InGame）：登录、业务接管、登出拆卸、回登录全部由它串行编排。
+        private AppFlow _appFlow;
+        private CancellationTokenSource _appFlowCts;
 
         // ── Inspector 序列化字段 ──────────────────────────────────────────────
 
@@ -200,7 +205,8 @@ namespace Framework.Core
         }
 
         /// <summary>
-        /// 启动链路：LaunchFlow 完成并销毁 Loading 后，进入随包 Login 流程。
+        /// 启动链路：LaunchFlow（热更/资源引导，只跑一次、不进状态机）完成并销毁 Loading 后，
+        /// 把粗粒度生命周期交给 AppFlow 主状态机：Login ⇄ InGame，登出拆卸后自动回到登录页。
         /// </summary>
         private async UniTaskVoid RunLaunchAndLoginAsync(LoadingWindow loading, Transform systemRoot)
         {
@@ -214,36 +220,45 @@ namespace Framework.Core
                 return;
             }
 
-            LoginResult loginResult = await LoginFlow.RunAsync(_loginViewPrefab, systemRoot);
-            // 登录成功后统一贯通玩家身份到存档隔离 / 埋点 / 远配 / 崩溃归因（组合根职责）。
-            BindLoggedInIdentity(loginResult);
-            Debug.Log($"[GameEntry] 登录完成 userId={loginResult.UserId} token={(string.IsNullOrEmpty(loginResult.SessionToken) ? "(none)" : "ok")}");
-
-            // 登录后业务接管点：玩家身份已贯通（存档目录已切到该账号），业务在此进主场景/开主界面。
-            // 必须晚于 BindLoggedInIdentity——PlayerLoginSuccess 事件在登录过程中即发布、早于身份贯通，
-            // 业务若在那时读存档会落到错误账号目录；故读账号数据的接管逻辑一律走本钩子而非该事件。
-            // 注册时机：离线整包用 RuntimeInitializeOnLoadMethod；热更包用 HotfixEntry.Start（均早于登录）。
-            // 业务若接入 AB 实验扩展包（com.frameworkbase.experiment，主干不引用），
-            // 请在此后调用 Experiments.Instance.SetUnitId(loginResult.UserId) 切换分桶单元。
-            if (OnBusinessEntryAsync != null)
+            // 组合根注入：AppFlow 是纯逻辑状态机，真实实现全部在此接线。
+            // 业务入口钩子的说明与时序约束见 OnBusinessEntryAsync 文档：
+            //   必须晚于 BindLoggedInIdentity——PlayerLoginSuccess 事件在登录过程中即发布、早于身份贯通，
+            //   业务若在那时读存档会落到错误账号目录；读账号数据的接管逻辑一律走该钩子而非该事件。
+            //   业务若接入 AB 实验扩展包（com.frameworkbase.experiment，主干不引用），
+            //   请在入口内调用 Experiments.Instance.SetUnitId(loginResult.UserId) 切换分桶单元。
+            _appFlowCts = new CancellationTokenSource();
+            _appFlow = new AppFlow(new AppFlowHooks
             {
-                try
+                RunLoginAsync = token =>
+                    LoginFlow.RunAsync(_loginViewPrefab, systemRoot).AttachExternalCancellation(token),
+                BindIdentity = result =>
                 {
-                    await OnBusinessEntryAsync(loginResult);
-                }
-                catch (Exception ex)
+                    // 登录成功后统一贯通玩家身份到存档隔离 / 埋点 / 远配 / 崩溃归因（组合根职责）。
+                    BindLoggedInIdentity(result);
+                    Debug.Log($"[GameEntry] 登录完成 userId={result.UserId} token={(string.IsNullOrEmpty(result.SessionToken) ? "(none)" : "ok")}");
+                },
+                EnterBusinessAsync = (result, _) =>
+                    OnBusinessEntryAsync != null ? OnBusinessEntryAsync(result) : UniTask.CompletedTask,
+                ExitBusiness = NotifyBusinessExit,
+                LogoutAuth = reason => Auth?.Logout(reason),
+                ClearIdentity = ClearLoggedInIdentity,
+                Info = message => Debug.Log($"[AppFlow] {message}"),
+                Error = (message, ex) =>
                 {
-                    Debug.LogError("[GameEntry] 业务入口 OnBusinessEntryAsync 抛异常，已隔离不影响框架生命周期");
-                    Debug.LogException(ex);
-                }
-            }
+                    Debug.LogError($"[AppFlow] {message}");
+                    if (ex != null) Debug.LogException(ex);
+                },
+            });
+            await _appFlow.RunAsync(_appFlowCts.Token);
         }
 
         /// <summary>
         /// 登录后业务入口钩子（框架保留的唯一「业务接管」扩展点）。
-        /// 框架在登录成功且 <see cref="BindLoggedInIdentity"/> 贯通玩家身份之后调用一次；
+        /// 框架在登录成功且 <see cref="BindLoggedInIdentity"/> 贯通玩家身份之后、每个登录会话调用一次
+        /// （登出回登录页后再次登录会再次调用，业务须支持重入初始化）。
         /// 业务在此进主场景 / 开主界面 / 读账号存档。未注册时（纯框架壳）为 null、无副作用。
         /// 线程约定：在主线程 await 调用；实现内异常被框架捕获隔离。
+        /// 入口 await 期间收到的登出请求会被 AppFlow 后置合并：入口完成后立即拆卸回登录。
         /// </summary>
         public static Func<LoginResult, Cysharp.Threading.Tasks.UniTask> OnBusinessEntryAsync { get; set; }
 
@@ -286,28 +301,28 @@ namespace Framework.Core
 
         /// <summary>
         /// 组合根编排：把「服务端强制登出（顶号/封禁/会话失效）」「玩家主动登出」「渠道会话失效」三条
-        /// 信号统一汇聚到一次登出清理。业务仍可各自订阅 <see cref="GameMessage.ServerForceLogout"/> 做界面
-        /// 跳转——这里只负责清理框架自持状态（凭据 + 身份），与业务导航互补、互不替代。
+        /// 信号统一改调 <see cref="RequestLogout"/>——只记原因 + 唤醒 AppFlow，不在事件回调栈里同步拆卸；
+        /// 真正的拆卸只在 AppFlow 的 InGame→Login 转移中按序发生（同会话多信号天然合并）。
+        /// 业务仍可各自订阅 <see cref="GameMessage.ServerForceLogout"/> 做界面跳转——与业务导航互补、互不替代。
         /// </summary>
         private void WireForcedLogoutHandling()
         {
             _forceLogoutSub = Event.Subscribe<int>(GameMessage.ServerForceLogout,
-                code => ForceLogoutAndClear($"server_force_logout:{code}"));
+                code => RequestLogout($"server_force_logout:{code}"));
             _playerLogoutSub = Event.Subscribe(GameMessage.PlayerLogout,
-                () => ForceLogoutAndClear("player_logout"));
+                () => RequestLogout("player_logout"));
             Sdk.OnSessionInvalidated += OnSdkSessionInvalidated;
         }
 
         private void OnSdkSessionInvalidated(string reason)
-            => ForceLogoutAndClear($"sdk_session_invalidated:{reason}");
+            => RequestLogout($"sdk_session_invalidated:{reason}");
 
-        /// <summary>清空鉴权凭据（内存 + 持久化）并复位跨模块玩家身份，回到未登录态（业务据此跳登录界面）。</summary>
-        private void ForceLogoutAndClear(string reason)
+        /// <summary>登出请求统一入口：转交 AppFlow 主状态机。登录态 / 启动引导期收到的登出为 no-op。</summary>
+        private void RequestLogout(string reason)
         {
-            Debug.LogWarning($"[GameEntry] 触发统一登出清理 reason={reason}");
-            NotifyBusinessExit(reason);
-            Auth?.Logout(reason);
-            ClearLoggedInIdentity();
+            Debug.LogWarning($"[GameEntry] 收到登出请求 reason={reason}");
+            if (_appFlow == null || !_appFlow.RequestLogout(reason))
+                Debug.Log($"[GameEntry] 登出请求被忽略（当前不在登录会话中）reason={reason}");
         }
 
         /// <summary>先让业务释放账号态资源；无论业务是否异常，调用方都继续完成框架清理。</summary>
@@ -503,7 +518,15 @@ namespace Framework.Core
             Debug.Log("[GameEntry] 开始清理框架...");
 
             // Timer / Save 等 Manager 尚可用时先让业务保存并释放账号态资源。
+            // 应用退出不经 AppFlow 循环（保留持久会话供冷启动恢复），直接走业务退出通知。
             NotifyBusinessExit("application_quit");
+
+            // 停止应用主状态机循环：登录 / 业务入口 / 等登出的 await 经取消令牌干净解绑。
+            try { _appFlowCts?.Cancel(); } catch (Exception ex) { Debug.LogException(ex); }
+            _appFlowCts?.Dispose();
+            _appFlowCts = null;
+            _appFlow?.Dispose();
+            _appFlow = null;
 
             Application.lowMemory -= HandleLowMemory;
 
