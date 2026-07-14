@@ -66,7 +66,7 @@ namespace HotUpdate.Clicker
 
             _model = new ClickerModel();
             await _model.InitAsync();
-            _mainView = ClickerMainView.Create(_model);
+            _mainView = ClickerMainView.Create(_model, loginResult.UserId);
             Debug.Log($"[Clicker] CLICKER_READY userId={loginResult.UserId} coins={_model.Coins} level={_model.Level} double={_model.DoubleGain}");
 
 #if UNITY_EDITOR || DEVELOPMENT_BUILD

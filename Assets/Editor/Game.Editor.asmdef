@@ -2,6 +2,9 @@
     "name": "Game.Editor",
     "rootNamespace": "",
     "references": [
+        "Framework",
+        "Framework.Kernel",
+        "Framework.Foundation",
         "Framework.Editor",
         "Unity.TextMeshPro",
         "UnityEngine.UI"

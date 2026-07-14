@@ -24,22 +24,26 @@ namespace HotUpdate.Clicker
         public Button UpgradeButton { get; private set; }
         public Button ShopButton { get; private set; }
 
-        public static ClickerMainView Create(ClickerModel model)
+        public static ClickerMainView Create(ClickerModel model, string userId)
         {
             Transform parent = GameEntry.UI.GetLayerRoot(UILayer.Normal);
             var go = new GameObject("ClickerMainView", typeof(RectTransform));
             go.layer = LayerMask.NameToLayer("UI");
             go.transform.SetParent(parent, false);
             var view = go.AddComponent<ClickerMainView>();
-            view.Build(model);
+            view.Build(model, userId);
             return view;
         }
 
-        private void Build(ClickerModel model)
+        private void Build(ClickerModel model, string userId)
         {
             _model = model;
             ClickerUiKit.Stretch(gameObject);
             ClickerUiKit.Image(transform, "BG", new Color(0.10f, 0.11f, 0.15f, 1f), stretch: true);
+
+            // 玩家 ID 常驻显示：验证组合根身份贯通（存档按 uid 隔离）的可视锚点，切号后应随之变化。
+            ClickerUiKit.Text(transform, "UserLabel", $"UID {userId}", 24,
+                TextAlignmentOptions.Center, new Vector2(0.5f, 1f), new Vector2(0, -60), new Vector2(1200, 40));
 
             _coinLabel = ClickerUiKit.Text(transform, "CoinLabel", "", 52,
                 TextAlignmentOptions.Center, new Vector2(0.5f, 1f), new Vector2(0, -120), new Vector2(1200, 80));
