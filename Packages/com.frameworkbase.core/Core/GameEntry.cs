@@ -317,10 +317,11 @@ namespace Framework.Core
         private void OnSdkSessionInvalidated(string reason)
             => RequestLogout($"sdk_session_invalidated:{reason}");
 
-        /// <summary>登出请求统一入口：转交 AppFlow 主状态机。登录态 / 启动引导期收到的登出为 no-op。</summary>
+        /// <summary>登出请求统一入口：转交 AppFlow 主状态机。登录态 / 启动引导期收到的登出为 no-op。
+        /// 登出属正常业务流，用普通日志（Warning 会污染「零告警」验收门禁）。</summary>
         private void RequestLogout(string reason)
         {
-            Debug.LogWarning($"[GameEntry] 收到登出请求 reason={reason}");
+            Debug.Log($"[GameEntry] 收到登出请求 reason={reason}");
             if (_appFlow == null || !_appFlow.RequestLogout(reason))
                 Debug.Log($"[GameEntry] 登出请求被忽略（当前不在登录会话中）reason={reason}");
         }
