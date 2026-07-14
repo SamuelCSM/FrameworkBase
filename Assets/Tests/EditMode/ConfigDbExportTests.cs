@@ -3,23 +3,20 @@ using System.IO;
 using NUnit.Framework;
 using SQLite;
 
-namespace Framework.Tests
+namespace Game.Template.Tests
 {
     /// <summary>
-    /// 配表导出产物门禁（模板垂直切片 B）：校验 ConfigPipeline 导出的首包 config.db
+    /// Clicker 模板配表产物门禁（垂直切片 B）：校验壳工程导出的首包 config.db
     /// 结构完整、与 Excel 源（Assets/RefData_Excel）保持同步提交。
     ///
-    /// 设计取舍：只断言「结构 + 语义不变量」（表存在 / 列齐全 / 行数下限 / 数值符号），
-    /// 不断言具体数值——数值属策划平衡范畴，改表不应打红 CI。
-    /// 若本测试因 db 缺失而失败：跑一次 Framework → Config → Export All（或
-    /// batchmode 执行 ConfigPipeline.ExportAllForBuilder）并连同 db 一起提交。
+    /// 本测试属于游戏侧参考样例，不进入 com.frameworkbase.core；删除 Clicker 样例时可一并删除。
+    /// 只断言结构与语义不变量，不断言策划平衡数值。
     /// </summary>
     public class ConfigDbExportTests
     {
         private const string DbPath = "Assets/StreamingAssets/RefData/config.db";
         private const string HotUpdateBytesPath = "Assets/ResourcesOut/RefData/config.db.bytes";
 
-        /// <summary>clicker_level 行结构（仅测试用，独立于 HotUpdate 侧生成代码）。</summary>
         [Table("clicker_level")]
         private class ClickerLevelRow
         {
@@ -43,12 +40,10 @@ namespace Framework.Tests
             Assert.IsTrue(File.Exists(HotUpdateBytesPath),
                 $"热更配置库缺失：{HotUpdateBytesPath}。请跑 Framework → Config → Export All 并提交产物。");
 
-            // Both 目标下热更 .bytes 是首包 db 的整库同步，二者必须字节一致，
-            // 否则"首包新装 vs 热更覆盖"两条路径会拿到不同配置。
             byte[] firstPackage = File.ReadAllBytes(DbPath);
             byte[] hotUpdate = File.ReadAllBytes(HotUpdateBytesPath);
-            Assert.AreEqual(firstPackage.Length, hotUpdate.Length,
-                "首包 db 与热更 .bytes 大小不一致，疑似只导出了单目标——请用 Export All（Both）重导。");
+            CollectionAssert.AreEqual(firstPackage, hotUpdate,
+                "首包 db 与热更 .bytes 内容不一致——请用 Export All（Both）重导并同步提交。");
         }
 
         [Test]
@@ -59,7 +54,6 @@ namespace Framework.Tests
             using (var conn = new SQLiteConnection(DbPath, SQLiteOpenFlags.ReadOnly))
             {
                 List<ClickerLevelRow> rows = conn.Table<ClickerLevelRow>().ToList();
-
                 Assert.GreaterOrEqual(rows.Count, 2, "clicker_level 至少要有 2 个等级才能构成升级循环");
 
                 var seenIds = new HashSet<long>();
@@ -72,7 +66,6 @@ namespace Framework.Tests
                     Assert.IsFalse(string.IsNullOrEmpty(row.Name), $"等级 {row.Id} 缺少名称");
                 }
 
-                // 语义不变量：恰好一个满级（UpgradeCost=0），且必须是最大等级
                 List<ClickerLevelRow> maxLevels = rows.FindAll(r => r.UpgradeCost == 0);
                 Assert.AreEqual(1, maxLevels.Count, "必须恰好一个满级（UpgradeCost=0）");
 

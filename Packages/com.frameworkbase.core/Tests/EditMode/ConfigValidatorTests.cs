@@ -5,7 +5,7 @@ using NUnit.Framework;
 namespace Framework.Tests
 {
     /// <summary>
-    /// 配表校验链路门禁（模板垂直切片 B）：证明 ExcelDataValidator 会在导出期拦下非法配置，
+    /// 框架通用配表校验门禁：证明 ExcelDataValidator 会在导出期拦下非法配置，
     /// 而不是把脏数据静默写进 config.db。内存构造工作表数据，不依赖 Excel 文件夹具。
     ///
     /// 这是「配表流水线含校验」这一承诺的回归守卫：ConfigPipeline 以 EnableValidation=true 导出，
@@ -13,12 +13,12 @@ namespace Framework.Tests
     /// </summary>
     public class ConfigValidatorTests
     {
-        /// <summary>构造一张合法的 clicker_level 工作表数据（首列 Id 为主键）。</summary>
+        /// <summary>构造一张与具体业务无关的合法示例工作表（首列 Id 为主键）。</summary>
         private static ExcelReader.ExcelSheetData BuildValidSheet()
         {
             var sheet = new ExcelReader.ExcelSheetData
             {
-                SheetName = "clicker_level",
+                SheetName = "sample_level",
                 SheetKind = ExcelReader.ExcelSheetKind.Table,
                 FieldNames = new List<string> { "Id", "ClickGain", "Name" },
                 TypeDefinitions = new List<string> { "int", "int", "string" },

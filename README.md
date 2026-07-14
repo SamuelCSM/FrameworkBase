@@ -20,6 +20,8 @@ Packages/com.frameworkbase.core/  框架包（版本见 package.json，变更记
 └── Tests/EditMode/          单元测试（事件/封包/对象池/校时/定时器/热更安全等，
                              经 manifest.json 的 testables 接入 Test Runner）
 Assets/Scripts/GameProtocol/ 协议模板程序集（Google.Protobuf 生成物 + 路由伴生 partial，随项目走）
+Assets/Scripts/HotUpdate/    热更业务壳；Clicker 为参考垂直切片，起正式项目时删除/替换
+Assets/Tests/EditMode/       壳工程/参考样例专属测试（不得反向进入框架包）
 Assets/_Sample/              最小冒烟示例（FrameworkSmoke）
 Assets/Packages/             插件 DLL（Google.Protobuf 3.28.3 / SQLite / ExcelDataReader，走 NuGetForUnity，已入库）
 proto/                       协议源（.proto，主号 001 为框架保留段：心跳等系统协议）
@@ -40,7 +42,8 @@ Tools/ci/                    本地 CI 门禁脚本（run-ci.ps1）与 CI 说明
 | 配置表 | ✅ Excel → SQLite 导出/校验/代码生成，首包/热更库兼容检查 | `Editor/ExcelTool` + `ConfigData/` |
 | 存档 | ✅ AES+HMAC、账号目录隔离、原子写、按文件锁 | `Save/SaveManager.cs` |
 | UI | ✅ 层级/导航栈/对象池/遮罩/动画 + LoopScroll/TabGroup | `UI/` |
-| 遥测 | ⚠️ 崩溃回捞（本地+可选上报）+ 启动耗时（仅本地落盘） | `Core/Telemetry/` |
+| 运营接入 | ✅ 平台 SDK 抽象 + 埋点事件管道/Schema + 用户维度远配与功能开关 | `Sdk/` + `Analytics/` + `RemoteConfig/` |
+| 遥测 | ✅ 崩溃回捞（本地+可选上报）+ 启动耗时 + 业务埋点管道 | `Core/Telemetry/` + `Analytics/` |
 | CI/构建 | ✅ 本地与远端双门禁；batchmode Player 构建入口 | `Tools/ci/` + `Editor/BuildEntry.cs` |
 
 ## 里程碑
@@ -56,7 +59,8 @@ Tools/ci/                    本地 CI 门禁脚本（run-ci.ps1）与 CI 说明
 - [x] **D3** 主干业务残留清零（演示协议中性化 / 文档去项目专名 / 机器路径出库）
 - [x] **E** 分发模型：Framework 迁嵌入式 UPM 包 `com.frameworkbase.core`（semver + CHANGELOG），
       壳工程转正为模板工程
-- [ ] **F** 运营能力层：平台 SDK 抽象 / 埋点事件管道 / 远程配置与功能开关（商业项目启动前补齐）
+- [x] **F** 运营能力层：平台 SDK 抽象 / 埋点事件管道 / 远程配置与功能开关
+- [ ] **G** 参考垂直切片：A～C（启动壳/配表/Clicker）已收口；D～G（真实热更/登录/CI/接入文档）待完成
 
 ## 使用须知（新项目起步）
 

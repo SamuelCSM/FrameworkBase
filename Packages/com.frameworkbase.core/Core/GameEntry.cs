@@ -248,6 +248,13 @@ namespace Framework.Core
         public static Func<LoginResult, Cysharp.Threading.Tasks.UniTask> OnBusinessEntryAsync { get; set; }
 
         /// <summary>
+        /// 业务会话退出钩子。框架在清空登录凭据与玩家身份之前同步调用，业务应在此取消账号级定时器、
+        /// 保存当前账号数据并关闭业务 UI。实现必须快速完成；异常会被隔离，不能阻断框架清理。
+        /// 参数为退出原因（player_logout / server_force_logout:* / sdk_session_invalidated:* / application_quit）。
+        /// </summary>
+        public static Action<string> OnBusinessExit { get; set; }
+
+        /// <summary>
         /// 登录成功后把「玩家身份」统一贯通到所有需要按用户归因 / 隔离的框架子系统。
         /// 这是组合根的职责：必须在业务层接管（读写账号存档、拉取用户维度远配 / 实验）之前调用，
         /// 否则会出现存档落在 guest 目录、埋点 / 远配 / 崩溃归因缺失用户维度等隐性错配。
@@ -298,8 +305,26 @@ namespace Framework.Core
         private void ForceLogoutAndClear(string reason)
         {
             Debug.LogWarning($"[GameEntry] 触发统一登出清理 reason={reason}");
+            NotifyBusinessExit(reason);
             Auth?.Logout(reason);
             ClearLoggedInIdentity();
+        }
+
+        /// <summary>先让业务释放账号态资源；无论业务是否异常，调用方都继续完成框架清理。</summary>
+        private static void NotifyBusinessExit(string reason)
+        {
+            if (OnBusinessExit == null)
+                return;
+
+            try
+            {
+                OnBusinessExit(reason);
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"[GameEntry] 业务退出 OnBusinessExit 抛异常，继续清理框架身份 reason={reason}");
+                Debug.LogException(ex);
+            }
         }
 
         /// <summary>
@@ -476,6 +501,9 @@ namespace Framework.Core
         protected override void OnApplicationQuit()
         {
             Debug.Log("[GameEntry] 开始清理框架...");
+
+            // Timer / Save 等 Manager 尚可用时先让业务保存并释放账号态资源。
+            NotifyBusinessExit("application_quit");
 
             Application.lowMemory -= HandleLowMemory;
 

@@ -12,8 +12,8 @@ namespace Framework.Editor
     /// 配表一键管线：Excel（Assets/RefData_Excel）→ 代码生成 + config.db 导出，单入口全链路。
     ///
     /// 背景：ExcelExporterWindow / ConfigTableEditorWindow 是交互式窗口，代码生成与数据导出
-    /// 分散在两处、无法无人值守。本管线把「改表 → 生效」收敛为一步（模板垂直切片 B，
-    /// 见 Docs/TemplateVerticalSliceDesign.md），菜单与 batchmode 双入口，供日常改表与 CI 复用。
+    /// 分散在两处、无法无人值守。本管线把「改表 → 生效」收敛为一步，提供菜单与 batchmode
+    /// 双入口，供采用框架标准目录约定的项目日常改表与 CI 复用。
     ///
     /// 产物（沿用工具链既有默认约定）：
     ///   - 代码：Assets/Scripts/HotUpdate/ConfigData/{Data,Table}（命名空间 HotUpdate.Config，热更侧）

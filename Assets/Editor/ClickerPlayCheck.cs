@@ -1,6 +1,7 @@
 using System;
 using System.Text;
 using Framework.Editor;
+using TMPro;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
@@ -38,6 +39,10 @@ namespace Game.Editor
         private static bool   _saveRoundtripOk;
         private static bool   _uiDriven;
         private static bool   _shopOpened;
+        private static bool   _shopClosed;
+        private static bool   _clickChangedCoins;
+        private static bool   _buyChangedCoins;
+        private static bool   _uiDriveFailed;
         private static double _deadline;
         private static double _driveAt = -1;
         private static double _finishAt = -1;
@@ -47,6 +52,8 @@ namespace Game.Editor
         [MenuItem("Template/Run Clicker Play Check (玩法切片验收)")]
         public static void Run()
         {
+            ResetState();
+
             // 清持久化配置库：早期测试运行会在 persistentDataPath 留下旧 schema 的 config.db，
             // 触发 ConfigManager「schema 旧于基线→重装」的迁移告警（真实首装不会有）。
             // 删掉它让本次走干净首装，验收测的是「零噪声」而非测试历史残留。
@@ -64,6 +71,28 @@ namespace Game.Editor
             EditorSceneManager.OpenScene(LaunchScene, OpenSceneMode.Single);
             Debug.Log("[ClickerPlayCheck] 打开 Launch 场景，进入 Play 模式...");
             EditorApplication.EnterPlaymode();
+        }
+
+        private static void ResetState()
+        {
+            Application.logMessageReceived -= OnLog;
+            EditorApplication.update -= OnUpdate;
+            _errorCount = 0;
+            _warningCount = 0;
+            _guestClicked = false;
+            _clickerReady = false;
+            _gameplaySelfCheckOk = false;
+            _saveRoundtripOk = false;
+            _uiDriven = false;
+            _shopOpened = false;
+            _shopClosed = false;
+            _clickChangedCoins = false;
+            _buyChangedCoins = false;
+            _uiDriveFailed = false;
+            _driveAt = -1;
+            _finishAt = -1;
+            _drivePhase = 0;
+            Details.Clear();
         }
 
         private static void CleanPersistentConfig()
@@ -176,24 +205,77 @@ namespace Game.Editor
             {
                 case 0:
                     Button click = FindButtonByName("ClickButton");
-                    if (click != null) { click.onClick.Invoke(); click.onClick.Invoke(); }
+                    TextMeshProUGUI coinBeforeClick = FindTextByName("CoinLabel");
+                    if (click == null || !click.interactable || coinBeforeClick == null)
+                    {
+                        FailUi("主界面缺少可交互 ClickButton 或 CoinLabel");
+                        return;
+                    }
+                    string beforeClick = coinBeforeClick.text;
+                    click.onClick.Invoke();
+                    click.onClick.Invoke();
+                    _clickChangedCoins = coinBeforeClick.text != beforeClick;
+                    if (!_clickChangedCoins)
+                    {
+                        FailUi("点击 ClickButton 后 CoinLabel 未变化，Event→UI 刷新链路未生效");
+                        return;
+                    }
                     Debug.Log("[ClickerPlayCheck] 已驱动点击按钮");
                     _drivePhase++;
                     break;
                 case 1:
                     Button shop = FindButtonByName("ShopButton");
-                    if (shop != null) { shop.onClick.Invoke(); _shopOpened = true; }
+                    if (shop == null || !shop.interactable)
+                    {
+                        FailUi("主界面缺少可交互 ShopButton");
+                        return;
+                    }
+                    shop.onClick.Invoke();
+                    _shopOpened = FindButtonByName("BuyButton") != null && FindButtonByName("CloseButton") != null;
+                    if (!_shopOpened)
+                    {
+                        FailUi("点击 ShopButton 后未出现 BuyButton + CloseButton，Popup 打开链路未生效");
+                        return;
+                    }
                     _drivePhase++;
                     break;
                 case 2:
                     Button buy = FindButtonByName("BuyButton");
-                    if (buy != null) buy.onClick.Invoke();
+                    TextMeshProUGUI coinBeforeBuy = FindTextByName("CoinLabel");
+                    if (buy == null || !buy.interactable || coinBeforeBuy == null)
+                    {
+                        FailUi("商店缺少可交互 BuyButton 或主界面 CoinLabel");
+                        return;
+                    }
+                    string beforeBuy = coinBeforeBuy.text;
+                    buy.onClick.Invoke();
+                    _buyChangedCoins = coinBeforeBuy.text != beforeBuy;
+                    if (!_buyChangedCoins)
+                    {
+                        FailUi("点击 BuyButton 后 CoinLabel 未变化，弹窗→主状态回调未生效");
+                        return;
+                    }
                     _drivePhase++;
                     break;
                 case 3:
                     Button close = FindButtonByName("CloseButton");
-                    if (close != null) close.onClick.Invoke();
-                    Debug.Log($"[ClickerPlayCheck] 商店开合完成 shopOpened={_shopOpened}");
+                    if (close == null || !close.interactable)
+                    {
+                        FailUi("商店缺少可交互 CloseButton");
+                        return;
+                    }
+                    close.onClick.Invoke();
+                    _drivePhase++;
+                    break;
+                case 4:
+                    // Destroy 在帧末生效；隔一拍后确认弹窗确实消失、主界面仍可交互。
+                    _shopClosed = FindButtonByName("CloseButton") == null && FindButtonByName("ClickButton") != null;
+                    if (!_shopClosed)
+                    {
+                        FailUi("关闭商店后 CloseButton 仍存在，或主界面没有恢复");
+                        return;
+                    }
+                    Debug.Log("[ClickerPlayCheck] 商店打开/购买/关闭均已验证");
                     _drivePhase++;
                     break;
                 default:
@@ -211,6 +293,21 @@ namespace Game.Editor
             return null;
         }
 
+        private static TextMeshProUGUI FindTextByName(string name)
+        {
+            foreach (TextMeshProUGUI text in UnityEngine.Object.FindObjectsOfType<TextMeshProUGUI>())
+                if (text.gameObject.name == name)
+                    return text;
+            return null;
+        }
+
+        private static void FailUi(string reason)
+        {
+            _uiDriveFailed = true;
+            Details.AppendLine($"  [UI] {reason}");
+            Finish(false);
+        }
+
         private static void Finish(bool timedOut)
         {
             EditorApplication.update -= OnUpdate;
@@ -218,11 +315,14 @@ namespace Game.Editor
             SessionState.SetBool(ActiveKey, false);
             Environment.SetEnvironmentVariable("CLICKER_SELFCHECK", null);
 
-            bool ok = !timedOut && _errorCount == 0 &&
-                      _clickerReady && _gameplaySelfCheckOk && _saveRoundtripOk && _uiDriven;
+            bool ok = !timedOut && _errorCount == 0 && _warningCount == 0 && !_uiDriveFailed &&
+                      _clickerReady && _gameplaySelfCheckOk && _saveRoundtripOk && _uiDriven &&
+                      _shopOpened && _shopClosed && _clickChangedCoins && _buyChangedCoins;
             string verdict = ok ? "CLICKER_PLAY_CHECK_OK" : "CLICKER_PLAY_CHECK_FAIL";
             Debug.Log($"[ClickerPlayCheck] {verdict} timedOut={timedOut} errors={_errorCount} warnings={_warningCount} " +
-                      $"ready={_clickerReady} gameplay={_gameplaySelfCheckOk} save={_saveRoundtripOk} uiDriven={_uiDriven}\n{Details}");
+                      $"ready={_clickerReady} gameplay={_gameplaySelfCheckOk} save={_saveRoundtripOk} " +
+                      $"uiDriven={_uiDriven} shopOpened={_shopOpened} shopClosed={_shopClosed} " +
+                      $"clickChanged={_clickChangedCoins} buyChanged={_buyChangedCoins}\n{Details}");
 
             if (Application.isBatchMode)
                 EditorApplication.Exit(ok ? 0 : 1);

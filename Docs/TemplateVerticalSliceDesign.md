@@ -1,6 +1,6 @@
 # 模板样例(参考垂直切片)落地方案
 
-> 状态:设计稿(待评审)
+> 状态：切片 A～C 已落地并完成收口；切片 D～G 待实施
 > 关联:`Docs/ContentReleaseTransactionDesign.md`、`Docs/ReleaseSystemTargetDesign.md`、`Tools/ci/release-rehearsal.ps1`
 
 ## 1. 目标与定位
@@ -35,16 +35,18 @@
 
 ## 3. 样例玩法选型
 
-**最小放置/点击循环(Clicker)**,刻意选到"刚好覆盖所有子系统"为止:
+**最小放置/点击循环(Clicker)**，只覆盖已经进入主链路、且能形成有效断言的子系统：
 
 - 主界面显示金币数,点击按钮 +N(N 来自**配表**);
 - 每秒自动 +M(M 来自配表,走 **TimerManager**);
 - 金币变化经 **EventManager** 广播,UI 订阅刷新;
-- 点击时播一个音效(**AudioManager**)、飘字(**TipManager** / **Pooling**);
 - 一个"双倍收益"开关由**远程配置**驱动;
 - 金币数走 **SaveManager** 持久化,重启恢复;
 - 点击/升级事件打**埋点**(AnalyticsManager);
-- 一个"商店"二级窗口验证 **UIManager** 层级/栈。
+- 一个"商店"二级窗口验证 **UIManager** 提供的 Normal/Popup 层根、遮罩防穿透和弹窗回调。
+
+当前刻意不把 Audio/Tips/Pooling/完整 UI 导航栈塞进 Clicker：它们不在关键交易链路上，
+只为凑覆盖数会增加样例维护成本。后续只有真实项目接入再次暴露缺口时才扩样例。
 
 不选跑酷/战斗等:玩法复杂度不产生额外验证价值,只产生维护成本。
 
@@ -69,14 +71,16 @@
 
 ### 切片 C:最小玩法循环(热更层)
 
-- 做:`Assets/Scripts/HotUpdate/` 下新增 `Clicker/` 模块:
-  `HotfixEntry.Start()` → `GameStageNavigationManager` 进 `MainStage` → 打开主窗口 → 第 3 节全部玩法点。
-  Save(金币)、Analytics(点击事件)、RemoteConfig(双倍开关)、Audio/Tips/Pooling/Event/Timer 逐项接上。
+- 做:`Assets/Scripts/HotUpdate/` 下新增 `Clicker/` 模块：
+  登录身份贯通 → `GameEntry.OnBusinessEntryAsync` → 初始化账号存档 → 打开主窗口；
+  Save(金币)、Analytics(点击事件)、RemoteConfig(双倍开关读取)、Event/Timer 和 UI 分层逐项接上。
+  登出/互踢/SDK 会话失效/应用退出统一先走 `GameEntry.OnBusinessExit`，在身份清空前保存并释放 Timer/UI。
 - 验收:
-  1. 攒金币 → 杀进程重启 → 金币恢复(Save 冷启动闭环);
-  2. 远配改双倍开关 → 下次启动收益翻倍(远配闭环);
-  3. Editor 内埋点日志可见事件序列(埋点闭环);
-  4. 商店窗口开/关/返回栈行为正确(UI 闭环)。
+  1. 玩法数值自检与账号级 Save 存/读往返通过；
+  2. Click 后 CoinLabel 必须变化（Event → UI 刷新闭环）；
+  3. 商店必须真实打开，Buy 后主状态变化，Close 后弹窗消失且主界面仍可交互；
+  4. 全程零 Error / 零 Warning，任何按钮或哨兵缺失均失败；
+  5. 远配真实下发、冷启动恢复与代码/配表联合升级并入切片 D 验收。
 
 ### 切片 D:热更真链路(全流程演练)
 

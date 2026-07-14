@@ -13,6 +13,7 @@ namespace HotUpdate.Clicker
     /// </summary>
     public class ClickerShopView : MonoBehaviour
     {
+        private static ClickerShopView _current;
         private ClickerModel _model;
 
         public Button BuyButton { get; private set; }
@@ -20,13 +21,25 @@ namespace HotUpdate.Clicker
 
         public static ClickerShopView Open(ClickerModel model)
         {
+            if (_current != null)
+                return _current;
+
             Transform parent = GameEntry.UI.GetLayerRoot(UILayer.Popup);
             var go = new GameObject("ClickerShopView", typeof(RectTransform));
             go.layer = LayerMask.NameToLayer("UI");
             go.transform.SetParent(parent, false);
             var view = go.AddComponent<ClickerShopView>();
+            _current = view;
             view.Build(model);
             return view;
+        }
+
+        /// <summary>业务会话退出时关闭仍存活的商店弹窗。幂等。</summary>
+        public static void CloseAll()
+        {
+            if (_current != null)
+                Destroy(_current.gameObject);
+            _current = null;
         }
 
         private void Build(ClickerModel model)
@@ -51,5 +64,11 @@ namespace HotUpdate.Clicker
         }
 
         private void Close() => Destroy(gameObject);
+
+        private void OnDestroy()
+        {
+            if (_current == this)
+                _current = null;
+        }
     }
 }
