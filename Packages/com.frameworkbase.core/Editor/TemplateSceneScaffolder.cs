@@ -44,7 +44,7 @@ namespace Framework.Editor
         private static readonly Color TextBright = new Color(0.92f, 0.93f, 0.95f, 1f);
         private static readonly Color TextDim    = new Color(0.62f, 0.65f, 0.70f, 1f);
 
-        [MenuItem("Framework/Template/Setup Launch Scene (灰盒启动壳)")]
+        [MenuItem("Template/Setup Launch Scene (灰盒启动壳)")]
         public static void SetupLaunchSceneMenu()
         {
             SetupLaunchScene();

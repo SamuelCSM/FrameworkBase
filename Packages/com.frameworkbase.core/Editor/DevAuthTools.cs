@@ -13,7 +13,7 @@ namespace Framework.Editor
     /// </summary>
     public static class DevAuthTools
     {
-        [MenuItem("Framework/Template/Clear Persisted Login Session (清除本机登录会话)")]
+        [MenuItem("Template/Clear Persisted Login Session (清除本机登录会话)")]
         public static void ClearPersistedSession()
         {
             AuthSessionStore.Clear();

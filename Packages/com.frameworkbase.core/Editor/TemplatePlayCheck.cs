@@ -36,7 +36,7 @@ namespace Framework.Editor
         private static readonly StringBuilder Details = new StringBuilder();
 
         /// <summary>batchmode 入口（编辑器内也可从菜单触发，用于本地快速验收）。</summary>
-        [MenuItem("Framework/Template/Run Launch Play Check (启动壳验收)")]
+        [MenuItem("Template/Run Launch Play Check (启动壳验收)")]
         public static void Run()
         {
             SessionState.SetBool(ActiveKey, true);

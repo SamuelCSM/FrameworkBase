@@ -1,24 +1,28 @@
 using System;
 using System.Text;
-using Framework.Core.Auth;
+using Framework.Editor;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.UI;
 
-namespace Framework.Editor
+namespace Game.Editor
 {
     /// <summary>
     /// Clicker 玩法切片（切片 C）无人值守 Play 验收：
     /// 打开 Launch → 自动游客登录 → 等业务入口把 Clicker 主界面拉起 → 驱动 UI（点击/商店开合）→
     /// 校验热更侧落的自检哨兵（玩法数值 / 存档往返）→ 结算零 Error。
     ///
-    /// 本检查器在 Framework.Editor 程序集，无法引用 HotUpdate 里的 Clicker 类型，
-    /// 故一律按名字定位 UnityEngine.UI.Button 来驱动（与 slice A 同法）。
+    /// 归属：本驱动是 <b>Clicker 样例专属</b>（按名定位 ClickButton/ShopButton…），故落在游戏侧
+    /// <c>Game.Editor</c> 程序集（Assets/Editor），而非可复用的框架包——真项目删样例时一并带走。
+    /// 清会话不直碰框架 internal，改调框架公开的 <see cref="DevAuthTools.ClearPersistedSession"/>
+    /// （Framework.Editor），保持游戏侧对框架 internal 零耦合。
+    ///
+    /// 本检查器无法引用 HotUpdate 里的 Clicker 类型，故一律按名字定位 UnityEngine.UI.Button 驱动。
     /// 判定以日志 ASCII 哨兵为准（batchmode 退出码不可靠）：CLICKER_PLAY_CHECK_OK / _FAIL。
     ///
     /// 用法（不能带 -quit）：
-    ///   Unity.exe -batchmode -projectPath ... -executeMethod Framework.Editor.ClickerPlayCheck.Run -logFile ...
+    ///   Unity.exe -batchmode -projectPath ... -executeMethod Game.Editor.ClickerPlayCheck.Run -logFile ...
     /// </summary>
     public static class ClickerPlayCheck
     {
@@ -40,7 +44,7 @@ namespace Framework.Editor
         private static int    _drivePhase;
         private static readonly StringBuilder Details = new StringBuilder();
 
-        [MenuItem("Framework/Template/Run Clicker Play Check (玩法切片验收)")]
+        [MenuItem("Template/Run Clicker Play Check (玩法切片验收)")]
         public static void Run()
         {
             // 清持久化配置库：早期测试运行会在 persistentDataPath 留下旧 schema 的 config.db，
@@ -50,7 +54,8 @@ namespace Framework.Editor
 
             // 清持久化登录会话：否则上次游客会话会被静默恢复、跳过登录界面，导致本检查器
             // 等不到游客登录按钮。清掉让登录界面确定性出现，真实走一遍游客登录。
-            try { AuthSessionStore.Clear(); }
+            // 走框架公开的 DevAuthTools（Framework.Editor），不直碰 AuthSessionStore internal。
+            try { DevAuthTools.ClearPersistedSession(); }
             catch (Exception ex) { Debug.Log($"[ClickerPlayCheck] 清会话跳过：{ex.Message}"); }
 
             // 让热更侧 ClickerBootstrap 执行玩法/存档自检（仅本进程可见）。
