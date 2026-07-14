@@ -116,10 +116,18 @@ function Invoke-UnityTests([string]$platform) {
             }
         }
 
-        if ([int]$run.failed -gt 0 -or $run.result -notlike "Passed*") {
+        # 判定按计数、不看顶层 result 串：有失败或 Inconclusive 即红，并要求至少一个用例真正通过
+        # （挡住「整组没跑 / 全跳过」）。skipped(Assert.Ignore) 不判红——ReleaseRehearsalTests 在无
+        # Artifacts/Rehearsal/rehearsal.json（gitignored 演练产物）时整组 Ignore，令顶层
+        # result=Skipped:Ignored；按其文档「不影响常规 CI」这属自愿跳过。旧逻辑用
+        # result -notlike "Passed*" 会把这种自愿跳过误判为失败，使全新 clone 上 run-ci 假红。
+        if ([int]$run.failed -gt 0 -or [int]$run.inconclusive -gt 0 -or [int]$run.passed -le 0) {
             $exit = 1
         }
         else {
+            if ([int]$run.skipped -gt 0) {
+                Write-Host ("注意：{0} 个用例被跳过（如 ReleaseRehearsalTests 无演练 fixture 时 Assert.Ignore），按设计不判失败。" -f $run.skipped)
+            }
             if ($exit -ne 0) {
                 Write-Host "$platform 测试报告已通过，但 Unity 进程退出码为 $exit；按测试报告判定通过。"
             }
