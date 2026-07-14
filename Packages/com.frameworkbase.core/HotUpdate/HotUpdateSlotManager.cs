@@ -74,6 +74,8 @@ namespace Framework.HotUpdate
         private static readonly object Sync = new object();
         private static readonly StringComparison PathComparison =
             Path.DirectorySeparatorChar == '\\' ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        private static readonly StringComparer PathComparer =
+            Path.DirectorySeparatorChar == '\\' ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
         private static InstallState _state;
 
 #if UNITY_INCLUDE_TESTS
@@ -110,6 +112,92 @@ namespace Framework.HotUpdate
 
         /// <summary>供安装前磁盘容量门禁查询与代码槽相同的目标卷。</summary>
         internal static string StorageRootDirectory => RootDirectory;
+
+        /// <summary>
+        /// 按高低水位与空间缺口清理代码更新缓存。Active、Pending、Last-Known-Good、
+        /// 安装状态文件以及进行中的内容事务全部属于硬保护集，任何情况下不得自动删除。
+        /// </summary>
+        internal static CacheCleanupReport CleanupCache(
+            CacheCleanupRequest request,
+            CacheRetentionPolicy policy,
+            bool contentCommitInProgress = false)
+        {
+            lock (Sync)
+            {
+                if (contentCommitInProgress || !Directory.Exists(RootDirectory))
+                {
+                    GameLog.Warning("[HotUpdateCache] 内容提交进行中或缓存根不存在，本轮不执行清理。");
+                    return new CacheCleanupReport(0, 0, 0, 0);
+                }
+
+                InstallState state = LoadState();
+                var protectedSlots = new HashSet<string>(PathComparer)
+                {
+                    state.ActiveSlot ?? string.Empty,
+                    state.LastKnownGoodSlot ?? string.Empty,
+                    state.PendingConfirmationSlot ?? string.Empty,
+                };
+
+                var candidates = new List<CacheEntry>();
+                long currentBytes = CalculateDirectoryBytes(RootDirectory);
+                AddDirectoryCandidates(StagingDirectory, CacheEntryKind.OrphanStaging, _ => false, candidates);
+                AddDirectoryCandidates(SlotsDirectory, CacheEntryKind.ObsoleteRelease,
+                    path => protectedSlots.Contains(Path.GetFileName(path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar))),
+                    candidates);
+
+                foreach (string file in Directory.GetFiles(RootDirectory, "*", SearchOption.TopDirectoryOnly))
+                {
+                    string extension = Path.GetExtension(file);
+                    if (!string.Equals(extension, ".download", StringComparison.OrdinalIgnoreCase) &&
+                        !string.Equals(extension, ".tmp", StringComparison.OrdinalIgnoreCase))
+                        continue;
+                    var info = new FileInfo(file);
+                    candidates.Add(new CacheEntry
+                    {
+                        Path = info.FullName,
+                        SizeBytes = info.Exists ? info.Length : 0,
+                        LastWriteUtc = info.LastWriteTimeUtc,
+                        Kind = CacheEntryKind.Temporary,
+                        IsProtected = false,
+                    });
+                }
+
+                var normalizedRequest = new CacheCleanupRequest(
+                    currentBytes,
+                    request.RequiredFreeBytes,
+                    request.AvailableFreeBytes);
+                CacheCleanupPlan plan = CacheCleanupPlanner.CreatePlan(normalizedRequest, candidates, policy);
+                long freed = 0;
+                int deleted = 0;
+                int failed = 0;
+                foreach (CacheEntry entry in plan.Entries)
+                {
+                    if (!IsDirectlyUnderManagedRoot(entry.Path))
+                    {
+                        failed++;
+                        GameLog.Error($"[HotUpdateCache] 拒绝清理越界路径：{entry.Path}");
+                        continue;
+                    }
+
+                    try
+                    {
+                        if (Directory.Exists(entry.Path)) Directory.Delete(entry.Path, true);
+                        else if (File.Exists(entry.Path)) File.Delete(entry.Path);
+                        else continue;
+                        freed = freed > long.MaxValue - entry.SizeBytes ? long.MaxValue : freed + entry.SizeBytes;
+                        deleted++;
+                        GameLog.Log($"[HotUpdateCache] 已清理 kind={entry.Kind}, bytes={entry.SizeBytes}, path={entry.Path}");
+                    }
+                    catch (Exception ex)
+                    {
+                        failed++;
+                        GameLog.Warning($"[HotUpdateCache] 清理失败 {entry.Path}：{ex.Message}");
+                    }
+                }
+
+                return new CacheCleanupReport(plan.TargetBytes, freed, deleted, failed);
+            }
+        }
 
         /// <summary>
         /// 在任何热更新程序集加载之前准备启动状态：清理遗留 staging、隔离其他 AppVersion 的状态，
@@ -771,6 +859,81 @@ namespace Framework.HotUpdate
             {
                 try { Directory.Delete(directory, true); }
                 catch (Exception ex) { GameLog.Warning($"[HotUpdateSlots] 清理 staging 目录失败 {directory}：{ex.Message}"); }
+            }
+        }
+
+        private static void AddDirectoryCandidates(
+            string parent,
+            CacheEntryKind kind,
+            Func<string, bool> isProtected,
+            ICollection<CacheEntry> output)
+        {
+            if (!Directory.Exists(parent)) return;
+            foreach (string directory in Directory.GetDirectories(parent, "*", SearchOption.TopDirectoryOnly))
+            {
+                var info = new DirectoryInfo(directory);
+                if ((info.Attributes & FileAttributes.ReparsePoint) != 0)
+                {
+                    GameLog.Warning($"[HotUpdateCache] 跳过重解析点，禁止缓存清理跨越文件系统边界：{info.FullName}");
+                    continue;
+                }
+                output.Add(new CacheEntry
+                {
+                    Path = info.FullName,
+                    SizeBytes = CalculateDirectoryBytes(info.FullName),
+                    LastWriteUtc = info.LastWriteTimeUtc,
+                    Kind = kind,
+                    IsProtected = isProtected(info.FullName),
+                });
+            }
+        }
+
+        private static long CalculateDirectoryBytes(string directory)
+        {
+            if (!Directory.Exists(directory)) return 0;
+            long total = 0;
+            try
+            {
+                foreach (string file in Directory.GetFiles(directory, "*", SearchOption.AllDirectories))
+                {
+                    long size;
+                    try { size = new FileInfo(file).Length; }
+                    catch { continue; }
+                    total = total > long.MaxValue - size ? long.MaxValue : total + size;
+                }
+            }
+            catch { }
+            return total;
+        }
+
+        private static bool IsDirectlyUnderManagedRoot(string candidate)
+        {
+            if (string.IsNullOrWhiteSpace(candidate)) return false;
+            try
+            {
+                string full = Path.GetFullPath(candidate)
+                    .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                string parent = Path.GetDirectoryName(full)?.TrimEnd(
+                    Path.DirectorySeparatorChar,
+                    Path.AltDirectorySeparatorChar);
+                string stagingRoot = Path.GetFullPath(StagingDirectory)
+                    .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                string slotsRoot = Path.GetFullPath(SlotsDirectory)
+                    .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                string root = Path.GetFullPath(RootDirectory)
+                    .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+
+                // 目录候选只允许是 staging/slots 的直接子目录，禁止接受更深层路径。
+                if (Directory.Exists(full))
+                    return string.Equals(parent, stagingRoot, PathComparison) ||
+                           string.Equals(parent, slotsRoot, PathComparison);
+
+                // 根目录只允许删除单个临时文件，禁止把 RootDirectory 自身或任意子树作为候选。
+                return File.Exists(full) && string.Equals(parent, root, PathComparison);
+            }
+            catch
+            {
+                return false;
             }
         }
 

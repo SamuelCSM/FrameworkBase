@@ -4,6 +4,7 @@ using System.IO;
 using System.Security.Cryptography;
 using System.Text.RegularExpressions;
 using Framework.HotUpdate;
+using Framework.Storage;
 using NUnit.Framework;
 using UnityEngine;
 using UnityEngine.TestTools;
@@ -164,6 +165,47 @@ namespace Framework.Tests
 
             Assert.IsTrue(HotUpdateSlotManager.TryGetActiveCodeVersion(out int codeVersion));
             Assert.AreEqual(2, codeVersion);
+        }
+
+        [Test]
+        public void 缓存清理_保护活动与LKG_删除孤儿Staging和历史槽()
+        {
+            Commit(CreateUpdate(2, 0x22));
+            HotUpdateSlotManager.ConfirmPendingSlot();
+            string active = Directory.GetDirectories(Path.Combine(_root, "slots"))[0];
+
+            string orphanSlot = Path.Combine(_root, "slots", "orphan-slot");
+            string orphanStaging = Path.Combine(_root, "staging", "orphan-staging");
+            Directory.CreateDirectory(orphanSlot);
+            Directory.CreateDirectory(orphanStaging);
+            File.WriteAllBytes(Path.Combine(orphanSlot, "old.bin"), new byte[128]);
+            File.WriteAllBytes(Path.Combine(orphanStaging, "partial.download"), new byte[64]);
+
+            CacheCleanupReport report = HotUpdateSlotManager.CleanupCache(
+                new CacheCleanupRequest(0, requiredFreeBytes: 1024, availableFreeBytes: 0),
+                new CacheRetentionPolicy { MaxCacheBytes = 1024, HighWatermarkRatio = 0.9, LowWatermarkRatio = 0.7 });
+
+            Assert.IsTrue(Directory.Exists(active), "Active/LKG 代码槽属于硬保护集");
+            Assert.IsFalse(Directory.Exists(orphanSlot));
+            Assert.IsFalse(Directory.Exists(orphanStaging));
+            Assert.AreEqual(2, report.DeletedEntries);
+            Assert.GreaterOrEqual(report.FreedBytes, 192);
+        }
+
+        [Test]
+        public void 缓存清理_内容提交进行中不删除任何条目()
+        {
+            string orphan = Path.Combine(_root, "staging", "commit-owned");
+            Directory.CreateDirectory(orphan);
+            File.WriteAllBytes(Path.Combine(orphan, "partial.download"), new byte[64]);
+
+            CacheCleanupReport report = HotUpdateSlotManager.CleanupCache(
+                new CacheCleanupRequest(0, requiredFreeBytes: 1024, availableFreeBytes: 0),
+                new CacheRetentionPolicy(),
+                contentCommitInProgress: true);
+
+            Assert.IsTrue(Directory.Exists(orphan));
+            Assert.AreEqual(0, report.DeletedEntries);
         }
 
         /// <summary>

@@ -48,6 +48,7 @@ namespace Framework.HotUpdate
         private FileVerifier _fileVerifier;
         private IStorageCapacityProvider _storageCapacityProvider;
         private StorageBudgetPolicy _storageBudgetPolicy;
+        private IContentCacheCleaner _cacheCleaner;
         
         /// <summary>
         /// 当前更新状态
@@ -87,6 +88,8 @@ namespace Framework.HotUpdate
             _fileVerifier = new FileVerifier();
             _storageCapacityProvider ??= new SystemStorageCapacityProvider();
             _storageBudgetPolicy ??= new StorageBudgetPolicy();
+            _cacheCleaner ??= new HotUpdateCacheCleaner(
+                isContentCommitInProgress: () => ContentRelease.IsCommitInProgress);
             GameLog.Log("[HotUpdateManager] 已初始化事务代码槽与强制验签链路。");
         }
         
@@ -350,8 +353,11 @@ namespace Framework.HotUpdate
                 long totalSize = VersionManager.CalculateTotalSize(patchFiles);
                 _storageCapacityProvider ??= new SystemStorageCapacityProvider();
                 _storageBudgetPolicy ??= new StorageBudgetPolicy();
-                StoragePreflightResult storage = StoragePreflight.Check(
+                _cacheCleaner ??= new HotUpdateCacheCleaner(
+                    isContentCommitInProgress: () => ContentRelease.IsCommitInProgress);
+                StoragePreflightResult storage = StorageAdmission.Ensure(
                     _storageCapacityProvider,
+                    _cacheCleaner,
                     HotUpdateSlotManager.StorageRootDirectory,
                     totalSize,
                     _storageBudgetPolicy);
@@ -420,10 +426,12 @@ namespace Framework.HotUpdate
         /// <summary>测试注入：模拟磁盘充足、不足与查询失败，不触碰开发机真实卷。</summary>
         internal void SetStoragePreflightForTests(
             IStorageCapacityProvider provider,
-            StorageBudgetPolicy policy = null)
+            StorageBudgetPolicy policy = null,
+            IContentCacheCleaner cacheCleaner = null)
         {
             _storageCapacityProvider = provider ?? throw new ArgumentNullException(nameof(provider));
             _storageBudgetPolicy = policy ?? new StorageBudgetPolicy();
+            _cacheCleaner = cacheCleaner;
         }
 #endif
         

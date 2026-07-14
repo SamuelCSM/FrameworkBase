@@ -18,11 +18,28 @@ namespace Framework.Tests
         {
             public StorageVolumeSnapshot Snapshot;
             public string LastPath;
+            public int QueryCount;
 
             public StorageVolumeSnapshot Query(string path)
             {
+                QueryCount++;
                 LastPath = path;
                 return Snapshot;
+            }
+        }
+
+        private sealed class ReclaimingCleaner : IContentCacheCleaner
+        {
+            private readonly FakeProvider _provider;
+            public int Calls;
+
+            public ReclaimingCleaner(FakeProvider provider) { _provider = provider; }
+
+            public CacheCleanupReport Cleanup(CacheCleanupRequest request)
+            {
+                Calls++;
+                _provider.Snapshot = StorageVolumeSnapshot.Known(request.RequiredFreeBytes + 1, "after-cleanup");
+                return new CacheCleanupReport(request.RequiredFreeBytes, request.RequiredFreeBytes, 1, 0);
             }
         }
 
@@ -134,6 +151,49 @@ namespace Framework.Tests
                 HotUpdateSlotManager.ResetStateForTests();
                 if (Directory.Exists(root)) Directory.Delete(root, true);
             }
+        }
+
+        [Test]
+        public void 空间不足_安全清理后必须重查真实卷并可恢复准入()
+        {
+            var provider = new FakeProvider { Snapshot = StorageVolumeSnapshot.Known(100, "before") };
+            var cleaner = new ReclaimingCleaner(provider);
+
+            StoragePreflightResult result = StorageAdmission.Ensure(
+                provider, cleaner, "/data", 1000, ExactPolicy());
+
+            Assert.IsTrue(result.CanProceed);
+            Assert.AreEqual(1, cleaner.Calls);
+            Assert.AreEqual(2, provider.QueryCount);
+            Assert.AreEqual("after-cleanup", provider.Snapshot.Source);
+        }
+
+        [Test]
+        public void 容量充足_仍执行缓存高水位治理并重查真实卷()
+        {
+            var provider = new FakeProvider { Snapshot = StorageVolumeSnapshot.Known(2000, "before") };
+            var cleaner = new ReclaimingCleaner(provider);
+
+            StoragePreflightResult result = StorageAdmission.Ensure(
+                provider, cleaner, "/data", 1000, ExactPolicy());
+
+            Assert.IsTrue(result.CanProceed);
+            Assert.AreEqual(1, cleaner.Calls, "容量充足不能跳过缓存配额高水位治理");
+            Assert.AreEqual(2, provider.QueryCount, "发生清理编排后必须重新查询真实卷");
+        }
+
+        [Test]
+        public void 容量未知_失败关闭且不执行破坏性清理()
+        {
+            var provider = new FakeProvider { Snapshot = StorageVolumeSnapshot.Unknown("unsupported") };
+            var cleaner = new ReclaimingCleaner(provider);
+
+            StoragePreflightResult result = StorageAdmission.Ensure(
+                provider, cleaner, "/data", 1000, ExactPolicy());
+
+            Assert.AreEqual(StorageCapacityStatus.Unknown, result.Status);
+            Assert.AreEqual(0, cleaner.Calls);
+            Assert.AreEqual(1, provider.QueryCount);
         }
     }
 }
