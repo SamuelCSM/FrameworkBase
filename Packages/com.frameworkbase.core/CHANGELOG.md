@@ -16,6 +16,7 @@
 
 ### 修复
 
+- AudioManager 改用 `AssetLease<AudioClip>` 记录每次播放所有权；自然结束、Stop/StopAll、Shutdown、加载取消/失败均幂等归还，且代际安全 Handle 阻止池化 AudioSource 被旧引用误操作。
 - `.gitignore` 补齐 Addressables 内容构建生成的 `Assets/AddressableAssetsData/Windows.meta`（目录已忽略、其文件夹 meta 此前遗漏，资源发布后残留未跟踪文件）。
 
 ### 变更
