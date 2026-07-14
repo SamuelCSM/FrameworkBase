@@ -3,8 +3,12 @@
     "rootNamespace": "",
     "references": [
         "Framework",
+        "Framework.Kernel",
         "Framework.Protocol.Abstractions",
-        "GameProtocol"
+        "GameProtocol",
+        "UniTask",
+        "Unity.TextMeshPro",
+        "UnityEngine.UI"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],
