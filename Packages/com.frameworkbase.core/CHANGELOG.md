@@ -3,6 +3,26 @@
 本包遵循 [语义化版本](https://semver.org/lang/zh-CN/)。版本策略：
 `0.x` 为孵化期（API 可能调整）；首个商业项目立项时冻结为 `1.0.0`，此后破坏性变更必须升主版本。
 
+## [Unreleased]
+
+### 新增
+
+- 登录身份贯通后调用的 `GameEntry.OnBusinessEntryAsync`，供热更业务安全读取账号存档并进入主界面。
+- 身份清空前同步调用的 `GameEntry.OnBusinessExit`，统一覆盖主动登出、服务端互踢、SDK 会话失效和应用退出；
+  业务可在旧账号身份仍有效时保存数据、取消定时器并关闭 UI。
+- `ConfigPipeline` 一键完成 Excel → 热更代码生成 → 首包/热更 config.db 导出与校验，支持菜单和 batchmode。
+- 参考热更入口 `HotfixEntry.Start()` 接线业务装配（切片 D），热更/离线两种加载方式下业务会话钩子都就位。
+
+### 修复
+
+- `.gitignore` 补齐 Addressables 内容构建生成的 `Assets/AddressableAssetsData/Windows.meta`（目录已忽略、其文件夹 meta 此前遗漏，资源发布后残留未跟踪文件）。
+
+### 变更
+
+- 登录/登出组合根统一贯通和清理 Save、Analytics、RemoteConfig、CrashReporter 的玩家身份。
+- 内容发行的 Catalog、配置、AOT 与热更程序集共用 Pending/Active/LKG 确认边界和中断恢复语义。
+- Clicker 等参考样例专属验收与业务语义测试归属壳工程，不进入可复用核心包。
+
 ## [0.16.0] - 2026-07-09
 
 ### 新增

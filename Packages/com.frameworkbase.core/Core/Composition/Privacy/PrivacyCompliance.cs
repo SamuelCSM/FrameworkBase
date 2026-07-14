@@ -10,8 +10,8 @@ namespace Framework.Core.Privacy
     /// 应对 GDPR/CCPA/个保法的"删除我的数据"诉求。
     ///
     /// 覆盖面（全部**本地**数据）：埋点队列与落盘快照、远程配置缓存、全部账号加密存档、
-    /// PlayerPrefs（含语言/同意状态——抹除后按未同意处理，语义正确）、崩溃记录、
-    /// 启动指标快照、文件日志目录。逐项异常隔离并返回执行报告。
+    /// PlayerPrefs（含语言/同意状态——抹除后按未同意处理，语义正确）、安全存储（登录令牌等机密）、
+    /// 崩溃记录、启动指标快照、文件日志目录。逐项异常隔离并返回执行报告。
     ///
     /// 边界：只清**设备本地**。服务端侧数据删除（账号注销、埋点采集端按 device_id/user_id
     /// 清除）走业务后台流程，本编排管不到也不应假装管到——文档必须向审核方如实陈述两段流程。
@@ -61,11 +61,17 @@ namespace Framework.Core.Privacy
             Run(report, "加密存档（全部账号）", () => Save.SaveManager.Instance.DeleteAllSaves());
             Run(report, "PlayerPrefs", () => Save.SaveManager.Instance.DeleteAllPrefs());
 
-            // 4. 遥测残留：崩溃记录、启动指标快照
+            // 4. 安全存储（登录令牌等机密）：经统一入口 SecureStorage.DeleteAll 抹除，覆盖硬件级
+            //    Keychain/Keystore 后端；否则残留会话令牌可被下次冷启动静默恢复，等同「没删干净」。默认
+            //    PlayerPrefs 后端虽已被上一步波及，但仍显式走入口，保证注入自定义后端时同样彻底。后端未实现
+            //    ISecureStorageBulkErase 时该入口抛异常，被 Run 捕获后如实计入失败项（不静默漏删）。
+            Run(report, "安全存储（凭证/令牌）", () => Security.SecureStorage.DeleteAll());
+
+            // 5. 遥测残留：崩溃记录、启动指标快照
             Run(report, "崩溃记录", () => DeleteFile("crash_reports.jsonl"));
             Run(report, "启动指标快照", () => DeleteFile("launch_metrics_last.json"));
 
-            // 5. 文件日志（可能含 userId 等标识）：先停写再删目录
+            // 6. 文件日志（可能含 userId 等标识）：先停写再删目录
             Run(report, "文件日志", () =>
             {
                 GameLog.Shutdown();

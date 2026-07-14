@@ -1,3 +1,4 @@
+using HotUpdate.Clicker;
 using UnityEngine;
 
 namespace HotUpdate.Entry
@@ -25,7 +26,14 @@ namespace HotUpdate.Entry
         /// </summary>
         public void Start()
         {
-            Debug.Log("[HotfixEntry] 框架参考热更入口已启动（纯框架模式，无业务逻辑）。");
+            Debug.Log("[HotfixEntry] 框架参考热更入口已启动。");
+
+            // 热更模式下 HotUpdate 程序集经 HybridCLR 运行时加载，
+            // ClickerBootstrap 的 [RuntimeInitializeOnLoadMethod] 不会触发；
+            // 故在此显式装配业务会话钩子（切片 D 接线）。Install 幂等，
+            // 与离线整包路径不冲突：整包先由 RuntimeInitializeOnLoad 装配，
+            // 此处再调只是重挂当前 GameEntry 钩子，无副作用。
+            ClickerBootstrap.Install();
         }
     }
 }

@@ -384,6 +384,20 @@ namespace Framework.Tests
         }
 
         [Test]
+        public void BeginCommit之后收到失败回滚请求_必须保留Pending与提交日志等待前滚()
+        {
+            WriteCatalogCache("old catalog");
+            var tx = NewTransaction();
+            Assert.IsTrue(tx.BeginPending(NewRecord("rel-commit-guard")));
+            tx.BeginCommit();
+
+            tx.MarkPendingFailed("confirm_step_exception");
+
+            Assert.IsTrue(tx.IsCommitInProgress, "提交日志落盘后事务决策必须保持前滚");
+            Assert.IsTrue(tx.HasPending, "确认尚未完成时必须保留 Pending 作为前滚事实源");
+            Assert.IsTrue(Directory.Exists(SnapshotDir), "提交完成前不得丢弃 Catalog 恢复材料");
+        }
+        [Test]
         public void 确认提交完整完成_下次启动正常无前滚()
         {
             WriteCatalogCache("old catalog");

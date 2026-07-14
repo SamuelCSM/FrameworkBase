@@ -127,6 +127,10 @@ namespace Framework.Core
         public string RemoteConfigUrl = string.Empty;
 
         [Header("登录服务")]
+        [Tooltip("HTTP 登录服务地址（框架参考 HttpAuthBackend 用）。留空则回退 Mock 登录后端；" +
+                 "prod 应配置为 HTTPS。业务有自有登录协议时经 AuthManager.SetBackend 替换。")]
+        public string AuthServerUrl = string.Empty;
+
         /// <summary>
         /// 登录服务地址；留空时由项目模板决定是否复用游戏服务器地址或通过服务发现获得。
         /// </summary>

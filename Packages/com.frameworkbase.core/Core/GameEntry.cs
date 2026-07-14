@@ -21,6 +21,10 @@ namespace Framework.Core
         // 所有框架组件列表
         private List<FrameworkComponent> _components = new List<FrameworkComponent>();
 
+        // 强制登出 / 玩家主动登出的清凭据编排订阅（进程级，退出时释放）。
+        private IDisposable _forceLogoutSub;
+        private IDisposable _playerLogoutSub;
+
         // ── Inspector 序列化字段 ──────────────────────────────────────────────
 
         /// <summary>UI 基础设施引导组件（场景中放置的 UIBootstrap Prefab 实例）。持有 UIRoot Canvas，在 InitializeManagers 时注入给 UIManager。</summary>
@@ -211,11 +215,128 @@ namespace Framework.Core
             }
 
             LoginResult loginResult = await LoginFlow.RunAsync(_loginViewPrefab, systemRoot);
-            // 登录后把用户 ID 交给崩溃回捞做归因，使后续崩溃报告可按玩家定位。
-            if (!string.IsNullOrEmpty(loginResult.UserId))
-                Telemetry.CrashReporter.SetUser(loginResult.UserId);
+            // 登录成功后统一贯通玩家身份到存档隔离 / 埋点 / 远配 / 崩溃归因（组合根职责）。
+            BindLoggedInIdentity(loginResult);
             Debug.Log($"[GameEntry] 登录完成 userId={loginResult.UserId} token={(string.IsNullOrEmpty(loginResult.SessionToken) ? "(none)" : "ok")}");
-            // 登录成功后由业务层接管（如 StageNavigation.ReplaceStageAsync）。
+
+            // 登录后业务接管点：玩家身份已贯通（存档目录已切到该账号），业务在此进主场景/开主界面。
+            // 必须晚于 BindLoggedInIdentity——PlayerLoginSuccess 事件在登录过程中即发布、早于身份贯通，
+            // 业务若在那时读存档会落到错误账号目录；故读账号数据的接管逻辑一律走本钩子而非该事件。
+            // 注册时机：离线整包用 RuntimeInitializeOnLoadMethod；热更包用 HotfixEntry.Start（均早于登录）。
+            // 业务若接入 AB 实验扩展包（com.frameworkbase.experiment，主干不引用），
+            // 请在此后调用 Experiments.Instance.SetUnitId(loginResult.UserId) 切换分桶单元。
+            if (OnBusinessEntryAsync != null)
+            {
+                try
+                {
+                    await OnBusinessEntryAsync(loginResult);
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogError("[GameEntry] 业务入口 OnBusinessEntryAsync 抛异常，已隔离不影响框架生命周期");
+                    Debug.LogException(ex);
+                }
+            }
+        }
+
+        /// <summary>
+        /// 登录后业务入口钩子（框架保留的唯一「业务接管」扩展点）。
+        /// 框架在登录成功且 <see cref="BindLoggedInIdentity"/> 贯通玩家身份之后调用一次；
+        /// 业务在此进主场景 / 开主界面 / 读账号存档。未注册时（纯框架壳）为 null、无副作用。
+        /// 线程约定：在主线程 await 调用；实现内异常被框架捕获隔离。
+        /// </summary>
+        public static Func<LoginResult, Cysharp.Threading.Tasks.UniTask> OnBusinessEntryAsync { get; set; }
+
+        /// <summary>
+        /// 业务会话退出钩子。框架在清空登录凭据与玩家身份之前同步调用，业务应在此取消账号级定时器、
+        /// 保存当前账号数据并关闭业务 UI。实现必须快速完成；异常会被隔离，不能阻断框架清理。
+        /// 参数为退出原因（player_logout / server_force_logout:* / sdk_session_invalidated:* / application_quit）。
+        /// </summary>
+        public static Action<string> OnBusinessExit { get; set; }
+
+        /// <summary>
+        /// 登录成功后把「玩家身份」统一贯通到所有需要按用户归因 / 隔离的框架子系统。
+        /// 这是组合根的职责：必须在业务层接管（读写账号存档、拉取用户维度远配 / 实验）之前调用，
+        /// 否则会出现存档落在 guest 目录、埋点 / 远配 / 崩溃归因缺失用户维度等隐性错配。
+        /// <para>
+        /// 贯通范围（框架主干可达子系统）：
+        ///   1. <see cref="Framework.Save.SaveManager"/> — 切换存档目录到该账号，实现账号级存档隔离；
+        ///   2. <see cref="Analytics"/> — 设置埋点用户维度；
+        ///   3. <see cref="RemoteConfig"/> — 设置远程配置用户维度（服务端按用户定向）；
+        ///   4. <see cref="Telemetry.CrashReporter"/> — 崩溃归因按玩家定位。
+        /// AB 实验（com.frameworkbase.experiment）是可选扩展包、主干不引用，业务须在登录成功后
+        /// 自行调用 Experiments.Instance.SetUnitId(userId) 切换分桶单元（见调用点注释）。
+        /// </para>
+        /// </summary>
+        private void BindLoggedInIdentity(LoginResult loginResult)
+        {
+            if (!loginResult.Success || string.IsNullOrEmpty(loginResult.UserId))
+                return;
+
+            string userId = loginResult.UserId;
+
+            // 存档账号目录隔离：必须早于业务读写账号存档，否则数据会默默落进 guest 目录。
+            Framework.Save.SaveManager.Instance.SetCurrentUser(userId);
+            // 运营维度贯通：埋点 / 远程配置按玩家归因与定向（Manager 未就绪时静默跳过）。
+            Analytics?.SetUserId(userId);
+            RemoteConfig?.SetUserId(userId);
+            // 崩溃归因按玩家定位。
+            Telemetry.CrashReporter.SetUser(userId);
+        }
+
+        /// <summary>
+        /// 组合根编排：把「服务端强制登出（顶号/封禁/会话失效）」「玩家主动登出」「渠道会话失效」三条
+        /// 信号统一汇聚到一次登出清理。业务仍可各自订阅 <see cref="GameMessage.ServerForceLogout"/> 做界面
+        /// 跳转——这里只负责清理框架自持状态（凭据 + 身份），与业务导航互补、互不替代。
+        /// </summary>
+        private void WireForcedLogoutHandling()
+        {
+            _forceLogoutSub = Event.Subscribe<int>(GameMessage.ServerForceLogout,
+                code => ForceLogoutAndClear($"server_force_logout:{code}"));
+            _playerLogoutSub = Event.Subscribe(GameMessage.PlayerLogout,
+                () => ForceLogoutAndClear("player_logout"));
+            Sdk.OnSessionInvalidated += OnSdkSessionInvalidated;
+        }
+
+        private void OnSdkSessionInvalidated(string reason)
+            => ForceLogoutAndClear($"sdk_session_invalidated:{reason}");
+
+        /// <summary>清空鉴权凭据（内存 + 持久化）并复位跨模块玩家身份，回到未登录态（业务据此跳登录界面）。</summary>
+        private void ForceLogoutAndClear(string reason)
+        {
+            Debug.LogWarning($"[GameEntry] 触发统一登出清理 reason={reason}");
+            NotifyBusinessExit(reason);
+            Auth?.Logout(reason);
+            ClearLoggedInIdentity();
+        }
+
+        /// <summary>先让业务释放账号态资源；无论业务是否异常，调用方都继续完成框架清理。</summary>
+        private static void NotifyBusinessExit(string reason)
+        {
+            if (OnBusinessExit == null)
+                return;
+
+            try
+            {
+                OnBusinessExit(reason);
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"[GameEntry] 业务退出 OnBusinessExit 抛异常，继续清理框架身份 reason={reason}");
+                Debug.LogException(ex);
+            }
+        }
+
+        /// <summary>
+        /// 登出 / 互踢时把 <see cref="BindLoggedInIdentity"/> 贯通的玩家身份逐一复位，避免残留身份错配到
+        /// 下一个账号：存档切回 guest 目录、埋点 / 远配 / 崩溃归因清空用户维度。
+        /// </summary>
+        private void ClearLoggedInIdentity()
+        {
+            Framework.Save.SaveManager.Instance.ClearCurrentUser();
+            Analytics?.SetUserId(string.Empty);
+            RemoteConfig?.SetUserId(string.Empty);
+            Telemetry.CrashReporter.SetUser(string.Empty);
         }
 
         /// <summary>
@@ -270,6 +391,9 @@ namespace Framework.Core
                 // 服务端错误留面包屑：崩溃前的错误码链常是根因线索。
                 Telemetry.CrashReporter.LeaveBreadcrumb($"error:{decision.Code} reaction={decision.Reaction}");
             };
+
+            // 组合根编排：强制登出 / 玩家登出 / 渠道会话失效统一清鉴权凭据与跨模块身份。
+            WireForcedLogoutHandling();
 
             RefData         = AddComponent<ConfigManager>();
             Audio           = AddComponent<AudioManager>();
@@ -378,7 +502,18 @@ namespace Framework.Core
         {
             Debug.Log("[GameEntry] 开始清理框架...");
 
+            // Timer / Save 等 Manager 尚可用时先让业务保存并释放账号态资源。
+            NotifyBusinessExit("application_quit");
+
             Application.lowMemory -= HandleLowMemory;
+
+            // 释放登出编排订阅，避免组件关闭后回调仍被触发。
+            if (Sdk != null)
+                Sdk.OnSessionInvalidated -= OnSdkSessionInvalidated;
+            _forceLogoutSub?.Dispose();
+            _playerLogoutSub?.Dispose();
+            _forceLogoutSub = null;
+            _playerLogoutSub = null;
 
             // 反向顺序关闭所有组件；逐个 try/catch 隔离，确保某组件清理异常不影响其余组件关闭
             for (int i = _components.Count - 1; i >= 0; i--)

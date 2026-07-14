@@ -553,6 +553,11 @@ namespace Framework.Editor.Release
             {
                 var ctx = (FullPackageReleaseContext)context;
 
+                // 整包产物会把 AppConfig 固化进客户端，必须按发布目标环境执行安全校验。
+                // 这项检查只属于 fullpackage：hotupdate/promote/rollback 不重建客户端，不能要求发布工具自身的
+                // AppConfig 环境等于目标仓库环境，否则会错误阻断同产物晋级与指针回滚。
+                NetworkSecurityBuildCheck.ValidateConfig(Framework.Core.AppConfig.Load(), ctx.EnvironmentName);
+
                 string[] scenes = EditorBuildSettings.scenes
                     .Where(s => s.enabled)
                     .Select(s => s.path)

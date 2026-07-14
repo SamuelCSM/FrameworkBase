@@ -113,8 +113,9 @@ HybridCLRData/
 .vscode/
 omnisharp.json
 
-# Addressables build output
+# Addressables build output（含 Unity 为该构建输出目录生成的文件夹 .meta——目录已忽略则其 meta 亦为瞬时产物）
 /[Aa]ssets/AddressableAssetsData/Windows/
+/[Aa]ssets/AddressableAssetsData/Windows.meta
 
 # 发布 staging、演练产物与符号归档（ReleaseBatchEntry / release-rehearsal.ps1 / 构建后处理输出）
 /Artifacts/

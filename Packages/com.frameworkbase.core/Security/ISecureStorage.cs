@@ -32,4 +32,23 @@ namespace Framework.Security
         /// <summary>删除该键（不存在时静默）。</summary>
         void Delete(string key);
     }
+
+    /// <summary>
+    /// 可选能力：整体抹除本后端写入的<b>全部</b>机密（账号注销 / RTBF 被遗忘权用）。
+    /// <para>
+    /// 刻意与 <see cref="ISecureStorage"/> 分离为「能力接口」而非塞进主接口：整体抹除不是每个后端的
+    /// 必备语义（且是危险操作），把它设为必选会<b>破坏既有 / 扩展包后端</b>（如 Keychain / Keystore）的
+    /// 编译。后端<b>自愿</b>实现本接口来声明支持；不支持的后端保持只实现 <see cref="ISecureStorage"/> 即可。
+    /// </para>
+    /// <para>
+    /// 调用方经 <see cref="SecureStorage.DeleteAll"/> 统一入口触发：当前后端未实现本能力时该入口显式抛
+    /// <see cref="System.NotSupportedException"/>，让 RTBF 合规报告如实计失败（而非静默漏删机密）。
+    /// 实现须清空自己管理的所有条目；无法枚举底层存储的实现（如 PlayerPrefs）应自行维护键索引。
+    /// </para>
+    /// </summary>
+    public interface ISecureStorageBulkErase
+    {
+        /// <summary>删除本后端写入的全部键。</summary>
+        void DeleteAll();
+    }
 }

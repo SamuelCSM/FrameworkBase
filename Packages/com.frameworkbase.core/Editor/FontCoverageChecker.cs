@@ -184,6 +184,19 @@ namespace Framework.Editor
             var characters = new HashSet<char>();
             using (var db = new SQLiteHelper(dbPath))
             {
+                // config.db 存在不等于含 language 表：项目可能只导出了业务配置表。
+                // 无 language 表时按「跳过」处理（与 db 不存在同义），而非让 QueryConfigTable 抛
+                // "no such table: language" 崩掉整个门禁——字体覆盖检查本就依赖本地化数据，无数据即无从检查。
+                int hasLanguageTable = db.ExecuteScalar<int>(
+                    "SELECT COUNT(1) FROM sqlite_master WHERE type='table' AND name='language'");
+                if (hasLanguageTable == 0)
+                {
+                    if (!silent)
+                        EditorUtility.DisplayDialog("字体覆盖检查",
+                            $"配置库存在但无 language 表：{dbPath}\n（项目尚未导出本地化表，跳过检查）", "确定");
+                    return null;
+                }
+
                 List<LanguageRef> rows = db.QueryConfigTable<LanguageRef>("language");
                 rowCount = rows.Count;
 

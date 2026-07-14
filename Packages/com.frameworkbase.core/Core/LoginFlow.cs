@@ -26,6 +26,15 @@ namespace Framework.Core
             if (parent == null)
                 throw new ArgumentNullException(nameof(parent));
 
+            // 冷启动会话恢复（记住登录）：上次登录持久化的会话在此静默重登，命中即跳过登录界面。
+            // 无持久会话 / 令牌失效 / 账号无令牌 时静默失败，继续走下面的自动访客登录或手动登录。
+            using (InputBlockScope.Begin("RestoreSession"))
+            {
+                LoginResult restored = await GameEntry.Auth.TryRestorePersistedSessionAsync();
+                if (restored.Success)
+                    return restored;
+            }
+
             // 自动访客登录：内网测试包跳过登录界面，资源加载完直接进游戏
             if (AppConfig.Load().AutoGuestLogin)
             {
