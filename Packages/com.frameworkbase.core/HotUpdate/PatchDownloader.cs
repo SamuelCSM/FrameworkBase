@@ -19,7 +19,17 @@ namespace Framework.HotUpdate
     /// HotUpdateManager 或 HotUpdateSlotManager 在提交事务槽之前基于已验签清单再次校验。
     /// </para>
     /// </summary>
-    public sealed class PatchDownloader
+    internal interface IFileDownloadTransport
+    {
+        UniTask<bool> DownloadFileAsync(
+            string url,
+            string savePath,
+            Action<float> onProgress,
+            bool forceRefresh,
+            CancellationToken cancellationToken);
+    }
+
+    public sealed class PatchDownloader : IFileDownloadTransport
     {
         private UnityWebRequest _currentRequest;
         private volatile bool _isCancelled;

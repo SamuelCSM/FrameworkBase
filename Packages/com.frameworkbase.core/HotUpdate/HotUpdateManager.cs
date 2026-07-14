@@ -49,6 +49,25 @@ namespace Framework.HotUpdate
         private IStorageCapacityProvider _storageCapacityProvider;
         private StorageBudgetPolicy _storageBudgetPolicy;
         private IContentCacheCleaner _cacheCleaner;
+        private readonly CdnHealthTracker _cdnHealth = new CdnHealthTracker();
+
+        private sealed class SignedDocumentDownload
+        {
+            public CdnDownloadResult Result;
+            public byte[] Bytes;
+        }
+
+        private readonly struct ManifestSelection
+        {
+            public ManifestSelection(string relativePath, string expectedReleaseId)
+            {
+                RelativePath = relativePath;
+                ExpectedReleaseId = expectedReleaseId ?? string.Empty;
+            }
+
+            public string RelativePath { get; }
+            public string ExpectedReleaseId { get; }
+        }
         
         /// <summary>
         /// 当前更新状态
@@ -109,50 +128,59 @@ namespace Framework.HotUpdate
                 Core.AppConfigAsset config = Core.AppConfig.Load();
                 if (!UpdateSecurity.ValidateUpdateServerUrl(updateUrl, config?.AppEnv, out string urlRejectReason))
                     throw new InvalidDataException(urlRejectReason);
+                if (!TrustedCdnRouteSet.TryCreate(
+                        updateUrl,
+                        config?.UpdateCdnEndpoints,
+                        config?.AppEnv,
+                        _cdnHealth,
+                        out TrustedCdnRouteSet cdnRoutes,
+                        out string cdnRejectReason))
+                {
+                    throw new InvalidDataException($"可信 CDN 配置无效：{cdnRejectReason}");
+                }
+                _patchDownloader ??= new PatchDownloader();
 
                 UpdateInfo localVersion = VersionManager.GetLocalVersion();
 
                 // 指针优先（目标设计 §3）：渠道根 current.json 是唯一可变对象，验签+准入后
                 // 跳转到不可变正本清单；指针对象不存在（旧布局/迁移期）回退渠道根别名。
                 // 指针存在但无效一律在解析方法内抛异常失败关闭，禁止靠回退绕过。
-                string root = updateUrl.TrimEnd('/');
-                string versionUrl = await ResolveManifestUrlViaPointerAsync(root, config, cancellationToken);
-                string tempPath = Path.Combine(Application.temporaryCachePath, "version_temp.json");
-                if (!await _patchDownloader.DownloadFileAsync(
-                        versionUrl,
-                        tempPath,
-                        forceRefresh: true,
-                        cancellationToken: cancellationToken))
+                ManifestSelection selection = await ResolveManifestViaPointerAsync(
+                    cdnRoutes,
+                    config,
+                    cancellationToken);
+                SignedDocumentDownload manifestDownload = await DownloadSignedDocumentAsync(
+                    cdnRoutes,
+                    selection.RelativePath,
+                    "version_temp.json",
+                    "version_temp.json.sig",
+                    MaxManifestBytes,
+                    config,
+                    cancellationToken);
+                if (!manifestDownload.Result.Success)
                 {
-                    throw new IOException("下载热更新清单失败。");
+                    throw new IOException(
+                        $"下载或验证热更新清单失败：kind={manifestDownload.Result.FailureKind}, " +
+                        $"reason={manifestDownload.Result.Reason}");
                 }
 
-                long manifestLength = FileStorages.Shared.GetFileSize(tempPath);
-                if (manifestLength <= 0 || manifestLength > MaxManifestBytes)
-                    throw new InvalidDataException($"热更新清单大小非法：{manifestLength} 字节。");
-
-                byte[] manifestBytes = FileStorages.Shared.ReadBytes(tempPath);
+                byte[] manifestBytes = manifestDownload.Bytes;
                 string json = Encoding.UTF8.GetString(manifestBytes);
-
-                // 未验签阶段只解析 KeyId 信封，用于从本地公钥环选择信任根；其他字段一律不参与决策。
-                ManifestKeyEnvelope envelope = JsonSerializers.Shared.FromJson<ManifestKeyEnvelope>(json);
-                if (envelope == null || string.IsNullOrWhiteSpace(envelope.KeyId))
-                    throw new InvalidDataException("热更新清单缺少可用于选择验签公钥的 KeyId。");
-
-                if (!await VerifyDetachedSignatureAsync(
-                        versionUrl,
-                        manifestBytes,
-                        envelope.KeyId,
-                        "version_temp.json.sig",
-                        cancellationToken))
-                {
-                    throw new CryptographicException("热更新清单签名验证失败。");
-                }
 
                 // 只有原始字节验签通过后，才允许反序列化完整清单并执行版本、平台、渠道及文件集准入。
                 UpdateInfo serverVersion = JsonSerializers.Shared.FromJson<UpdateInfo>(json);
                 if (serverVersion == null)
                     throw new InvalidDataException("热更新清单反序列化失败。");
+                if (!string.IsNullOrEmpty(selection.ExpectedReleaseId) &&
+                    !string.Equals(
+                        selection.ExpectedReleaseId,
+                        serverVersion.ManifestId,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new InvalidDataException(
+                        $"指针 ReleaseId 与正本清单 ManifestId 不一致：" +
+                        $"pointer={selection.ExpectedReleaseId}, manifest={serverVersion.ManifestId}");
+                }
                 if (!UpdateSecurity.ValidateManifest(
                         serverVersion,
                         localVersion,
@@ -201,110 +229,158 @@ namespace Framework.HotUpdate
         
         /// <summary>
         /// 渠道根指针解析（目标设计 §3）：下载 current.json，验签并通过字段准入后返回不可变正本
-        /// 清单 URL；指针对象不存在时回退渠道根 version.json 别名（旧布局/迁移期兼容）。
+        /// 清单相对路径；所有可信端点都不存在该指针时回退 version.json 别名（旧布局/迁移期兼容）。
         /// 指针存在但大小、验签或准入任一失败即抛异常失败关闭——被投毒的指针不能靠回退别名绕过。
         /// </summary>
-        /// <param name="root">更新服务渠道根 URL（已去尾斜杠）。</param>
+        /// <param name="routes">只包含包内允许 Host 的可信 CDN 路由。</param>
         /// <param name="config">当前应用配置，用于渠道匹配与公钥环。</param>
         /// <param name="cancellationToken">检查生命周期取消令牌。</param>
-        /// <returns>应当下载的清单绝对 URL。</returns>
-        private async UniTask<string> ResolveManifestUrlViaPointerAsync(
-            string root,
+        /// <returns>应当下载的清单相对路径，以及指针绑定的预期 ReleaseId。</returns>
+        private async UniTask<ManifestSelection> ResolveManifestViaPointerAsync(
+            TrustedCdnRouteSet routes,
             Core.AppConfigAsset config,
             CancellationToken cancellationToken)
         {
-            string pointerUrl = $"{root}/current.json";
-            string tempPath = Path.Combine(Application.temporaryCachePath, "current_temp.json");
-            if (!await _patchDownloader.DownloadFileAsync(
-                    pointerUrl,
-                    tempPath,
-                    forceRefresh: true,
-                    cancellationToken: cancellationToken))
+            SignedDocumentDownload pointerDownload = await DownloadSignedDocumentAsync(
+                routes,
+                "current.json",
+                "current_temp.json",
+                "current_temp.json.sig",
+                MaxManifestBytes,
+                config,
+                cancellationToken,
+                quarantineTransportFailures: false);
+            if (!pointerDownload.Result.Success)
             {
-                GameLog.Log("[HotUpdateManager] 渠道根无 current.json 指针，回退 version.json 别名。");
-                return $"{root}/version.json";
+                if (pointerDownload.Result.FailureKind != CdnFailureKind.Transport &&
+                    pointerDownload.Result.FailureKind != CdnFailureKind.CircuitOpen)
+                {
+                    throw new CryptographicException(
+                        $"current.json 指针下载或验签失败：kind={pointerDownload.Result.FailureKind}, " +
+                        $"reason={pointerDownload.Result.Reason}");
+                }
+
+                GameLog.Log("[HotUpdateManager] 所有可信 CDN 均无可用 current.json 指针，回退 version.json 别名。");
+                return new ManifestSelection("version.json", string.Empty);
             }
 
-            long pointerLength = FileStorages.Shared.GetFileSize(tempPath);
-            if (pointerLength <= 0 || pointerLength > MaxManifestBytes)
-                throw new InvalidDataException($"指针文件大小非法：{pointerLength} 字节。");
-
-            byte[] pointerBytes = FileStorages.Shared.ReadBytes(tempPath);
+            byte[] pointerBytes = pointerDownload.Bytes;
             string json = Encoding.UTF8.GetString(pointerBytes);
-            ManifestKeyEnvelope envelope = JsonSerializers.Shared.FromJson<ManifestKeyEnvelope>(json);
-            if (envelope == null || string.IsNullOrWhiteSpace(envelope.KeyId))
-                throw new InvalidDataException("指针缺少可用于选择验签公钥的 KeyId。");
-            if (!await VerifyDetachedSignatureAsync(
-                    pointerUrl,
-                    pointerBytes,
-                    envelope.KeyId,
-                    "current_temp.json.sig",
-                    cancellationToken))
-            {
-                throw new CryptographicException("current.json 指针签名验证失败。");
-            }
-
             CurrentPointer pointer = JsonSerializers.Shared.FromJson<CurrentPointer>(json);
             if (!UpdateSecurity.ValidateCurrentPointer(pointer, config?.AppChannel, out string reason))
                 throw new InvalidDataException($"指针未通过安全准入：{reason}");
 
             GameLog.Log($"[HotUpdateManager] 指针指向 releaseId={pointer.ReleaseId}，跳转不可变正本清单。");
-            return $"{root}/{pointer.ManifestPath}";
+            return new ManifestSelection(pointer.ManifestPath, pointer.ReleaseId);
         }
 
         /// <summary>
-        /// 校验载荷（清单或指针）的伴生 RSA-SHA256 签名。
+        /// 从可信 CDN 集合下载载荷（清单或指针）及同 Host 伴生签名，并校验 RSA-SHA256。
         /// 所有环境都必须按 KeyId 从客户端公钥环选择信任根，并对载荷原始字节验签；
         /// 公钥、签名文件缺失或签名不匹配一律失败，开发环境也不得绕过远程代码信任边界。
         /// </summary>
-        /// <param name="payloadUrl">载荷绝对 URL；伴生签名固定为该 URL 追加 .sig。</param>
-        /// <param name="payloadBytes">网络下载并限制大小后的载荷原始字节。</param>
-        /// <param name="keyId">未验签信封中声明的公钥标识，只用于本地密钥选择。</param>
-        /// <param name="signatureTempName">签名临时文件名；不同载荷使用不同名字避免互相覆盖。</param>
-        /// <param name="cancellationToken">检查生命周期取消令牌。</param>
-        /// <returns>签名文件存在、大小合法且原始字节验签通过时返回 true。</returns>
-        private async UniTask<bool> VerifyDetachedSignatureAsync(
-            string payloadUrl,
-            byte[] payloadBytes,
-            string keyId,
+        /// 任一 Host 签名不匹配会隔离该 Host 并尝试下一可信端点；本地完全缺失信任根则立即失败关闭。
+        private async UniTask<SignedDocumentDownload> DownloadSignedDocumentAsync(
+            TrustedCdnRouteSet routes,
+            string relativePath,
+            string payloadTempName,
             string signatureTempName,
-            CancellationToken cancellationToken)
+            long maxPayloadBytes,
+            Core.AppConfigAsset config,
+            CancellationToken cancellationToken,
+            bool quarantineTransportFailures = true)
         {
-            Core.AppConfigAsset config = Core.AppConfig.Load();
-            string publicKey = UpdateSecurity.ResolvePublicKey(
-                keyId,
-                config?.UpdateManifestPublicKey,
-                config?.UpdateManifestPublicKeys);
-
-            // 任何环境的远程代码清单都必须验签。开发环境应使用独立 development 密钥，而不是跳过信任边界。
-            if (string.IsNullOrWhiteSpace(publicKey))
-            {
-                GameLog.Error($"[HotUpdateManager] 未找到 KeyId={keyId} 对应的验签公钥，更新已拒绝。");
-                return false;
-            }
-
-            string signatureUrl = payloadUrl + UpdateSecurity.ManifestSignatureSuffix;
+            string payloadPath = Path.Combine(Application.temporaryCachePath, payloadTempName);
             string signaturePath = Path.Combine(Application.temporaryCachePath, signatureTempName);
-            if (!await _patchDownloader.DownloadFileAsync(
-                    signatureUrl,
-                    signaturePath,
-                    forceRefresh: true,
-                    cancellationToken: cancellationToken))
-            {
-                return false;
-            }
+            byte[] acceptedBytes = null;
+            var client = new TrustedCdnDownloadClient(routes, _patchDownloader);
+            CdnDownloadResult result = await client.DownloadAsync(
+                relativePath,
+                payloadPath,
+                async (route, downloadedPath, token) =>
+                {
+                    long length = FileStorages.Shared.GetFileSize(downloadedPath);
+                    if (length <= 0 || length > maxPayloadBytes)
+                    {
+                        return CdnValidationResult.Failed(
+                            CdnFailureKind.Integrity,
+                            $"签名载荷大小非法：{length} 字节。");
+                    }
 
-            long signatureLength = FileStorages.Shared.GetFileSize(signaturePath);
-            if (signatureLength <= 0 || signatureLength > MaxSignatureBytes)
-            {
-                GameLog.Error($"[HotUpdateManager] 签名文件大小非法：{signatureLength} 字节。");
-                return false;
-            }
+                    byte[] payloadBytes = FileStorages.Shared.ReadBytes(downloadedPath);
+                    ManifestKeyEnvelope envelope;
+                    try
+                    {
+                        envelope = JsonSerializers.Shared.FromJson<ManifestKeyEnvelope>(
+                            Encoding.UTF8.GetString(payloadBytes));
+                    }
+                    catch (Exception ex)
+                    {
+                        return CdnValidationResult.Failed(
+                            CdnFailureKind.Integrity,
+                            $"签名载荷信封无法解析：{ex.Message}");
+                    }
+                    if (envelope == null || string.IsNullOrWhiteSpace(envelope.KeyId))
+                    {
+                        return CdnValidationResult.Failed(
+                            CdnFailureKind.Integrity,
+                            "签名载荷缺少用于选择信任根的 KeyId。");
+                    }
 
-            return UpdateSecurity.VerifyManifestSignature(
-                payloadBytes,
-                FileStorages.Shared.ReadText(signaturePath),
-                publicKey);
+                    string publicKey = UpdateSecurity.ResolvePublicKey(
+                        envelope.KeyId,
+                        config?.UpdateManifestPublicKey,
+                        config?.UpdateManifestPublicKeys);
+                    if (string.IsNullOrWhiteSpace(publicKey))
+                    {
+                        bool hasAnyTrustRoot = !string.IsNullOrWhiteSpace(config?.UpdateManifestPublicKey) ||
+                                               (config?.UpdateManifestPublicKeys != null &&
+                                                config.UpdateManifestPublicKeys.Length > 0);
+                        return CdnValidationResult.Failed(
+                            hasAnyTrustRoot ? CdnFailureKind.Integrity : CdnFailureKind.Security,
+                            $"未找到 KeyId={envelope.KeyId} 对应的包内验签公钥。");
+                    }
+
+                    TrustedCdnRoute signatureRoute = routes.ResolveForEndpoint(
+                        route.Endpoint,
+                        relativePath + UpdateSecurity.ManifestSignatureSuffix);
+                    bool signatureDownloaded = await _patchDownloader.DownloadFileAsync(
+                        signatureRoute.Url,
+                        signaturePath,
+                        forceRefresh: true,
+                        cancellationToken: token);
+                    if (!signatureDownloaded)
+                    {
+                        token.ThrowIfCancellationRequested();
+                        return CdnValidationResult.Failed(
+                            CdnFailureKind.Transport,
+                            $"端点 {route.Endpoint.Name} 的伴生签名下载失败。");
+                    }
+
+                    long signatureLength = FileStorages.Shared.GetFileSize(signaturePath);
+                    if (signatureLength <= 0 || signatureLength > MaxSignatureBytes)
+                    {
+                        return CdnValidationResult.Failed(
+                            CdnFailureKind.Integrity,
+                            $"签名文件大小非法：{signatureLength} 字节。");
+                    }
+                    if (!UpdateSecurity.VerifyManifestSignature(
+                            payloadBytes,
+                            FileStorages.Shared.ReadText(signaturePath),
+                            publicKey))
+                    {
+                        return CdnValidationResult.Failed(
+                            CdnFailureKind.Integrity,
+                            "RSA-SHA256 伴生签名不匹配。");
+                    }
+
+                    acceptedBytes = payloadBytes;
+                    return CdnValidationResult.Valid();
+                },
+                quarantineTransportFailures: quarantineTransportFailures,
+                cancellationToken: cancellationToken);
+
+            return new SignedDocumentDownload { Result = result, Bytes = acceptedBytes };
         }
 
         /// <summary>
@@ -326,7 +402,25 @@ namespace Framework.HotUpdate
             if (!VersionManager.TryResolveCodePatchFiles(serverVersion, updateServerUrl, out var patchFiles))
                 return false;
 
-            return await DownloadPatchAsync(serverVersion, patchFiles, onProgress, cancellationToken);
+            Core.AppConfigAsset config = Core.AppConfig.Load();
+            if (!TrustedCdnRouteSet.TryCreate(
+                    updateServerUrl,
+                    config?.UpdateCdnEndpoints,
+                    config?.AppEnv,
+                    _cdnHealth,
+                    out TrustedCdnRouteSet cdnRoutes,
+                    out string reason))
+            {
+                GameLog.Error($"[HotUpdateManager] 可信 CDN 配置无效，拒绝代码下载：{reason}");
+                return false;
+            }
+
+            return await DownloadPatchInternalAsync(
+                serverVersion,
+                patchFiles,
+                cdnRoutes,
+                onProgress,
+                cancellationToken);
         }
 
         /// <summary>
@@ -339,6 +433,21 @@ namespace Framework.HotUpdate
             Action<float> onProgress = null,
             CancellationToken cancellationToken = default)
         {
+            return await DownloadPatchInternalAsync(
+                updateInfo,
+                patchFiles,
+                cdnRoutes: null,
+                onProgress,
+                cancellationToken);
+        }
+
+        private async UniTask<bool> DownloadPatchInternalAsync(
+            UpdateInfo updateInfo,
+            IReadOnlyList<PatchFile> patchFiles,
+            TrustedCdnRouteSet cdnRoutes,
+            Action<float> onProgress,
+            CancellationToken cancellationToken)
+        {
             if (updateInfo == null || patchFiles == null || patchFiles.Count == 0)
             {
                 _state = UpdateState.Error;
@@ -350,6 +459,8 @@ namespace Framework.HotUpdate
             string stagingDirectory = null;
             try
             {
+                _patchDownloader ??= new PatchDownloader();
+                _fileVerifier ??= new FileVerifier();
                 long totalSize = VersionManager.CalculateTotalSize(patchFiles);
                 _storageCapacityProvider ??= new SystemStorageCapacityProvider();
                 _storageBudgetPolicy ??= new StorageBudgetPolicy();
@@ -375,20 +486,58 @@ namespace Framework.HotUpdate
                         throw new InvalidDataException(rejectReason);
 
                     string savePath = HotUpdateSlotManager.GetSafeStagingFilePath(stagingDirectory, patch.FileName);
-                    bool downloaded = await _patchDownloader.DownloadFileAsync(
-                        patch.Url,
-                        savePath,
-                        progress =>
-                        {
-                            float totalProgress = totalSize > 0
-                                ? (completedSize + progress * patch.Size) / totalSize
-                                : (i + progress) / patchFiles.Count;
-                            onProgress?.Invoke(totalProgress);
-                        },
-                        forceRefresh: true,
-                        cancellationToken: cancellationToken);
+                    Action<float> patchProgress = progress =>
+                    {
+                        float totalProgress = totalSize > 0
+                            ? (completedSize + progress * patch.Size) / totalSize
+                            : (i + progress) / patchFiles.Count;
+                        onProgress?.Invoke(totalProgress);
+                    };
 
-                    if (!downloaded || !await _fileVerifier.VerifyPatchFileAsync(savePath, patch))
+                    bool downloaded;
+                    if (cdnRoutes == null)
+                    {
+                        downloaded = await _patchDownloader.DownloadFileAsync(
+                            patch.Url,
+                            savePath,
+                            patchProgress,
+                            forceRefresh: true,
+                            cancellationToken: cancellationToken);
+                        downloaded = downloaded && await _fileVerifier.VerifyPatchFileAsync(savePath, patch);
+                    }
+                    else
+                    {
+                        string identityRejectReason = null;
+                        if (!cdnRoutes.TryGetPrimaryRelativePath(patch.Url, out string relativePath) ||
+                            !TrustedContentIdentity.TryCreate(
+                                updateInfo.ManifestId,
+                                relativePath,
+                                patch.Size,
+                                patch.SHA256,
+                                out TrustedContentIdentity identity,
+                                out identityRejectReason))
+                        {
+                            throw new InvalidDataException(
+                                $"补丁内容身份无法从已验签清单建立：{patch.FileName}, reason={identityRejectReason ?? "URL 不属于主更新根"}");
+                        }
+
+                        var client = new TrustedCdnDownloadClient(cdnRoutes, _patchDownloader);
+                        CdnDownloadResult result = await client.DownloadAsync(
+                            identity.RelativePath,
+                            savePath,
+                            (route, path, token) =>
+                            {
+                                bool valid = FileVerifier.VerifyPatchFile(path, patch, out string verifyReason);
+                                return UniTask.FromResult(valid
+                                    ? CdnValidationResult.Valid()
+                                    : CdnValidationResult.Failed(CdnFailureKind.Integrity, verifyReason));
+                            },
+                            patchProgress,
+                            cancellationToken: cancellationToken);
+                        downloaded = result.Success;
+                    }
+
+                    if (!downloaded)
                         throw new InvalidDataException($"补丁下载或完整性校验失败：{patch.FileName}");
 
                     completedSize += patch.Size;

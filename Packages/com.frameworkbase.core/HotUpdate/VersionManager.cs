@@ -273,9 +273,8 @@ namespace Framework.HotUpdate
         /// 手写清单必须补齐 PatchFiles 才能下发代码热更。
         /// </para>
         /// <para>
-        /// 下载地址收口：使用已签名清单中的不可变 URL，但必须与 <paramref name="updateServerUrl"/> 同源且位于其路径根下。
-        /// 这样既能为每个代码版本保留不可变对象，避免旧清单在发布窗口读到新文件，又能阻止清单把 DLL 重定向到第三方域名。
-        /// 切换 CDN 或环境会改变签名清单中的 URL，因此必须按环境重新生成并签名清单。
+        /// 下载地址收口：已签名清单 URL 必须位于主更新根下。准入后运行时提取不可变相对路径，
+        /// 再映射到包内可信 CDN 列表；Host 不再参与内容身份，也不能由未签名配置任意扩展。
         /// </para>
         /// </summary>
         public static bool TryResolveCodePatchFiles(

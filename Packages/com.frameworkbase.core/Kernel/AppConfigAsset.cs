@@ -26,6 +26,23 @@ namespace Framework.Core
     }
 
     /// <summary>
+    /// 随 Player 包体发布的可信 CDN 渠道根。它不是远程配置：Host 变更必须经过客户端构建、
+    /// 安全门禁和应用发布流程，避免未签名配置把远程代码下载重定向到任意站点。
+    /// </summary>
+    [Serializable]
+    public sealed class UpdateCdnEndpointDefinition
+    {
+        [Tooltip("端点稳定标识，用于日志、熔断状态和故障定位，例如 cdn-a。")]
+        public string Name = string.Empty;
+
+        [Tooltip("端点所属环境，必须与 AppConfig.AppEnv 完全一致，禁止 prod/qa 交叉回退。")]
+        public string AppEnv = string.Empty;
+
+        [Tooltip("完整渠道根 URL；相对路径会在该根下解析。prod 必须 HTTPS，禁止凭据、Query 和 Fragment。")]
+        public string BaseUrl = string.Empty;
+    }
+
+    /// <summary>
     /// 框架运行时应用配置。
     /// <para>
     /// 默认从 <c>Resources/AppConfig.asset</c> 加载，在各 Manager 初始化和 LaunchFlow 启动阶段提供
@@ -50,6 +67,9 @@ namespace Framework.Core
         [Tooltip("更新服务渠道根 URL，指向产物仓库的 {BaseUrl}/{env}/{platform}/{channel}：version.json 别名与" +
                  " releases/ 不可变版本目录都在其下，补丁 URL 必须位于该路径前缀内。prod 环境必须 HTTPS。")]
         public string UpdateServerUrl = "http://127.0.0.1:80/Updates/dev/windows/default";
+
+        [Tooltip("包内可信备用 CDN 渠道根（按顺序回退）。只允许构建期配置，不得由未签名 RemoteConfig 覆盖 Host。")]
+        public UpdateCdnEndpointDefinition[] UpdateCdnEndpoints = Array.Empty<UpdateCdnEndpointDefinition>();
 
         [Tooltip("旧版单公钥兼容字段。新项目应使用带 KeyId 的公钥环；保留该字段仅用于平滑迁移。")]
         [TextArea(3, 8)]
