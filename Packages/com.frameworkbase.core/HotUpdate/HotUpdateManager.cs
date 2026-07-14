@@ -46,6 +46,8 @@ namespace Framework.HotUpdate
 
         private PatchDownloader _patchDownloader;
         private FileVerifier _fileVerifier;
+        private IStorageCapacityProvider _storageCapacityProvider;
+        private StorageBudgetPolicy _storageBudgetPolicy;
         
         /// <summary>
         /// 当前更新状态
@@ -83,6 +85,8 @@ namespace Framework.HotUpdate
             }
             _patchDownloader = new PatchDownloader();
             _fileVerifier = new FileVerifier();
+            _storageCapacityProvider ??= new SystemStorageCapacityProvider();
+            _storageBudgetPolicy ??= new StorageBudgetPolicy();
             GameLog.Log("[HotUpdateManager] 已初始化事务代码槽与强制验签链路。");
         }
         
@@ -343,8 +347,19 @@ namespace Framework.HotUpdate
             string stagingDirectory = null;
             try
             {
-                stagingDirectory = HotUpdateSlotManager.PrepareStagingSlot(updateInfo);
                 long totalSize = VersionManager.CalculateTotalSize(patchFiles);
+                _storageCapacityProvider ??= new SystemStorageCapacityProvider();
+                _storageBudgetPolicy ??= new StorageBudgetPolicy();
+                StoragePreflightResult storage = StoragePreflight.Check(
+                    _storageCapacityProvider,
+                    HotUpdateSlotManager.StorageRootDirectory,
+                    totalSize,
+                    _storageBudgetPolicy);
+                if (!storage.CanProceed)
+                    throw new IOException(storage.Message);
+
+                GameLog.Log($"[HotUpdateManager] {storage.Message}");
+                stagingDirectory = HotUpdateSlotManager.PrepareStagingSlot(updateInfo);
                 long completedSize = 0;
 
                 for (int i = 0; i < patchFiles.Count; i++)
@@ -400,6 +415,17 @@ namespace Framework.HotUpdate
                 _installGate.Release();
             }
         }
+
+#if UNITY_INCLUDE_TESTS
+        /// <summary>测试注入：模拟磁盘充足、不足与查询失败，不触碰开发机真实卷。</summary>
+        internal void SetStoragePreflightForTests(
+            IStorageCapacityProvider provider,
+            StorageBudgetPolicy policy = null)
+        {
+            _storageCapacityProvider = provider ?? throw new ArgumentNullException(nameof(provider));
+            _storageBudgetPolicy = policy ?? new StorageBudgetPolicy();
+        }
+#endif
         
         /// <summary>
         /// 尽力清理由本次安装创建、但尚未提交为正式槽的 staging 目录。清理失败只记录告警，不能覆盖原始失败原因。

@@ -7,6 +7,7 @@
 
 ### 新增
 
+- 热更安装磁盘空间失败关闭门禁：按 Payload、固定事务开销和动态/最低安全余量计算峰值预算；Android StatFs / 桌面卷查询不可用时显式返回 Unknown，禁止把查询失败当作空间充足。
 - `AssetLease<T>` 显式资源所有权：幂等释放、同地址共享加载下的独立逻辑引用，以及取消等待后的迟到引用自动归还。
 - 登录身份贯通后调用的 `GameEntry.OnBusinessEntryAsync`，供热更业务安全读取账号存档并进入主界面。
 - 身份清空前同步调用的 `GameEntry.OnBusinessExit`，统一覆盖主动登出、服务端互踢、SDK 会话失效和应用退出；

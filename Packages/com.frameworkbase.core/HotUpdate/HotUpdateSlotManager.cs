@@ -108,6 +108,9 @@ namespace Framework.HotUpdate
         private static string StagingDirectory => Path.Combine(RootDirectory, "staging");
         private static string StatePath => Path.Combine(RootDirectory, StateFileName);
 
+        /// <summary>供安装前磁盘容量门禁查询与代码槽相同的目标卷。</summary>
+        internal static string StorageRootDirectory => RootDirectory;
+
         /// <summary>
         /// 在任何热更新程序集加载之前准备启动状态：清理遗留 staging、隔离其他 AppVersion 的状态，
         /// 将上次未确认槽视为启动失败并回滚到 LKG，同时重新校验 ActiveSlot 中每个程序集的长度和摘要。
