@@ -218,10 +218,34 @@ namespace Framework.Core
             // 登录成功后统一贯通玩家身份到存档隔离 / 埋点 / 远配 / 崩溃归因（组合根职责）。
             BindLoggedInIdentity(loginResult);
             Debug.Log($"[GameEntry] 登录完成 userId={loginResult.UserId} token={(string.IsNullOrEmpty(loginResult.SessionToken) ? "(none)" : "ok")}");
-            // 登录成功后由业务层接管（如 StageNavigation.ReplaceStageAsync）。
+
+            // 登录后业务接管点：玩家身份已贯通（存档目录已切到该账号），业务在此进主场景/开主界面。
+            // 必须晚于 BindLoggedInIdentity——PlayerLoginSuccess 事件在登录过程中即发布、早于身份贯通，
+            // 业务若在那时读存档会落到错误账号目录；故读账号数据的接管逻辑一律走本钩子而非该事件。
+            // 注册时机：离线整包用 RuntimeInitializeOnLoadMethod；热更包用 HotfixEntry.Start（均早于登录）。
             // 业务若接入 AB 实验扩展包（com.frameworkbase.experiment，主干不引用），
             // 请在此后调用 Experiments.Instance.SetUnitId(loginResult.UserId) 切换分桶单元。
+            if (OnBusinessEntryAsync != null)
+            {
+                try
+                {
+                    await OnBusinessEntryAsync(loginResult);
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogError("[GameEntry] 业务入口 OnBusinessEntryAsync 抛异常，已隔离不影响框架生命周期");
+                    Debug.LogException(ex);
+                }
+            }
         }
+
+        /// <summary>
+        /// 登录后业务入口钩子（框架保留的唯一「业务接管」扩展点）。
+        /// 框架在登录成功且 <see cref="BindLoggedInIdentity"/> 贯通玩家身份之后调用一次；
+        /// 业务在此进主场景 / 开主界面 / 读账号存档。未注册时（纯框架壳）为 null、无副作用。
+        /// 线程约定：在主线程 await 调用；实现内异常被框架捕获隔离。
+        /// </summary>
+        public static Func<LoginResult, Cysharp.Threading.Tasks.UniTask> OnBusinessEntryAsync { get; set; }
 
         /// <summary>
         /// 登录成功后把「玩家身份」统一贯通到所有需要按用户归因 / 隔离的框架子系统。
