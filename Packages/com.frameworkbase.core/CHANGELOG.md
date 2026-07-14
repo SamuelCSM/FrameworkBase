@@ -7,6 +7,7 @@
 
 ### 新增
 
+- 网络生命周期恢复：单调时间记录后台窗口，后台暂停心跳/请求计时/重连退避；短后台主动探活，长后台或 Wi-Fi↔蜂窝/网络代际变化废弃旧 Epoch 后串行重连与重鉴权；Token 过期停止空转重试，离线队列仅接受显式 ReadOnly/服务端去重请求。
 - 可信多 CDN 回退：包内 Host 允许列表、环境/路径隔离、ManifestId+相对路径+Size+SHA-256 内容身份、每 Host 重试与熔断；current/清单/伴生签名/DLL 同策略回退，哈希异常立即隔离，跨 Host 无 ETag 证明时强制全量重下。
 - 缓存治理策略：高/低水位与磁盘缺口双触发，Temporary→Orphan Staging→Obsolete Release 确定性清理；Active/Pending/LKG/提交中事务硬保护，清理后以真实卷空间重检结果决定准入。
 - 热更安装磁盘空间失败关闭门禁：按 Payload、固定事务开销和动态/最低安全余量计算峰值预算；Android StatFs / 桌面卷查询不可用时显式返回 Unknown，禁止把查询失败当作空间充足。

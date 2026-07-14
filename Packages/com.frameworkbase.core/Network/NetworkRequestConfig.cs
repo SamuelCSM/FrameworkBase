@@ -1,5 +1,13 @@
 namespace Framework.Network
 {
+    /// <summary>请求能否在断线后自动重放。默认 Never；只有明确证明安全的请求才能进入离线队列。</summary>
+    public enum NetworkReplaySafety
+    {
+        Never = 0,
+        ReadOnly = 1,
+        ServerDeduplicated = 2,
+    }
+
     /// <summary>
     /// 网络请求配置，控制单次 RequestAsync 的行为。
     /// </summary>
@@ -32,8 +40,17 @@ namespace Framework.Network
         /// </summary>
         public bool QueueWhileDisconnected { get; set; } = false;
 
+        /// <summary>
+        /// 自动重放安全级别。ReadOnly 仅用于无副作用查询；ServerDeduplicated 要求请求协议自身携带
+        /// 稳定幂等键且服务端持久去重。仅设置 QueueWhileDisconnected 而未声明本字段时仍会拒绝入队。
+        /// </summary>
+        public NetworkReplaySafety ReplaySafety { get; set; } = NetworkReplaySafety.Never;
+
         /// <summary>入队等待补发的最长时间（毫秒），到期未发出按失败收尾。默认 30000。</summary>
         public int QueueTtlMs { get; set; } = 30000;
+
+        internal bool IsOfflineReplayAllowed =>
+            QueueWhileDisconnected && ReplaySafety != NetworkReplaySafety.Never;
 
         /// <summary>默认配置实例。</summary>
         public static NetworkRequestConfig Default { get; } = new NetworkRequestConfig();

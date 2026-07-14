@@ -113,6 +113,12 @@ namespace Framework.Core
         [Tooltip("DNS、TCP 连接及 TLS 握手的统一超时上限（秒）；必须为正数。")]
         public int NetworkTimeoutSeconds = 30;
 
+        [Tooltip("短后台旧连接保留宽限（秒）。宽限内回前台先主动探活；超过后直接废弃旧 Epoch 并重连。")]
+        public float NetworkBackgroundGraceSeconds = 10f;
+
+        [Tooltip("回前台主动探活的超时（秒）。超时视为半开 TCP，立即切换新连接并重新鉴权。")]
+        public float NetworkForegroundProbeTimeoutSeconds = 5f;
+
         [Header("网络 TLS")]
         [Tooltip("是否为游戏长连接启用 TLS。正式强联网项目应启用，并结合证书 Pin 与轮换策略。")]
         public bool UseTls;

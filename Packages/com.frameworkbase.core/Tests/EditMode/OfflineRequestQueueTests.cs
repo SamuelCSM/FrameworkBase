@@ -15,9 +15,9 @@ namespace Framework.Tests
         {
             var queue = new OfflineRequestQueue { MaxItems = 2 };
 
-            Assert.IsTrue(queue.TryEnqueue(() => { }, () => { }, 30, now: 0));
-            Assert.IsTrue(queue.TryEnqueue(() => { }, () => { }, 30, now: 0));
-            Assert.IsFalse(queue.TryEnqueue(() => { }, () => { }, 30, now: 0), "超限必须拒绝，断网请求洪水不能无界积压");
+            Assert.IsTrue(queue.TryEnqueue(() => { }, () => { }, 30, now: 0, isReplaySafe: true));
+            Assert.IsTrue(queue.TryEnqueue(() => { }, () => { }, 30, now: 0, isReplaySafe: true));
+            Assert.IsFalse(queue.TryEnqueue(() => { }, () => { }, 30, now: 0, isReplaySafe: true), "超限必须拒绝，断网请求洪水不能无界积压");
             Assert.AreEqual(2, queue.Count);
         }
 
@@ -26,8 +26,8 @@ namespace Framework.Tests
         {
             var queue = new OfflineRequestQueue();
 
-            Assert.IsFalse(queue.TryEnqueue(null, () => { }, 30, 0));
-            Assert.IsFalse(queue.TryEnqueue(() => { }, null, 30, 0));
+            Assert.IsFalse(queue.TryEnqueue(null, () => { }, 30, 0, isReplaySafe: true));
+            Assert.IsFalse(queue.TryEnqueue(() => { }, null, 30, 0, isReplaySafe: true));
             Assert.AreEqual(0, queue.Count);
         }
 
@@ -36,9 +36,9 @@ namespace Framework.Tests
         {
             var queue = new OfflineRequestQueue();
             var order = new List<int>();
-            queue.TryEnqueue(() => order.Add(1), () => { }, 30, 0);
-            queue.TryEnqueue(() => order.Add(2), () => { }, 30, 0);
-            queue.TryEnqueue(() => order.Add(3), () => { }, 30, 0);
+            queue.TryEnqueue(() => order.Add(1), () => { }, 30, 0, isReplaySafe: true);
+            queue.TryEnqueue(() => order.Add(2), () => { }, 30, 0, isReplaySafe: true);
+            queue.TryEnqueue(() => order.Add(3), () => { }, 30, 0, isReplaySafe: true);
 
             queue.FlushAll();
 
@@ -54,8 +54,8 @@ namespace Framework.Tests
         {
             var queue = new OfflineRequestQueue();
             bool failedShort = false, failedLong = false;
-            queue.TryEnqueue(() => { }, () => failedShort = true, ttlSeconds: 5, now: 100);
-            queue.TryEnqueue(() => { }, () => failedLong = true, ttlSeconds: 60, now: 100);
+            queue.TryEnqueue(() => { }, () => failedShort = true, ttlSeconds: 5, now: 100, isReplaySafe: true);
+            queue.TryEnqueue(() => { }, () => failedLong = true, ttlSeconds: 60, now: 100, isReplaySafe: true);
 
             queue.Update(now: 104);
             Assert.IsFalse(failedShort, "未到期不收尾");
@@ -72,8 +72,8 @@ namespace Framework.Tests
         {
             var queue = new OfflineRequestQueue();
             int failed = 0, sent = 0;
-            queue.TryEnqueue(() => sent++, () => failed++, 30, 0);
-            queue.TryEnqueue(() => sent++, () => failed++, 30, 0);
+            queue.TryEnqueue(() => sent++, () => failed++, 30, 0, isReplaySafe: true);
+            queue.TryEnqueue(() => sent++, () => failed++, 30, 0, isReplaySafe: true);
 
             queue.FailAll();
 
@@ -87,8 +87,8 @@ namespace Framework.Tests
         {
             var queue = new OfflineRequestQueue();
             bool secondSent = false;
-            queue.TryEnqueue(() => throw new System.InvalidOperationException("boom"), () => { }, 30, 0);
-            queue.TryEnqueue(() => secondSent = true, () => { }, 30, 0);
+            queue.TryEnqueue(() => throw new System.InvalidOperationException("boom"), () => { }, 30, 0, isReplaySafe: true);
+            queue.TryEnqueue(() => secondSent = true, () => { }, 30, 0, isReplaySafe: true);
 
             UnityEngine.TestTools.LogAssert.Expect(
                 UnityEngine.LogType.Error,
@@ -103,11 +103,25 @@ namespace Framework.Tests
             var queue = new OfflineRequestQueue();
             // 模拟"补发瞬间又断线 → 请求再次入队"的重入场景
             queue.TryEnqueue(
-                () => queue.TryEnqueue(() => { }, () => { }, 30, 0),
-                () => { }, 30, 0);
+                () => queue.TryEnqueue(() => { }, () => { }, 30, 0, isReplaySafe: true),
+                () => { }, 30, 0, isReplaySafe: true);
 
             Assert.DoesNotThrow(() => queue.FlushAll());
             Assert.AreEqual(1, queue.Count, "补发中新入队的项应留待下一次 Flush");
+        }
+
+        [Test]
+        public void 非幂等请求_即使调用方要求排队也拒绝进入重放队列()
+        {
+            var queue = new OfflineRequestQueue();
+            Assert.IsFalse(queue.TryEnqueue(
+                () => { }, () => { }, 30, 0, isReplaySafe: false));
+            Assert.AreEqual(0, queue.Count);
+
+            var config = new NetworkRequestConfig { QueueWhileDisconnected = true };
+            Assert.IsFalse(config.IsOfflineReplayAllowed);
+            config.ReplaySafety = NetworkReplaySafety.ReadOnly;
+            Assert.IsTrue(config.IsOfflineReplayAllowed);
         }
     }
 }
