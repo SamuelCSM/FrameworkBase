@@ -11,6 +11,11 @@
 - 身份清空前同步调用的 `GameEntry.OnBusinessExit`，统一覆盖主动登出、服务端互踢、SDK 会话失效和应用退出；
   业务可在旧账号身份仍有效时保存数据、取消定时器并关闭 UI。
 - `ConfigPipeline` 一键完成 Excel → 热更代码生成 → 首包/热更 config.db 导出与校验，支持菜单和 batchmode。
+- 参考热更入口 `HotfixEntry.Start()` 接线业务装配（切片 D），热更/离线两种加载方式下业务会话钩子都就位。
+
+### 修复
+
+- `.gitignore` 补齐 Addressables 内容构建生成的 `Assets/AddressableAssetsData/Windows.meta`（目录已忽略、其文件夹 meta 此前遗漏，资源发布后残留未跟踪文件）。
 
 ### 变更
 

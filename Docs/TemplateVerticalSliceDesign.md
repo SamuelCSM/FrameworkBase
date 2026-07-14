@@ -1,6 +1,6 @@
 # 模板样例(参考垂直切片)落地方案
 
-> 状态：切片 A～C 已落地并完成收口；切片 D～G 待实施
+> 状态：切片 A～C 已落地并完成收口；切片 D 自动化部分已落地（发布/回滚链路），真机 HybridCLR 运行时加载留联调；切片 E～G 待实施
 > 关联:`Docs/ContentReleaseTransactionDesign.md`、`Docs/ReleaseSystemTargetDesign.md`、`Tools/ci/release-rehearsal.ps1`
 
 ## 1. 目标与定位
@@ -90,6 +90,15 @@
   3. 客户端冷启动 → LaunchFlow 拉到 v2 → 事务确认 → 玩法呈现新逻辑新数值;
   4. 演练回滚:promote 回 v1,客户端再启动回到旧逻辑。
 - 验收:上述四步全程无手工干预文件;`ContentRelease` 事务在中断注入(启动中杀进程)后仍能前滚/回滚自愈(复用既有测试思路做一次手工演练即可)。
+
+**落地状态(2026-07-14):**
+
+- ✅ **热更入口接线**:`HotfixEntry.Start()` 显式调 `ClickerBootstrap.Install()`(热更模式 RuntimeInitializeOnLoad 不触发),离线/热更两种加载方式业务钩子都就位(提交 `7d3b773`)。
+- ✅ **发布→回滚→晋级→客户端消费+故障注入自愈** 全绿:`Tools/ci/release-rehearsal.ps1` 五跳,契约测试 9/9(事务中断前滚/回滚自愈即此)。
+- ✅ **资源(config.db)+代码 联合热更发布**已验证:`-publishResource true` 真跑通——Addressables 建出 `refdata_assets_all_*.bundle`(切片 B 的 RefData 组首次进真实发布)、HybridCLR 出 `HotUpdate.dll.bytes`,清单/指针/ledger 全签名。
+- ✅ **v1→v2→回滚 内容跳变演练**(真改一行玩法 `ClickGain×2`):v1/v2 的 `HotUpdate.dll.bytes` SHA256 确不同(`2176fdd6…` vs `c52e58ff…`,证"改玩法源码→出不同签名产物"),回滚后 `current.json` 激活指针精确回到 v1。
+- 🔎 **拷问所得(已修/已记)**:`AtomicPublishArtifacts` 对超长 uploadRoot(全路径>260)不安全,报 `DirectoryNotFoundException` 而非明确错误——发布机 uploadRoot 须用短路径,潜在框架加固点见 `TemplateApiFriction.md`;Addressables 内容构建生成的 `Windows/` 目录 `.meta` 未被 `.gitignore` 覆盖(已补)。
+- ⏳ **留联调(真机/运行时)**:`EnableHotUpdate=1` 下真机冷启动经 HybridCLR **运行时加载 v2 dll 跑出新玩法数值**——编辑器不实际热加载(直接用已编译程序集),此项与既有"需真机/联调"项同类,不在本机自动化闭环内;"改一格 Excel"因 xlsx 为二进制、需再走一次 Unity 导出,并入该联调批次。
 
 ### 切片 E:真实登录链路
 
