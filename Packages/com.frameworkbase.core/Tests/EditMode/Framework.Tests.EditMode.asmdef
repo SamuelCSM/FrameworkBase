@@ -18,7 +18,8 @@
     "allowUnsafeCode": false,
     "overrideReferences": true,
     "precompiledReferences": [
-        "nunit.framework.dll"
+        "nunit.framework.dll",
+        "SQLite-net.dll"
     ],
     "autoReferenced": false,
     "defineConstraints": [
