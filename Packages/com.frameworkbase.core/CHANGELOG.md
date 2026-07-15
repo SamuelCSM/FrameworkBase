@@ -20,6 +20,7 @@
   业务可在旧账号身份仍有效时保存数据、取消定时器并关闭 UI。
 - `ConfigPipeline` 一键完成 Excel → 热更代码生成 → 首包/热更 config.db 导出与校验，支持菜单和 batchmode。
 - 参考热更入口 `HotfixEntry.Start()` 接线业务装配（切片 D），热更/离线两种加载方式下业务会话钩子都就位。
+- 文档：`ARCHITECTURE_DECISIONS.md` 新增 **ADR-005**（可信多 CDN 回退的安全边界——Host 不属于内容身份；同批磁盘失败关闭/缓存治理/网络生命周期不变量一并沉淀）；新增运维向 `HotUpdate/HOTUPDATE_RELEASE_GUIDE.md`（CDN 配置规则、磁盘/缓存错误码 `STORAGE_E_*`、前后台恢复参数与排障速查）。
 
 ### 修复
 
