@@ -7,6 +7,14 @@
 
 ### 新增
 
+- `DevAuthTools.HasPersistedSession()`（Framework.Editor 公开入口）：供验收驱动断言「登出/互踢后持久化凭据已清」，游戏侧编辑器程序集不再需要触碰 `AuthSessionStore` internal。配套：`GameEntry` 登出请求日志从 Warning 降为普通日志（登出属正常业务流，Warning 会污染 Play 验收「零告警」门禁）。
+- `AppFlow` 应用主状态机（Login ⇄ InGame，骑在通用 `AsyncStateMachine` 上）：登录活动 → 身份贯通 → 业务入口（InGame.Enter）→ 挂起等登出 → 拆卸（InGame.Exit：业务退出→鉴权登出→清身份）→ 自动回登录页（此前登出只拆卸、无回登录路径）。纯逻辑全注入，EditMode 脱离 Play 单测 7 例；三个登出源（服务端互踢/玩家主动/渠道会话失效）统一改调 `RequestLogout(reason)`——只记原因+唤醒主循环，拆卸不再发生在事件回调栈深处，同会话多信号合并首个原因生效，登录态收到登出为 no-op，业务入口 await 期间的登出后置合并（入口完成后立即拆卸）；全部钩子异常隔离上报，主循环含 Faulted 防御恢复。`OnBusinessEntryAsync` 语义更新为每登录会话调用一次（业务须支持重入，Clicker 样例已天然满足）。
+- `AsyncStateMachine<TState,TTrigger>` 强类型串行异步状态机（Framework.Foundation）：Builder 一次性构建并做拓扑校验（目标未声明/规则不可达/非法超时构建期即拒绝），运行期拓扑不可变；事务化提交（Exit+Enter 全成功才切状态），失败走显式 `OnRollback` 补偿且 fail-closed（缺补偿或补偿失败进 Faulted，须显式 `RecoverAsync`）；处理器内重入触发入队串行执行（链式超限判死循环）；同状态 Ignore/Reject/Reenter 策略先于守卫求值；支持同触发器多守卫规则选路与内部转换；有界审计历史 + 观察者异常隔离到诊断出口。EditMode 测试 19 例。
+- 网络生命周期恢复：单调时间记录后台窗口，后台暂停心跳/请求计时/重连退避；短后台主动探活，长后台或 Wi-Fi↔蜂窝/网络代际变化废弃旧 Epoch 后串行重连与重鉴权；Token 过期停止空转重试，离线队列仅接受显式 ReadOnly/服务端去重请求。
+- 可信多 CDN 回退：包内 Host 允许列表、环境/路径隔离、ManifestId+相对路径+Size+SHA-256 内容身份、每 Host 重试与熔断；current/清单/伴生签名/DLL 同策略回退，哈希异常立即隔离，跨 Host 无 ETag 证明时强制全量重下。
+- 缓存治理策略：高/低水位与磁盘缺口双触发，Temporary→Orphan Staging→Obsolete Release 确定性清理；Active/Pending/LKG/提交中事务硬保护，清理后以真实卷空间重检结果决定准入。
+- 热更安装磁盘空间失败关闭门禁：按 Payload、固定事务开销和动态/最低安全余量计算峰值预算；Android StatFs / 桌面卷查询不可用时显式返回 Unknown，禁止把查询失败当作空间充足。
+- `AssetLease<T>` 显式资源所有权：幂等释放、同地址共享加载下的独立逻辑引用，以及取消等待后的迟到引用自动归还。
 - 登录身份贯通后调用的 `GameEntry.OnBusinessEntryAsync`，供热更业务安全读取账号存档并进入主界面。
 - 身份清空前同步调用的 `GameEntry.OnBusinessExit`，统一覆盖主动登出、服务端互踢、SDK 会话失效和应用退出；
   业务可在旧账号身份仍有效时保存数据、取消定时器并关闭 UI。
@@ -15,6 +23,8 @@
 
 ### 修复
 
+- ConfigManager 首装路径去噪：初始化时持久化数据库尚不存在属正常序列（LaunchFlow 随后从首包安装），该提示从 Warning 降为普通日志；「安装后仍无可用库」保持 Warning/Error。此前该噪声被验收器清库路径不对（未删真实的 `{persistentDataPath}/config.db`）掩盖，真实首装设备每次都会打出一条告警。
+- AudioManager 改用 `AssetLease<AudioClip>` 记录每次播放所有权；自然结束、Stop/StopAll、Shutdown、加载取消/失败均幂等归还，且代际安全 Handle 阻止池化 AudioSource 被旧引用误操作。
 - `.gitignore` 补齐 Addressables 内容构建生成的 `Assets/AddressableAssetsData/Windows.meta`（目录已忽略、其文件夹 meta 此前遗漏，资源发布后残留未跟踪文件）。
 
 ### 变更

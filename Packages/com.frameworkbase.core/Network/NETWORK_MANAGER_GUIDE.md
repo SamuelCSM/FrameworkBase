@@ -73,14 +73,15 @@ await GameEntry.Network.RequestAsync(request, new NetworkRequestConfig
 var resp = await GameEntry.Network.RequestAsync(request, new NetworkRequestConfig
 {
     QueueWhileDisconnected = true, // 断线期间入队，重连+重鉴权成功后按 FIFO 补发
+    ReplaySafety = NetworkReplaySafety.ReadOnly, // 必须显式声明；默认 Never 会拒绝入队
     QueueTtlMs = 30000,            // 等 30 秒还没能发出去就按失败收尾（返回 null）
 });
 ```
 
 语义与边界：
 
-- **只对幂等请求开启**。扣费、下单类非幂等请求禁止——断线窗口里服务端可能已处理过
-  第一次，重发的一致性只有业务层能判断。
+- **代码门禁只允许显式声明安全级别的请求**。纯查询使用 `ReadOnly`；有副作用但服务端按稳定
+  幂等键持久去重的请求使用 `ServerDeduplicated`。扣费、下单类请求若没有服务端去重必须保持 `Never`。
 - 补发时机在**重鉴权成功之后**（会话已恢复，服务端不会静默丢弃）。
 - 队列上限 64 条，超限入队直接失败；TTL 到期、放弃重连、主动 `Disconnect()` 都按
   失败收尾（调用方拿到 null，和普通失败一个处理路径）。
@@ -129,6 +130,7 @@ public class BattleWindow : UIBase<BattleView>
 | `OnReconnecting(attempt, max, waitSec)` | 每次重连尝试 | ReconnectPanel 显示 |
 | `OnReconnectSucceeded` | 重连成功 | ReconnectPanel 隐藏 |
 | `OnReconnectFailed` | 重连放弃 | 提示用户手动重连或退出 |
+| `OnSessionExpired` | 重鉴权明确判定 Token 失效 | 停止自动重连并引导重新登录 |
 | `OnWaitingStart` | 请求等待超过延迟 | NetworkWaitingUI 转圈 |
 | `OnWaitingEnd` | 所有请求完成 | NetworkWaitingUI 隐藏 |
 | `OnRequestTimeout(msg)` | 请求超时 | Toast/弹窗提示 |
@@ -186,6 +188,18 @@ GameEntry.Network.EnableAutoReconnect(true);
 GameEntry.Network.SetMaxReconnectAttempts(5);
 GameEntry.Network.SetReconnectIntervals(new float[] { 1, 2, 5, 10, 30 });
 ```
+
+`AppConfig` 还提供 `NetworkBackgroundGraceSeconds`（默认 10 秒）与
+`NetworkForegroundProbeTimeoutSeconds`（默认 5 秒）。生命周期策略如下：
+
+- 进入后台后暂停心跳超时、请求计时和重连退避；Analytics 组件独立把待发事件落盘。
+- 短后台且网络代际未变时，回前台立即发送一次心跳探活；探活失败即废弃旧连接。
+- 长后台、Wi-Fi/蜂窝切换或原生网络 Fingerprint 变化时，不相信本地 `IsConnected`，直接关闭旧 Epoch。
+- 新连接建立后必须先重新鉴权；只有鉴权成功才能补发显式声明为可重放的离线请求。
+- 令牌明确过期属于永久失败，停止用同一令牌重试并触发重新登录流程。
+
+默认连通性适配只能识别 Wi-Fi/局域网与蜂窝。需要识别“Wi-Fi A → Wi-Fi B”等同类型切换时，
+实现 `INetworkConnectivityProvider` 并在连接前调用 `SetConnectivityProvider`；Fingerprint 不得包含 SSID 等个人信息。
 
 ## UI 组件
 

@@ -1,574 +1,588 @@
 using System;
 using System.Collections.Generic;
-using UnityEngine;
+using System.Threading;
 using Cysharp.Threading.Tasks;
+using UnityEngine;
 
 namespace Framework
 {
+    internal interface IAudioAssetLeaseProvider
+    {
+        UniTask<AssetLease<AudioClip>> LoadAsync(string address, CancellationToken cancellationToken);
+    }
+
+    internal sealed class ResourceAudioAssetLeaseProvider : IAudioAssetLeaseProvider
+    {
+        public UniTask<AssetLease<AudioClip>> LoadAsync(string address, CancellationToken cancellationToken)
+        {
+            ResourceManager resources = Core.GameEntry.Resource;
+            if (resources == null)
+                throw new InvalidOperationException("ResourceManager 尚未初始化。");
+            return resources.LoadLeaseAsync<AudioClip>(address, cancellationToken);
+        }
+    }
+
+    internal interface IAudioPlaybackProbe
+    {
+        bool IsPlaying(AudioSource source);
+    }
+
+    internal sealed class UnityAudioPlaybackProbe : IAudioPlaybackProbe
+    {
+        public bool IsPlaying(AudioSource source) => source != null && source.isPlaying;
+    }
+
     /// <summary>
-    /// 音频管理器
-    /// 管理背景音乐和音效播放，支持音量控制、淡入淡出、对象池等功能
+    /// 音频管理器。所有 AudioClip 均由 AssetLease 显式持有；自然结束、主动停止、StopAll、
+    /// Shutdown、加载取消和失败全部汇入同一个幂等完成路径。
     /// </summary>
     public class AudioManager : Core.FrameworkComponent<AudioManager>
     {
-        // 音频源对象池
+        private sealed class PlaybackRecord
+        {
+            public long Id;
+            public AudioSource Source;
+            public AssetLease<AudioClip> Lease;
+            public CancellationTokenSource Lifetime;
+            public AudioPlaybackState State;
+        }
+
+        private enum CompletionReason
+        {
+            Natural,
+            Stopped,
+            StopAll,
+            Shutdown
+        }
+
+        private readonly IAudioAssetLeaseProvider _assetProvider;
+        private readonly IAudioPlaybackProbe _playbackProbe;
+        private readonly Dictionary<long, PlaybackRecord> _activeSounds = new Dictionary<long, PlaybackRecord>();
+        private readonly Dictionary<long, CancellationTokenSource> _pendingSounds = new Dictionary<long, CancellationTokenSource>();
+        private readonly List<long> _completionBuffer = new List<long>();
+
         private AudioSourcePool _audioSourcePool;
-        
-        // 背景音乐音频源
         private AudioSource _musicSource;
-        
-        // 当前播放的音乐地址
+        private AssetLease<AudioClip> _musicLease;
+        private CancellationTokenSource _musicOperationCts;
+        private CancellationTokenSource _lifetimeCts;
         private string _currentMusicAddress;
-        
-        // 正在播放的音效列表
-        private List<AudioSource> _activeSounds = new List<AudioSource>();
-        
-        // 音量设置
+        private long _nextPlaybackId;
+        private bool _isShuttingDown;
+
         private float _masterVolume = 1f;
         private float _musicVolume = 1f;
         private float _soundVolume = 1f;
-        private bool _isMuted = false;
-        
-        // 淡入淡出协程取消令牌
-        private System.Threading.CancellationTokenSource _fadeCts;
+        private bool _isMuted;
 
-        #region 属性
+        public AudioManager() : this(new ResourceAudioAssetLeaseProvider(), new UnityAudioPlaybackProbe()) { }
 
-        /// <summary>
-        /// 主音量 (0-1)
-        /// </summary>
+        internal AudioManager(IAudioAssetLeaseProvider assetProvider, IAudioPlaybackProbe playbackProbe)
+        {
+            _assetProvider = assetProvider ?? throw new ArgumentNullException(nameof(assetProvider));
+            _playbackProbe = playbackProbe ?? throw new ArgumentNullException(nameof(playbackProbe));
+        }
+
         public float MasterVolume
         {
             get => _masterVolume;
-            set
-            {
-                _masterVolume = Mathf.Clamp01(value);
-                UpdateAllVolumes();
-            }
+            set { _masterVolume = Mathf.Clamp01(value); UpdateAllVolumes(); }
         }
 
-        /// <summary>
-        /// 音乐音量 (0-1)
-        /// </summary>
         public float MusicVolume
         {
             get => _musicVolume;
-            set
-            {
-                _musicVolume = Mathf.Clamp01(value);
-                UpdateMusicVolume();
-            }
+            set { _musicVolume = Mathf.Clamp01(value); UpdateMusicVolume(); }
         }
 
-        /// <summary>
-        /// 音效音量 (0-1)
-        /// </summary>
         public float SoundVolume
         {
             get => _soundVolume;
-            set
-            {
-                _soundVolume = Mathf.Clamp01(value);
-                UpdateSoundVolumes();
-            }
+            set { _soundVolume = Mathf.Clamp01(value); UpdateSoundVolumes(); }
         }
 
-        /// <summary>
-        /// 是否静音
-        /// </summary>
         public bool IsMuted
         {
             get => _isMuted;
-            set
-            {
-                _isMuted = value;
-                UpdateAllVolumes();
-            }
+            set { _isMuted = value; UpdateAllVolumes(); }
         }
 
-        #endregion
-
-        #region 生命周期
+        internal int ActiveSoundCount => _activeSounds.Count;
+        internal int PendingSoundCount => _pendingSounds.Count;
 
         public override void OnInit()
         {
-            GameLog.Log("AudioManager 初始化");
-            
-            // 创建音频源对象池
+            _isShuttingDown = false;
+            _lifetimeCts?.Dispose();
+            _lifetimeCts = new CancellationTokenSource();
             _audioSourcePool = new AudioSourcePool(10);
-            
-            // 创建背景音乐音频源
             CreateMusicSource();
+            GameLog.Log("AudioManager 初始化");
         }
 
         public override void OnUpdate(float deltaTime)
         {
-            // 清理已播放完成的音效
-            for (int i = _activeSounds.Count - 1; i >= 0; i--)
+            _completionBuffer.Clear();
+            foreach (KeyValuePair<long, PlaybackRecord> pair in _activeSounds)
             {
-                if (_activeSounds[i] == null || !_activeSounds[i].isPlaying)
+                PlaybackRecord record = pair.Value;
+                if (record.State == AudioPlaybackState.Playing &&
+                    (record.Source == null || !_playbackProbe.IsPlaying(record.Source)))
                 {
-                    if (_activeSounds[i] != null)
-                    {
-                        _audioSourcePool.Release(_activeSounds[i]);
-                    }
-                    _activeSounds.RemoveAt(i);
+                    _completionBuffer.Add(pair.Key);
                 }
             }
+
+            for (int i = 0; i < _completionBuffer.Count; i++)
+                CompleteSound(_completionBuffer[i], CompletionReason.Natural);
         }
 
         public override void OnShutdown()
         {
-            // 停止所有音频
-            StopMusic(0f);
-            StopAllSounds();
-            
-            // 取消淡入淡出
-            _fadeCts?.Cancel();
-            _fadeCts?.Dispose();
-            
-            // 清理对象池
+            if (_isShuttingDown)
+                return;
+
+            _isShuttingDown = true;
+            CancelCurrentMusicOperation();
+            try { _lifetimeCts?.Cancel(); } catch { }
+
+            StopMusicImmediate();
+            StopAllSounds(CompletionReason.Shutdown);
             _audioSourcePool?.Clear();
-            
-            // 销毁音乐源
+            _audioSourcePool = null;
+
             if (_musicSource != null)
             {
-                UnityEngine.Object.Destroy(_musicSource.gameObject);
+                DestroyGameObject(_musicSource.gameObject);
                 _musicSource = null;
             }
-            
+
+            _lifetimeCts?.Dispose();
+            _lifetimeCts = null;
             GameLog.Log("AudioManager 关闭");
         }
 
-        #endregion
-
-        #region 背景音乐
-
-        /// <summary>
-        /// 播放背景音乐
-        /// </summary>
-        /// <param name="address">音频资源地址</param>
-        /// <param name="loop">是否循环</param>
-        /// <param name="fadeTime">淡入时间（秒）</param>
-        public async UniTask PlayMusicAsync(string address, bool loop = true, float fadeTime = 0f)
+        /// <summary>播放背景音乐。新调用会取消上一条未完成的音乐加载/淡变操作。</summary>
+        public async UniTask PlayMusicAsync(
+            string address,
+            bool loop = true,
+            float fadeTime = 0f,
+            CancellationToken cancellationToken = default)
         {
-            if (string.IsNullOrEmpty(address))
-            {
-                GameLog.Error("PlayMusicAsync: address 不能为空");
+            if (string.IsNullOrWhiteSpace(address))
+                throw new ArgumentException("音乐地址不能为空。", nameof(address));
+            ThrowIfUnavailable();
+
+            if (_currentMusicAddress == address && _musicSource != null && _musicSource.isPlaying)
                 return;
-            }
 
-            // 如果正在播放相同的音乐，不做处理
-            if (_currentMusicAddress == address && _musicSource.isPlaying)
+            CancellationTokenSource operation = BeginMusicOperation(cancellationToken);
+            AssetLease<AudioClip> incomingLease = null;
+            try
             {
-                GameLog.Log($"PlayMusicAsync: 音乐已在播放 - {address}");
-                return;
-            }
+                await StopMusicCoreAsync(fadeTime, operation.Token);
+                incomingLease = await _assetProvider.LoadAsync(address, operation.Token);
+                if (incomingLease == null)
+                {
+                    GameLog.Error($"PlayMusicAsync: 加载音乐失败 - {address}");
+                    return;
+                }
 
-            // 停止当前音乐
-            if (_musicSource.isPlaying)
+                operation.Token.ThrowIfCancellationRequested();
+                _musicLease = incomingLease;
+                incomingLease = null; // 所有权转交给 Manager。
+                _currentMusicAddress = address;
+                _musicSource.clip = _musicLease.Asset;
+                _musicSource.loop = loop;
+
+                if (fadeTime > 0f)
+                {
+                    _musicSource.volume = 0f;
+                    _musicSource.Play();
+                    await FadeVolumeAsync(_musicSource, GetEffectiveMusicVolume(), fadeTime, operation.Token);
+                }
+                else
+                {
+                    _musicSource.volume = GetEffectiveMusicVolume();
+                    _musicSource.Play();
+                }
+            }
+            finally
             {
-                await StopMusicInternal(fadeTime);
+                incomingLease?.Dispose();
+                if (ReferenceEquals(_musicOperationCts, operation))
+                    _musicOperationCts = null;
+                operation.Dispose();
             }
-
-            // 加载音频资源
-            var audioClip = await Core.GameEntry.Resource.LoadAssetAsync<AudioClip>(address);
-            if (audioClip == null)
-            {
-                GameLog.Error($"PlayMusicAsync: 加载音频失败 - {address}");
-                return;
-            }
-
-            // 设置音频源
-            _musicSource.clip = audioClip;
-            _musicSource.loop = loop;
-            _currentMusicAddress = address;
-
-            // 播放音乐
-            if (fadeTime > 0f)
-            {
-                // 淡入播放
-                _musicSource.volume = 0f;
-                _musicSource.Play();
-                await FadeVolume(_musicSource, GetEffectiveMusicVolume(), fadeTime);
-            }
-            else
-            {
-                // 直接播放
-                _musicSource.volume = GetEffectiveMusicVolume();
-                _musicSource.Play();
-            }
-
-            GameLog.Log($"PlayMusicAsync: 播放音乐 - {address}");
         }
 
-        /// <summary>
-        /// 停止背景音乐
-        /// </summary>
-        /// <param name="fadeTime">淡出时间（秒）</param>
         public void StopMusic(float fadeTime = 0f)
         {
-            StopMusicInternal(fadeTime).Forget();
+            if (_musicSource == null)
+                return;
+
+            CancellationTokenSource operation = BeginMusicOperation(CancellationToken.None);
+            StopMusicOperationAsync(fadeTime, operation).Forget();
         }
 
-        /// <summary>
-        /// 暂停背景音乐
-        /// </summary>
         public void PauseMusic()
         {
             if (_musicSource != null && _musicSource.isPlaying)
-            {
                 _musicSource.Pause();
-                GameLog.Log("PauseMusic: 暂停音乐");
-            }
         }
 
-        /// <summary>
-        /// 恢复背景音乐
-        /// </summary>
         public void ResumeMusic()
         {
             if (_musicSource != null && _musicSource.clip != null)
-            {
                 _musicSource.UnPause();
-                GameLog.Log("ResumeMusic: 恢复音乐");
+        }
+
+        private async UniTaskVoid StopMusicOperationAsync(float fadeTime, CancellationTokenSource operation)
+        {
+            try { await StopMusicCoreAsync(fadeTime, operation.Token); }
+            catch (OperationCanceledException) { }
+            finally
+            {
+                if (ReferenceEquals(_musicOperationCts, operation))
+                    _musicOperationCts = null;
+                operation.Dispose();
             }
         }
 
-        /// <summary>
-        /// 内部停止音乐方法
-        /// </summary>
-        private async UniTask StopMusicInternal(float fadeTime)
+        private async UniTask StopMusicCoreAsync(float fadeTime, CancellationToken cancellationToken)
         {
-            if (_musicSource == null || !_musicSource.isPlaying)
+            AssetLease<AudioClip> leaseToRelease = _musicLease;
+            _musicLease = null;
+            _currentMusicAddress = null;
+
+            try
             {
-                return;
+                if (_musicSource != null && _musicSource.clip != null && fadeTime > 0f && _musicSource.isPlaying)
+                    await FadeVolumeAsync(_musicSource, 0f, fadeTime, cancellationToken);
             }
-
-            if (fadeTime > 0f)
+            finally
             {
-                // 淡出停止
-                await FadeVolume(_musicSource, 0f, fadeTime);
-            }
-
-            _musicSource.Stop();
-            _musicSource.clip = null;
-
-            // 释放音频资源
-            if (!string.IsNullOrEmpty(_currentMusicAddress))
-            {
-                Core.GameEntry.Resource.ReleaseAsset(_currentMusicAddress);
-                _currentMusicAddress = null;
-            }
-
-            GameLog.Log("StopMusicInternal: 停止音乐");
-        }
-
-        #endregion
-
-        #region 音效
-
-        /// <summary>
-        /// 播放音效
-        /// </summary>
-        /// <param name="address">音频资源地址</param>
-        /// <param name="position">3D音效位置（默认为零向量表示2D音效）</param>
-        /// <returns>音频源（可用于控制音效）</returns>
-        public async UniTask<AudioSource> PlaySoundAsync(string address, Vector3 position = default)
-        {
-            if (string.IsNullOrEmpty(address))
-            {
-                GameLog.Error("PlaySoundAsync: address 不能为空");
-                return null;
-            }
-
-            // 加载音频资源
-            var audioClip = await Core.GameEntry.Resource.LoadAssetAsync<AudioClip>(address);
-            if (audioClip == null)
-            {
-                GameLog.Error($"PlaySoundAsync: 加载音频失败 - {address}");
-                return null;
-            }
-
-            // 从对象池获取音频源
-            var audioSource = _audioSourcePool.Get();
-            if (audioSource == null)
-            {
-                GameLog.Error("PlaySoundAsync: 无法获取音频源");
-                Core.GameEntry.Resource.ReleaseAsset(address);
-                return null;
-            }
-
-            // 设置音频源
-            audioSource.clip = audioClip;
-            audioSource.loop = false;
-            audioSource.volume = GetEffectiveSoundVolume();
-
-            // 设置3D音效
-            if (position != Vector3.zero)
-            {
-                audioSource.transform.position = position;
-                audioSource.spatialBlend = 1f; // 3D音效
-            }
-            else
-            {
-                audioSource.spatialBlend = 0f; // 2D音效
-            }
-
-            // 播放音效
-            audioSource.Play();
-            _activeSounds.Add(audioSource);
-
-            GameLog.Log($"PlaySoundAsync: 播放音效 - {address}");
-            return audioSource;
-        }
-
-        /// <summary>
-        /// 停止指定音效
-        /// </summary>
-        /// <param name="source">音频源</param>
-        public void StopSound(AudioSource source)
-        {
-            if (source == null)
-            {
-                return;
-            }
-
-            source.Stop();
-            _activeSounds.Remove(source);
-            _audioSourcePool.Release(source);
-
-            GameLog.Log("StopSound: 停止音效");
-        }
-
-        /// <summary>
-        /// 停止所有音效
-        /// </summary>
-        public void StopAllSounds()
-        {
-            foreach (var source in _activeSounds)
-            {
-                if (source != null)
+                if (_musicSource != null)
                 {
-                    source.Stop();
-                    _audioSourcePool.Release(source);
+                    _musicSource.Stop();
+                    _musicSource.clip = null;
+                }
+                leaseToRelease?.Dispose();
+            }
+        }
+
+        private void StopMusicImmediate()
+        {
+            if (_musicSource != null)
+            {
+                _musicSource.Stop();
+                _musicSource.clip = null;
+            }
+            _musicLease?.Dispose();
+            _musicLease = null;
+            _currentMusicAddress = null;
+        }
+
+        /// <summary>
+        /// 播放音效并返回代际安全句柄。取消会立即结束调用；共享资源的迟到加载结果由 AssetLease 自动归还。
+        /// </summary>
+        public async UniTask<AudioPlaybackHandle> PlaySoundAsync(
+            string address,
+            Vector3 position = default,
+            CancellationToken cancellationToken = default)
+        {
+            if (string.IsNullOrWhiteSpace(address))
+                throw new ArgumentException("音效地址不能为空。", nameof(address));
+            ThrowIfUnavailable();
+
+            long id = ++_nextPlaybackId;
+            CancellationTokenSource lifetime = CancellationTokenSource.CreateLinkedTokenSource(
+                cancellationToken,
+                _lifetimeCts.Token);
+            _pendingSounds[id] = lifetime;
+
+            AssetLease<AudioClip> lease = null;
+            bool transferred = false;
+            try
+            {
+                lease = await _assetProvider.LoadAsync(address, lifetime.Token);
+                if (lease == null)
+                {
+                    GameLog.Error($"PlaySoundAsync: 加载音效失败 - {address}");
+                    return default;
+                }
+
+                lifetime.Token.ThrowIfCancellationRequested();
+                if (!_pendingSounds.Remove(id))
+                    throw new OperationCanceledException(lifetime.Token);
+
+                AudioSource source = _audioSourcePool.Get();
+                if (source == null)
+                {
+                    GameLog.Error("PlaySoundAsync: 无法获取 AudioSource");
+                    return default;
+                }
+
+                source.clip = lease.Asset;
+                source.loop = false;
+                source.volume = GetEffectiveSoundVolume();
+                source.transform.position = position;
+                source.spatialBlend = position == Vector3.zero ? 0f : 1f;
+
+                var record = new PlaybackRecord
+                {
+                    Id = id,
+                    Source = source,
+                    Lease = lease,
+                    Lifetime = lifetime,
+                    State = AudioPlaybackState.Playing
+                };
+                _activeSounds.Add(id, record);
+                lease = null;
+                transferred = true;
+                source.Play();
+                return new AudioPlaybackHandle(this, id);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                GameLog.Error($"PlaySoundAsync: 播放音效异常 [{address}]：{ex.Message}");
+                return default;
+            }
+            finally
+            {
+                lease?.Dispose();
+                if (!transferred)
+                {
+                    _pendingSounds.Remove(id);
+                    lifetime.Dispose();
+                }
+            }
+        }
+
+        public bool StopSound(AudioPlaybackHandle handle)
+        {
+            if (!Owns(handle))
+                return false;
+            return CompleteSound(handle.PlaybackId, CompletionReason.Stopped);
+        }
+
+        public bool PauseSound(AudioPlaybackHandle handle)
+        {
+            if (!Owns(handle) || !_activeSounds.TryGetValue(handle.PlaybackId, out PlaybackRecord record) ||
+                record.State != AudioPlaybackState.Playing)
+                return false;
+
+            record.Source.Pause();
+            record.State = AudioPlaybackState.Paused;
+            return true;
+        }
+
+        public bool ResumeSound(AudioPlaybackHandle handle)
+        {
+            if (!Owns(handle) || !_activeSounds.TryGetValue(handle.PlaybackId, out PlaybackRecord record) ||
+                record.State != AudioPlaybackState.Paused)
+                return false;
+
+            record.Source.UnPause();
+            record.State = AudioPlaybackState.Playing;
+            return true;
+        }
+
+        public void StopAllSounds() => StopAllSounds(CompletionReason.StopAll);
+
+        private void StopAllSounds(CompletionReason reason)
+        {
+            if (_pendingSounds.Count > 0)
+            {
+                var pending = new List<CancellationTokenSource>(_pendingSounds.Values);
+                for (int i = 0; i < pending.Count; i++)
+                {
+                    try { pending[i].Cancel(); } catch { }
                 }
             }
 
-            _activeSounds.Clear();
-            GameLog.Log("StopAllSounds: 停止所有音效");
+            if (_activeSounds.Count == 0)
+                return;
+
+            _completionBuffer.Clear();
+            _completionBuffer.AddRange(_activeSounds.Keys);
+            for (int i = 0; i < _completionBuffer.Count; i++)
+                CompleteSound(_completionBuffer[i], reason);
         }
 
-        #endregion
+        private bool CompleteSound(long id, CompletionReason reason)
+        {
+            if (!_activeSounds.TryGetValue(id, out PlaybackRecord record))
+                return false;
 
-        #region 私有方法
+            // 先从表中摘除：Stop/自然结束/Shutdown 同帧竞态只允许第一个终态释放所有权。
+            _activeSounds.Remove(id);
+            record.State = AudioPlaybackState.Completed;
+            try { record.Lifetime.Cancel(); } catch { }
 
-        /// <summary>
-        /// 创建背景音乐音频源
-        /// </summary>
+            if (record.Source != null)
+            {
+                record.Source.Stop();
+                record.Source.clip = null;
+                _audioSourcePool?.Release(record.Source);
+            }
+
+            record.Lease?.Dispose();
+            record.Lease = null;
+            record.Lifetime.Dispose();
+            return true;
+        }
+
+        internal bool IsSoundActive(long playbackId) => _activeSounds.ContainsKey(playbackId);
+
+        internal AudioPlaybackState GetSoundState(long playbackId) =>
+            _activeSounds.TryGetValue(playbackId, out PlaybackRecord record)
+                ? record.State
+                : playbackId > 0 ? AudioPlaybackState.Completed : AudioPlaybackState.Invalid;
+
+        private bool Owns(AudioPlaybackHandle handle) =>
+            handle.IsOwnedBy(this) && handle.PlaybackId > 0 && _activeSounds.ContainsKey(handle.PlaybackId);
+
+        private CancellationTokenSource BeginMusicOperation(CancellationToken callerToken)
+        {
+            CancelCurrentMusicOperation();
+            CancellationTokenSource operation = CancellationTokenSource.CreateLinkedTokenSource(
+                callerToken,
+                _lifetimeCts?.Token ?? CancellationToken.None);
+            _musicOperationCts = operation;
+            return operation;
+        }
+
+        private void ThrowIfUnavailable()
+        {
+            if (_isShuttingDown || _lifetimeCts == null || _audioSourcePool == null)
+                throw new InvalidOperationException("AudioManager 尚未初始化或已经关闭。");
+        }
+
         private void CreateMusicSource()
         {
             var musicObject = new GameObject("MusicSource");
-            UnityEngine.Object.DontDestroyOnLoad(musicObject);
-            
+            if (Application.isPlaying)
+                UnityEngine.Object.DontDestroyOnLoad(musicObject);
             _musicSource = musicObject.AddComponent<AudioSource>();
             _musicSource.playOnAwake = false;
             _musicSource.loop = true;
             _musicSource.volume = GetEffectiveMusicVolume();
         }
 
-        /// <summary>
-        /// 音量淡入淡出
-        /// </summary>
-        private async UniTask FadeVolume(AudioSource source, float targetVolume, float duration)
+        private static async UniTask FadeVolumeAsync(
+            AudioSource source,
+            float targetVolume,
+            float duration,
+            CancellationToken cancellationToken)
         {
             if (source == null || duration <= 0f)
-            {
                 return;
-            }
-
-            // 取消之前的淡入淡出
-            _fadeCts?.Cancel();
-            _fadeCts?.Dispose();
-            _fadeCts = new System.Threading.CancellationTokenSource();
 
             float startVolume = source.volume;
             float elapsed = 0f;
-
-            try
+            while (elapsed < duration)
             {
-                while (elapsed < duration)
-                {
-                    elapsed += Time.deltaTime;
-                    float t = elapsed / duration;
-                    source.volume = Mathf.Lerp(startVolume, targetVolume, t);
-                    await UniTask.Yield(_fadeCts.Token);
-                }
-
-                source.volume = targetVolume;
+                cancellationToken.ThrowIfCancellationRequested();
+                elapsed += Time.unscaledDeltaTime;
+                source.volume = Mathf.Lerp(startVolume, targetVolume, Mathf.Clamp01(elapsed / duration));
+                await UniTask.Yield(PlayerLoopTiming.Update, cancellationToken);
             }
-            catch (OperationCanceledException)
-            {
-                // 淡入淡出被取消
-            }
+            source.volume = targetVolume;
         }
 
-        /// <summary>
-        /// 更新所有音量
-        /// </summary>
         private void UpdateAllVolumes()
         {
             UpdateMusicVolume();
             UpdateSoundVolumes();
         }
 
-        /// <summary>
-        /// 更新音乐音量
-        /// </summary>
         private void UpdateMusicVolume()
         {
             if (_musicSource != null)
-            {
                 _musicSource.volume = GetEffectiveMusicVolume();
-            }
         }
 
-        /// <summary>
-        /// 更新音效音量
-        /// </summary>
         private void UpdateSoundVolumes()
         {
-            float effectiveVolume = GetEffectiveSoundVolume();
-            foreach (var source in _activeSounds)
-            {
-                if (source != null)
-                {
-                    source.volume = effectiveVolume;
-                }
-            }
+            float volume = GetEffectiveSoundVolume();
+            foreach (PlaybackRecord record in _activeSounds.Values)
+                if (record.Source != null) record.Source.volume = volume;
         }
 
-        /// <summary>
-        /// 获取有效的音乐音量
-        /// </summary>
-        private float GetEffectiveMusicVolume()
+        private float GetEffectiveMusicVolume() => _isMuted ? 0f : _masterVolume * _musicVolume;
+        private float GetEffectiveSoundVolume() => _isMuted ? 0f : _masterVolume * _soundVolume;
+
+        private void CancelCurrentMusicOperation()
         {
-            return _isMuted ? 0f : _masterVolume * _musicVolume;
+            CancellationTokenSource current = _musicOperationCts;
+            _musicOperationCts = null;
+            if (current == null) return;
+            try { current.Cancel(); } catch { }
+            // 所有权属于创建该 CTS 的异步操作；对应 finally 负责 Dispose，避免
+            // 新操作在旧操作仍从 Token 退栈时提前释放其注册表。
         }
 
-        /// <summary>
-        /// 获取有效的音效音量
-        /// </summary>
-        private float GetEffectiveSoundVolume()
+        private static void DestroyGameObject(GameObject gameObject)
         {
-            return _isMuted ? 0f : _masterVolume * _soundVolume;
+            if (gameObject == null) return;
+            if (Application.isPlaying) UnityEngine.Object.Destroy(gameObject);
+            else UnityEngine.Object.DestroyImmediate(gameObject);
         }
 
-        #endregion
-    }
-
-    /// <summary>
-    /// 音频源对象池
-    /// </summary>
-    internal class AudioSourcePool
-    {
-        private Queue<AudioSource> _pool = new Queue<AudioSource>();
-        private GameObject _poolRoot;
-        private int _initialSize;
-
-        public AudioSourcePool(int initialSize)
+        internal sealed class AudioSourcePool
         {
-            _initialSize = initialSize;
-            
-            // 创建对象池根节点
-            _poolRoot = new GameObject("AudioSourcePool");
-            UnityEngine.Object.DontDestroyOnLoad(_poolRoot);
+            private readonly Queue<AudioSource> _pool = new Queue<AudioSource>();
+            private readonly GameObject _poolRoot;
 
-            // 预热对象池
-            for (int i = 0; i < initialSize; i++)
+            public AudioSourcePool(int initialSize)
             {
-                CreateAudioSource();
-            }
-        }
-
-        /// <summary>
-        /// 从对象池获取音频源
-        /// </summary>
-        public AudioSource Get()
-        {
-            AudioSource source;
-            
-            if (_pool.Count > 0)
-            {
-                source = _pool.Dequeue();
-            }
-            else
-            {
-                source = CreateAudioSource();
+                _poolRoot = new GameObject("AudioSourcePool");
+                if (Application.isPlaying)
+                    UnityEngine.Object.DontDestroyOnLoad(_poolRoot);
+                for (int i = 0; i < initialSize; i++)
+                    _pool.Enqueue(CreateAudioSource());
             }
 
-            if (source != null)
+            public AudioSource Get()
             {
+                AudioSource source = _pool.Count > 0 ? _pool.Dequeue() : CreateAudioSource();
                 source.gameObject.SetActive(true);
+                return source;
             }
 
-            return source;
-        }
-
-        /// <summary>
-        /// 归还音频源到对象池
-        /// </summary>
-        public void Release(AudioSource source)
-        {
-            if (source == null)
+            public void Release(AudioSource source)
             {
-                return;
+                if (source == null) return;
+                source.Stop();
+                source.clip = null;
+                source.loop = false;
+                source.spatialBlend = 0f;
+                source.volume = 1f;
+                source.transform.localPosition = Vector3.zero;
+                source.gameObject.SetActive(false);
+                _pool.Enqueue(source);
             }
 
-            source.Stop();
-            source.clip = null;
-            source.gameObject.SetActive(false);
-            source.transform.SetParent(_poolRoot.transform);
-            
-            _pool.Enqueue(source);
-        }
-
-        /// <summary>
-        /// 清理对象池
-        /// </summary>
-        public void Clear()
-        {
-            while (_pool.Count > 0)
+            public void Clear()
             {
-                var source = _pool.Dequeue();
-                if (source != null)
-                {
-                    UnityEngine.Object.Destroy(source.gameObject);
-                }
+                _pool.Clear();
+                DestroyGameObject(_poolRoot);
             }
 
-            if (_poolRoot != null)
+            private AudioSource CreateAudioSource()
             {
-                UnityEngine.Object.Destroy(_poolRoot);
-                _poolRoot = null;
+                var go = new GameObject("PooledAudioSource");
+                go.transform.SetParent(_poolRoot.transform, false);
+                var source = go.AddComponent<AudioSource>();
+                source.playOnAwake = false;
+                go.SetActive(false);
+                return source;
             }
-        }
-
-        /// <summary>
-        /// 创建新的音频源
-        /// </summary>
-        private AudioSource CreateAudioSource()
-        {
-            var go = new GameObject($"AudioSource_{_pool.Count}");
-            go.transform.SetParent(_poolRoot.transform);
-            go.SetActive(false);
-
-            var source = go.AddComponent<AudioSource>();
-            source.playOnAwake = false;
-            source.loop = false;
-
-            _pool.Enqueue(source);
-            return source;
         }
     }
 }

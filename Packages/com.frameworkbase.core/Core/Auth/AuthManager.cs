@@ -1,6 +1,7 @@
 using System;
 using System.Threading;
 using Cysharp.Threading.Tasks;
+using Framework.Network;
 
 namespace Framework.Core.Auth
 {
@@ -160,12 +161,19 @@ namespace Framework.Core.Auth
         /// 令牌失效（服务器重启/过期）时返回 false，由上层走「引导重新登录」路径。
         /// </summary>
         /// <returns>会话是否已恢复；未登录或无历史凭据（如登录前掉线）时视为无需恢复，返回 true。</returns>
-        public async UniTask<bool> ReauthenticateAsync()
+        public async UniTask<bool> ReauthenticateAsync() =>
+            await ReauthenticateWithResultAsync() == NetworkReauthenticationResult.Succeeded;
+
+        /// <summary>
+        /// 带失败类别的重鉴权入口：网络/超时错误可继续退避；明确的令牌/凭据失效属于永久失败，
+        /// NetworkManager 必须停止使用同一令牌重试并引导重新登录。
+        /// </summary>
+        public async UniTask<NetworkReauthenticationResult> ReauthenticateWithResultAsync()
         {
             // 从未登录或无历史登录上下文：传输恢复即可，无需重放登录握手。
             if (_backend == null || !_lastContext.HasValue || !AuthSession.IsLoggedIn)
             {
-                return true;
+                return NetworkReauthenticationResult.Succeeded;
             }
 
             long operationEpoch = Volatile.Read(ref _authOperationEpoch);
@@ -189,20 +197,20 @@ namespace Framework.Core.Auth
                 {
                     LoginResult result = await _backend.LoginAsync(attemptContext, timeoutController.Token);
                     if (!IsAuthEpochCurrent(operationEpoch))
-                        return false;
+                        return NetworkReauthenticationResult.SessionExpired;
 
                     if (result.Success)
                     {
                         // 登出、切换账号或新的登录已经发生时，旧连接的重鉴权响应必须丢弃，
                         // 不能把已失效身份重新写回内存和安全存储。
                         if (!IsAuthEpochCurrent(operationEpoch))
-                            return false;
+                            return NetworkReauthenticationResult.SessionExpired;
 
                         // 刷新会话令牌，保持与服务端最新签发一致，并同步刷新持久化会话。
                         AuthSession.Apply(result);
                         AuthSessionStore.Save(AuthSessionStore.BuildRecord(context.Mode, result, context.Account));
                         GameLog.Log("[AuthManager] 断线重连重新鉴权成功");
-                        return true;
+                        return NetworkReauthenticationResult.Succeeded;
                     }
 
                     // 令牌被服务端拒绝（过期，或服务端重启导致内存令牌丢失——开发期高频）。
@@ -218,29 +226,43 @@ namespace Framework.Core.Auth
                         if (guestResult.Success)
                         {
                             if (!IsAuthEpochCurrent(operationEpoch))
-                                return false;
+                                return NetworkReauthenticationResult.SessionExpired;
 
                             AuthSession.Apply(guestResult);
                             AuthSessionStore.Save(AuthSessionStore.BuildRecord(context.Mode, guestResult, context.Account));
                             GameLog.Log("[AuthManager] 令牌失效，已回退访客身份重新鉴权成功");
-                            return true;
+                            return NetworkReauthenticationResult.Succeeded;
                         }
+
+                        GameLog.Warning(
+                            $"[AuthManager] 访客重鉴权失败: code={guestResult.ErrorCode}, msg={guestResult.ErrorMessage}");
+                        return ClassifyReauthenticationFailure(guestResult);
                     }
 
                     GameLog.Warning($"[AuthManager] 断线重连重新鉴权被拒: code={result.ErrorCode}, msg={result.ErrorMessage}");
-                    return false;
+                    return ClassifyReauthenticationFailure(result);
                 }
                 catch (OperationCanceledException)
                 {
                     GameLog.Warning("[AuthManager] 断线重连重新鉴权超时/取消");
-                    return false;
+                    return NetworkReauthenticationResult.RetryableFailure;
                 }
                 catch (Exception ex)
                 {
                     GameLog.Warning($"[AuthManager] 断线重连重新鉴权异常: {ex.Message}");
-                    return false;
+                    return NetworkReauthenticationResult.RetryableFailure;
                 }
             }
+        }
+
+        private static NetworkReauthenticationResult ClassifyReauthenticationFailure(LoginResult result)
+        {
+            if (string.Equals(result.ErrorCode, TelemetryErrorCodes.Auth.TokenExpired, StringComparison.Ordinal) ||
+                string.Equals(result.ErrorCode, TelemetryErrorCodes.Auth.InvalidCredential, StringComparison.Ordinal))
+            {
+                return NetworkReauthenticationResult.SessionExpired;
+            }
+            return NetworkReauthenticationResult.RetryableFailure;
         }
 
         /// <summary>

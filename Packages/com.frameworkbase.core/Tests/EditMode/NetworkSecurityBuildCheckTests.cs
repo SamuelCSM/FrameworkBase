@@ -79,6 +79,18 @@ namespace Framework.Tests
             _config.AppEnv = "dev";
             Assert.Throws<BuildFailedException>(() => NetworkSecurityBuildCheck.ValidateConfig(_config, "prod"));
         }
+
+        [Test]
+        public void 非法后台宽限或探活超时_构建期拒绝()
+        {
+            _config.NetworkBackgroundGraceSeconds = -1f;
+            Assert.Throws<BuildFailedException>(() => NetworkSecurityBuildCheck.ValidateConfig(_config));
+
+            _config.NetworkBackgroundGraceSeconds = 10f;
+            _config.NetworkForegroundProbeTimeoutSeconds = 0f;
+            Assert.Throws<BuildFailedException>(() => NetworkSecurityBuildCheck.ValidateConfig(_config));
+        }
+
         [Test]
         public void 生产环境合法Https登录与Tls游戏连接_通过门禁()
         {

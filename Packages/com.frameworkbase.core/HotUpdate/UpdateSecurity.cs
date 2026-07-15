@@ -70,6 +70,25 @@ namespace Framework.HotUpdate
         }
 
         /// <summary>
+        /// 校验随包发布的可信 CDN 列表：环境必须隔离、端点必须是独立 Origin，且生产环境全链路 HTTPS。
+        /// 运行时与构建门禁共用该规则，防止只在某一侧放宽 Host 边界。
+        /// </summary>
+        public static bool ValidateCdnEndpointConfiguration(
+            string primaryBaseUrl,
+            System.Collections.Generic.IReadOnlyList<UpdateCdnEndpointDefinition> alternates,
+            string appEnv,
+            out string rejectReason)
+        {
+            return TrustedCdnRouteSet.TryCreate(
+                primaryBaseUrl,
+                alternates,
+                appEnv,
+                new CdnHealthTracker(),
+                out _,
+                out rejectReason);
+        }
+
+        /// <summary>
         /// 判断环境标识是否为生产环境；比较忽略大小写与首尾空白。
         /// </summary>
         public static bool IsProductionEnv(string appEnv) =>

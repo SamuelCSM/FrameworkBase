@@ -347,6 +347,22 @@ namespace Framework
         #region 异步资源加载
 
         /// <summary>
+        /// 异步借用资源并返回显式所有权 Lease。调用方必须 Dispose 返回值；取消某一等待者
+        /// 不会中止同地址的共享底层加载，迟到结果会自动归还该等待者预占的引用。
+        /// </summary>
+        public UniTask<AssetLease<T>> LoadLeaseAsync<T>(
+            string address,
+            CancellationToken cancellationToken = default) where T : UnityEngine.Object
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return AssetLeaseCoordinator.AcquireStartedAsync(
+                address,
+                LoadAssetAsync<T>(address),
+                ReleaseAsset,
+                cancellationToken);
+        }
+
+        /// <summary>
         /// 异步加载资源
         /// </summary>
         /// <typeparam name="T">资源类型</typeparam>

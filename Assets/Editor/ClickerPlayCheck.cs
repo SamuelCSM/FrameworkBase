@@ -97,13 +97,24 @@ namespace Game.Editor
 
         private static void CleanPersistentConfig()
         {
+            // 持久化配置库真实落点是 {persistentDataPath}/config.db（ConfigManager.DefaultDatabaseFileName）；
+            // 旧路径只删 RefData/ 目录清不掉它，包内基线更新后会触发一次性迁移告警污染零告警门禁。
             try
             {
+                foreach (string relative in new[] { "config.db", "config.db.bak" })
+                {
+                    string path = System.IO.Path.Combine(Application.persistentDataPath, relative);
+                    if (System.IO.File.Exists(path))
+                    {
+                        System.IO.File.Delete(path);
+                        Debug.Log($"[ClickerPlayCheck] 已清持久化配置库以走干净首装：{path}");
+                    }
+                }
                 string refData = System.IO.Path.Combine(Application.persistentDataPath, "RefData");
                 if (System.IO.Directory.Exists(refData))
                 {
                     System.IO.Directory.Delete(refData, recursive: true);
-                    Debug.Log($"[ClickerPlayCheck] 已清持久化配置库以走干净首装：{refData}");
+                    Debug.Log($"[ClickerPlayCheck] 已清热更配置残留：{refData}");
                 }
             }
             catch (Exception ex)

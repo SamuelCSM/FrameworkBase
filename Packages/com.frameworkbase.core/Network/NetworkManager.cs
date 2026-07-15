@@ -37,6 +37,16 @@ namespace Framework
         private double _offlineQueueClock;
         private NetworkMessageTypeRegistry _messageTypeRegistry;
 
+        // ── 应用生命周期与网络切换恢复 ──────────────────────────────────────
+        private INetworkConnectivityProvider _connectivityProvider;
+        private NetworkLifecyclePolicy _lifecyclePolicy;
+        private NetworkConnectivitySnapshot _currentConnectivity;
+        private bool _pendingReconnectRequest;
+        private bool _foregroundProbePending;
+        private int _foregroundProbeEpoch;
+        private float _foregroundProbeElapsed;
+        private float _foregroundProbeTimeoutSeconds = 5f;
+
         // ── 连接状态事件跨线程编组 ────────────────────────────────────────────
         // TcpClient 的 OnConnected/OnDisconnected/OnError 可能在收/发后台线程触发，
         // 这里仅入队，由主线程 OnUpdate 统一排空处理，确保下游 UI 事件、请求清理、
@@ -108,8 +118,8 @@ namespace Framework
         private int _heartbeatSequenceId = 0;
 
         // ── 心跳超时检测 ──────────────────────────────────────────────────────
-        // 用 volatile flag 安全跨线程传递"收到数据"信号
-        private volatile bool _dataReceivedFlag  = false;
+        // 用 Epoch 而非 bool 跨线程传递"收到数据"信号，旧连接迟到数据不得通过前台探活。
+        private int           _dataReceivedEpoch;
         private float         _timeSinceLastData = 0f;
         // 默认 = 心跳间隔 × 2.5，即连续 2.5 个心跳周期没有回应则判定超时
         private float _heartbeatTimeoutSeconds = 75f;
@@ -122,6 +132,7 @@ namespace Framework
         private float[] _reconnectIntervals     = { 1f, 2f, 5f, 10f, 30f };
         private volatile bool _isReconnecting   = false;
         private CancellationTokenSource _reconnectCts;
+        private CancellationTokenSource _connectLifecycleCts;
         private string  _lastHost;
         private int     _lastPort;
 
@@ -132,7 +143,7 @@ namespace Framework
         /// 返回 true 表示会话已恢复，可对外宣告“重连成功”；
         /// 返回 false 表示鉴权失败，按本次重连失败处理并继续退避重试。未注入（null）时跳过。
         /// </summary>
-        private Func<UniTask<bool>> _reauthenticator;
+        private Func<UniTask<NetworkReauthenticationResult>> _reauthenticator;
 
         /// <summary>
         /// 心跳消息工厂（由业务层组合根注入）：参数为 (clientTimeMs, sequenceId)，返回待发送的心跳协议消息。
@@ -155,6 +166,7 @@ namespace Framework
         // ── 属性 ─────────────────────────────────────────────────────────────
         public bool IsConnected    => _client != null && _client.IsConnected;
         public bool IsReconnecting => _isReconnecting;
+        private bool IsConnectionAttemptActive => _isReconnecting || _connectLifecycleCts != null;
 
         // ── 事件 ─────────────────────────────────────────────────────────────
         /// <summary>首次连接成功 / 重连成功后触发</summary>
@@ -174,6 +186,9 @@ namespace Framework
 
         /// <summary>达到最大重连次数仍失败时触发</summary>
         public event Action OnReconnectFailed;
+
+        /// <summary>重新鉴权明确判定会话令牌过期；上层应停止重连 UI 并引导用户重新登录。</summary>
+        public event Action OnSessionExpired;
 
         /// <summary>网络层错误</summary>
         public event Action<string> OnError;
@@ -203,6 +218,18 @@ namespace Framework
                 OnHideWaiting = () => OnWaitingEnd?.Invoke(),
                 OnShowTimeoutTip = msg => OnRequestTimeout?.Invoke(msg),
             };
+            Core.AppConfigAsset lifecycleConfig = Core.AppConfig.Load();
+            float configuredGrace = lifecycleConfig?.NetworkBackgroundGraceSeconds ?? 10f;
+            if (float.IsNaN(configuredGrace) || float.IsInfinity(configuredGrace) || configuredGrace < 0f)
+                configuredGrace = 10f;
+            float configuredProbeTimeout = lifecycleConfig?.NetworkForegroundProbeTimeoutSeconds ?? 5f;
+            if (float.IsNaN(configuredProbeTimeout) || float.IsInfinity(configuredProbeTimeout) || configuredProbeTimeout <= 0f)
+                configuredProbeTimeout = 5f;
+            _connectivityProvider ??= new UnityNetworkConnectivityProvider();
+            _lifecyclePolicy ??= new NetworkLifecyclePolicy((long)(Math.Min(300f, configuredGrace) * 1000f));
+            _foregroundProbeTimeoutSeconds = Math.Min(60f, configuredProbeTimeout);
+            _currentConnectivity = _connectivityProvider.Capture();
+            _lifecyclePolicy.Initialize(_currentConnectivity);
             GameLog.Log("[NetworkManager] 初始化完成");
         }
 
@@ -211,6 +238,12 @@ namespace Framework
             // 先在主线程排空后台线程投递的连接状态事件，再处理消息与请求
             DrainConnectionEvents();
 
+            if (_lifecyclePolicy?.IsBackground == true)
+                return;
+
+            RefreshConnectivity();
+            PumpReconnectRequest();
+
             _dispatcher?.ProcessMessageQueue(_messageInterceptHandler, _seqResponseHandler, _protocolReceiveLogHandler);
             _requestTracker?.Update(deltaTime);
 
@@ -218,17 +251,39 @@ namespace Framework
             _offlineQueueClock += deltaTime;
             _offlineQueue.Update(_offlineQueueClock);
 
-            if (!IsConnected) return;
-
-            // ── 接收数据 flag 消费（由接收线程写入，主线程消费）──────────
-            if (_dataReceivedFlag)
+            if (!IsConnected)
             {
-                _dataReceivedFlag  = false;
+                CancelForegroundProbe();
+                return;
+            }
+
+            // ── 接收数据 Epoch 消费（由接收线程写入，主线程消费）────────
+            int receivedEpoch = Interlocked.Exchange(ref _dataReceivedEpoch, 0);
+            if (receivedEpoch == _client.ConnectionEpoch)
+            {
                 _timeSinceLastData = 0f;
+                if (_foregroundProbePending && receivedEpoch == _foregroundProbeEpoch)
+                {
+                    CancelForegroundProbe();
+                    GameLog.Log($"[NetworkManager] 前台探活成功，继续使用 epoch={receivedEpoch}。");
+                }
+            }
+
+            if (_foregroundProbePending)
+            {
+                _foregroundProbeElapsed += Math.Max(0f, deltaTime);
+                if (_foregroundProbeElapsed >= _foregroundProbeTimeoutSeconds)
+                {
+                    GameLog.Warning($"[NetworkManager] 前台探活超时，废弃半开连接 epoch={_foregroundProbeEpoch}。");
+                    ApplyLifecycleDecision(new NetworkRecoveryDecision(
+                        NetworkRecoveryAction.InvalidateAndReconnect,
+                        "foreground-probe-timeout"));
+                    return;
+                }
             }
 
             // ── 心跳超时检测 ──────────────────────────────────────────────
-            if (_heartbeatTimeoutEnabled)
+            if (_heartbeatTimeoutEnabled && !_foregroundProbePending)
             {
                 _timeSinceLastData += deltaTime;
                 if (_timeSinceLastData > _heartbeatTimeoutSeconds)
@@ -254,20 +309,182 @@ namespace Framework
         }
 
         /// <summary>
-        /// 回到前台时，如果连接已断开则自动触发重连。
-        /// 手机切后台 → TCP 被系统切断 → 回前台自动修复。
+        /// Pause 是移动端后台/前台的权威信号：后台暂停心跳超时与重连退避；恢复时基于
+        /// 单调时间和网络代际决定探活旧连接或直接废弃重连。
+        /// </summary>
+        public override void OnApplicationPause(bool isPaused)
+        {
+            EnsureLifecycleInitialized();
+            if (isPaused)
+            {
+                EnterBackground();
+                return;
+            }
+
+            ResumeForeground("pause-resume");
+        }
+
+        /// <summary>
+        /// Focus 作为部分平台漏发 Pause 回调时的完整兜底。它与 Pause 连续到达时，
+        /// 生命周期策略会把重复的进入后台/恢复判定为幂等操作。
         /// </summary>
         public override void OnApplicationFocus(bool hasFocus)
         {
-            if (hasFocus
-                && !IsConnected
-                && !_isReconnecting
-                && _enableAutoReconnect
-                && !string.IsNullOrEmpty(_lastHost))
+            EnsureLifecycleInitialized();
+            if (!hasFocus)
             {
-                GameLog.Log("[NetworkManager] 回到前台，检测到断线，自动触发重连...");
-                TryReconnectAsync().Forget();
+                EnterBackground();
+                return;
             }
+            if (_lifecyclePolicy.IsBackground)
+                ResumeForeground("focus-resume");
+            else if (!IsConnected && _enableAutoReconnect && !string.IsNullOrEmpty(_lastHost))
+                RequestReconnect("focus-disconnected", resetBudget: true);
+        }
+
+        private void EnsureLifecycleInitialized()
+        {
+            _connectivityProvider ??= new UnityNetworkConnectivityProvider();
+            _lifecyclePolicy ??= new NetworkLifecyclePolicy();
+            _currentConnectivity = _connectivityProvider.Capture();
+            _lifecyclePolicy.Initialize(_currentConnectivity);
+        }
+
+        private void EnterBackground()
+        {
+            _currentConnectivity = _connectivityProvider.Capture();
+            if (!_lifecyclePolicy.EnterBackground(
+                    NetworkMonotonicClock.NowMilliseconds(),
+                    _currentConnectivity))
+                return;
+
+            CancelForegroundProbe();
+            _pendingReconnectRequest = false;
+            if (_isReconnecting)
+            {
+                // 后台不消耗重连预算；若处于“已连上传输、正在鉴权”阶段，该连接也不得悄悄晋级。
+                CancelReconnectLoop();
+                _client?.Disconnect();
+            }
+            CancelInitialConnectionAttempt();
+            GameLog.Log("[NetworkManager] 进入后台：暂停心跳超时、请求计时与重连退避。");
+        }
+
+        private void ResumeForeground(string source)
+        {
+            _currentConnectivity = _connectivityProvider.Capture();
+            NetworkRecoveryDecision decision = _lifecyclePolicy.Resume(
+                NetworkMonotonicClock.NowMilliseconds(),
+                _currentConnectivity,
+                IsConnected,
+                IsConnectionAttemptActive);
+
+            if (decision.BackgroundElapsedMilliseconds > 0)
+            {
+                _offlineQueueClock += decision.BackgroundElapsedMilliseconds / 1000d;
+                _offlineQueue.Update(_offlineQueueClock);
+            }
+
+            GameLog.Log(
+                $"[NetworkManager] 前台恢复 source={source}, action={decision.Action}, " +
+                $"backgroundMs={decision.BackgroundElapsedMilliseconds}, networkChanged={decision.NetworkChanged}。");
+            ApplyLifecycleDecision(decision);
+        }
+
+        private void RefreshConnectivity()
+        {
+            if (_connectivityProvider == null || _lifecyclePolicy == null) return;
+            NetworkConnectivitySnapshot snapshot = _connectivityProvider.Capture();
+            NetworkRecoveryDecision decision = _lifecyclePolicy.ObserveForeground(
+                snapshot,
+                IsConnected,
+                IsConnectionAttemptActive);
+            _currentConnectivity = snapshot;
+            ApplyLifecycleDecision(decision);
+        }
+
+        private void ApplyLifecycleDecision(NetworkRecoveryDecision decision)
+        {
+            switch (decision.Action)
+            {
+                case NetworkRecoveryAction.None:
+                    return;
+                case NetworkRecoveryAction.ProbeExistingConnection:
+                    BeginForegroundProbe();
+                    return;
+                case NetworkRecoveryAction.Reconnect:
+                    RequestReconnect(decision.Reason, resetBudget: true);
+                    return;
+                case NetworkRecoveryAction.InvalidateAndReconnect:
+                    InvalidateTransport(decision.Reason);
+                    RequestReconnect(decision.Reason, resetBudget: true);
+                    return;
+                case NetworkRecoveryAction.InvalidateAndWaitForNetwork:
+                    _pendingReconnectRequest = false;
+                    InvalidateTransport(decision.Reason);
+                    return;
+            }
+        }
+
+        private void BeginForegroundProbe()
+        {
+            if (!IsConnected)
+            {
+                RequestReconnect("probe-without-connection", resetBudget: true);
+                return;
+            }
+
+            Interlocked.Exchange(ref _dataReceivedEpoch, 0);
+            _foregroundProbeEpoch = _client.ConnectionEpoch;
+            _foregroundProbeElapsed = 0f;
+            _foregroundProbePending = true;
+            _heartbeatTimer = 0f;
+            _timeSinceLastData = 0f;
+            if (SendHeartbeat()) return;
+
+            CancelForegroundProbe();
+            ApplyLifecycleDecision(new NetworkRecoveryDecision(
+                NetworkRecoveryAction.InvalidateAndReconnect,
+                "foreground-probe-unavailable"));
+        }
+
+        private void CancelForegroundProbe()
+        {
+            _foregroundProbePending = false;
+            _foregroundProbeEpoch = 0;
+            _foregroundProbeElapsed = 0f;
+        }
+
+        private void InvalidateTransport(string reason)
+        {
+            GameLog.Warning($"[NetworkManager] 废弃当前连接：{reason}, epoch={_client?.ConnectionEpoch ?? 0}。");
+            CancelForegroundProbe();
+            CancelReconnectLoop();
+            _requestTracker?.CancelAll();
+            _client?.Disconnect();
+        }
+
+        private void RequestReconnect(string reason, bool resetBudget)
+        {
+            if (!_enableAutoReconnect || string.IsNullOrEmpty(_lastHost)) return;
+            if (resetBudget) _currentReconnectAttempt = 0;
+            _pendingReconnectRequest = true;
+            GameLog.Log($"[NetworkManager] 已排队串行重连：{reason}。");
+        }
+
+        private void PumpReconnectRequest()
+        {
+            if (!_pendingReconnectRequest || IsConnectionAttemptActive ||
+                _lifecyclePolicy?.IsBackground == true || !_currentConnectivity.IsReachable)
+                return;
+            if (!_enableAutoReconnect || string.IsNullOrEmpty(_lastHost))
+            {
+                _pendingReconnectRequest = false;
+                return;
+            }
+
+            _pendingReconnectRequest = false;
+            TryReconnectAsync().Forget();
         }
 
         // ── 连接 / 断开 ──────────────────────────────────────────────────────
@@ -279,13 +496,27 @@ namespace Framework
             CancellationToken cancellationToken = default)
         {
             if (IsConnected) return;
+            _pendingReconnectRequest = false;
+            CancelForegroundProbe();
             CancelReconnectLoop();
             _isReconnecting = false;
             _lastHost = host;
             _lastPort = port;
             _currentReconnectAttempt = 0;
             _enableAutoReconnect = true;
-            await ConnectInternalAsync(host, port, cancellationToken);
+            CancelInitialConnectionAttempt();
+            var lifecycleCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            _connectLifecycleCts = lifecycleCts;
+            try
+            {
+                await ConnectInternalAsync(host, port, lifecycleCts.Token);
+            }
+            finally
+            {
+                if (ReferenceEquals(_connectLifecycleCts, lifecycleCts))
+                    _connectLifecycleCts = null;
+                lifecycleCts.Dispose();
+            }
         }
 
         /// <summary>
@@ -304,6 +535,11 @@ namespace Framework
                 GameLog.Warning("[NetworkManager] 重连已在进行中");
                 return;
             }
+            if (_lifecyclePolicy?.IsBackground == true)
+            {
+                RequestReconnect("manual-request-while-background", resetBudget: true);
+                return;
+            }
 
             _currentReconnectAttempt = 0;
             _enableAutoReconnect     = true;
@@ -314,9 +550,12 @@ namespace Framework
         public void Disconnect()
         {
             _enableAutoReconnect = false;
+            _pendingReconnectRequest = false;
+            CancelForegroundProbe();
             _isReconnecting = false;
             _currentReconnectAttempt = 0;
             CancelReconnectLoop();
+            CancelInitialConnectionAttempt();
             _offlineQueue.FailAll();
             _client?.Disconnect();
         }
@@ -354,7 +593,15 @@ namespace Framework
             if (!IsConnected)
             {
                 if (config.QueueWhileDisconnected)
+                {
+                    if (!config.IsOfflineReplayAllowed)
+                    {
+                        GameLog.Error(
+                            "[NetworkManager] 拒绝离线排队：请求未声明 ReadOnly 或 ServerDeduplicated 重放安全级别。");
+                        return UniTask.FromResult<TResp>(null);
+                    }
                     return EnqueueOfflineRequest<TReq, TResp>(request, config, cancellationToken);
+                }
                 return UniTask.FromResult<TResp>(null);
             }
 
@@ -422,7 +669,8 @@ namespace Framework
                 send: () => ForwardQueuedRequestAsync(request, config, cancellationToken, tcs).Forget(),
                 fail: () => tcs.TrySetResult(null),
                 ttlSeconds: config.QueueTtlMs / 1000.0,
-                now: _offlineQueueClock);
+                now: _offlineQueueClock,
+                isReplaySafe: config.IsOfflineReplayAllowed);
             if (!queued)
                 return UniTask.FromResult<TResp>(null);
             return tcs.Task;
@@ -500,7 +748,13 @@ namespace Framework
 
         public void EnableHeartbeat(bool enable)        => _enableHeartbeat = enable;
         public void EnableHeartbeatTimeout(bool enable) => _heartbeatTimeoutEnabled = enable;
-        public void EnableAutoReconnect(bool enable)    => _enableAutoReconnect = enable;
+        public void EnableAutoReconnect(bool enable)
+        {
+            _enableAutoReconnect = enable;
+            if (enable) return;
+            _pendingReconnectRequest = false;
+            CancelReconnectLoop();
+        }
 
         /// <summary>
         /// 启用或关闭控制台协议收发日志。
@@ -549,6 +803,20 @@ namespace Framework
         /// <param name="reauthenticator">重新鉴权委托；返回会话是否恢复成功。传 null 可清除。</param>
         public void SetReauthenticator(Func<UniTask<bool>> reauthenticator)
         {
+            _reauthenticator = reauthenticator == null
+                ? null
+                : async () => await reauthenticator()
+                    ? NetworkReauthenticationResult.Succeeded
+                    : NetworkReauthenticationResult.RetryableFailure;
+        }
+
+        /// <summary>
+        /// 注入可区分“瞬时失败”和“会话永久过期”的重新鉴权钩子。令牌过期时停止无意义重试，
+        /// 失败离线队列并交给上层引导重新登录。
+        /// </summary>
+        public void SetReauthenticationProvider(
+            Func<UniTask<NetworkReauthenticationResult>> reauthenticator)
+        {
             _reauthenticator = reauthenticator;
         }
 
@@ -570,6 +838,17 @@ namespace Framework
         public void SetHeartbeatResponseParser(Func<byte[], long> parser)
         {
             _heartbeatResponseParser = parser;
+        }
+
+        /// <summary>
+        /// 注入平台网络监控。默认实现只能区分 Wi-Fi/局域网与蜂窝；原生适配可用不含个人信息的
+        /// 网络代际 Fingerprint 识别同类型网络切换。应在连接建立前由组合根调用。
+        /// </summary>
+        public void SetConnectivityProvider(INetworkConnectivityProvider provider)
+        {
+            _connectivityProvider = provider ?? new UnityNetworkConnectivityProvider();
+            _currentConnectivity = _connectivityProvider.Capture();
+            _lifecyclePolicy?.Initialize(_currentConnectivity);
         }
 
         public void SetMaxReconnectAttempts(int max)
@@ -825,12 +1104,13 @@ namespace Framework
             if (!_mainThreadConnectionActive || connectionEpoch != _mainThreadConnectionEpoch)
                 return;
             _mainThreadConnectionActive = false;
+            CancelForegroundProbe();
             GameLog.Log($"[NetworkManager] 连接断开，epoch={connectionEpoch}");
             _requestTracker?.CancelAll();
             OnDisconnected?.Invoke();
 
-            if (_enableAutoReconnect && !_isReconnecting)
-                TryReconnectAsync().Forget();
+            if (_enableAutoReconnect && _lifecyclePolicy?.IsBackground != true && _currentConnectivity.IsReachable)
+                RequestReconnect("transport-disconnected", resetBudget: false);
         }
 
         /// <summary>
@@ -839,7 +1119,9 @@ namespace Framework
         /// </summary>
         private void OnClientReceive(int connectionEpoch, byte[] packet, int frameLength)
         {
-            _dataReceivedFlag = true;
+            if (_client == null || connectionEpoch != _client.ConnectionEpoch)
+                return;
+            Interlocked.Exchange(ref _dataReceivedEpoch, connectionEpoch);
             if (!MessagePacket.Unpack(packet, frameLength, out byte mainId, out byte subId, out ushort seqId, out byte[] payload))
             {
                 TryEnqueueConnectionEvent(new ConnectionEvent(
@@ -1030,7 +1312,7 @@ namespace Framework
             return !_ignoredProtocolLogMessageIds.Contains(messageId);
         }
 
-        private void SendHeartbeat()
+        private bool SendHeartbeat()
         {
             if (_heartbeatMessageFactory == null)
             {
@@ -1039,7 +1321,7 @@ namespace Framework
                     GameLog.Warning("[NetworkManager] 未注入心跳消息工厂，跳过心跳发送（请在业务层调用 SetHeartbeatProvider）");
                     _heartbeatFactoryMissingWarned = true;
                 }
-                return;
+                return false;
             }
 
             try
@@ -1065,10 +1347,12 @@ namespace Framework
                 {
                     NetworkProtocolLogger.LogSend(request, packet.Length, 0);
                 }
+                return true;
             }
             catch (Exception ex)
             {
                 GameLog.Error($"[NetworkManager] 心跳发送失败: {ex.Message}");
+                return false;
             }
         }
 
@@ -1079,6 +1363,8 @@ namespace Framework
         private async UniTask<bool> TryReconnectAsync()
         {
             if (_isReconnecting || string.IsNullOrEmpty(_lastHost)) return IsConnected;
+            if (_lifecyclePolicy?.IsBackground == true || !_currentConnectivity.IsReachable)
+                return false;
             _isReconnecting = true;
             CancelReconnectLoop();
             var reconnectCts = new CancellationTokenSource();
@@ -1102,17 +1388,38 @@ namespace Framework
                     try
                     {
                         await _client.ConnectAsync(_lastHost, _lastPort, token);
-                        if (!await TryReauthenticateAsync())
+                        int reconnectEpoch = _client.ConnectionEpoch;
+                        NetworkReauthenticationResult reauthentication =
+                            await TryReauthenticateAsync(token);
+                        if (reauthentication == NetworkReauthenticationResult.SessionExpired)
+                        {
+                            _client.Disconnect();
+                            _offlineQueue.FailAll();
+                            _enableAutoReconnect = false;
+                            _pendingReconnectRequest = false;
+                            OnSessionExpired?.Invoke();
+                            OnReconnectFailed?.Invoke();
+                            OnError?.Invoke("会话已过期，需要重新登录。");
+                            return false;
+                        }
+                        if (NetworkReauthenticationPolicy.ShouldRetry(reauthentication) ||
+                            !NetworkReauthenticationPolicy.CanFlushOfflineQueue(reauthentication) ||
+                            !IsConnected || _client.ConnectionEpoch != reconnectEpoch)
                         {
                             _client.Disconnect();
                             continue;
                         }
 
-                        _currentReconnectAttempt = 0;
-                        _isReconnecting = false;
                         _offlineQueue.FlushAll();
-                        OnReconnectSucceeded?.Invoke();
-                        return true;
+                        if (IsConnected && _client.ConnectionEpoch == reconnectEpoch)
+                        {
+                            _currentReconnectAttempt = 0;
+                            _isReconnecting = false;
+                            _pendingReconnectRequest = false;
+                            OnReconnectSucceeded?.Invoke();
+                            return true;
+                        }
+                        continue;
                     }
                     catch (OperationCanceledException) { throw; }
                     catch (Exception ex)
@@ -1149,26 +1456,43 @@ namespace Framework
             cts.Dispose();
         }
 
+        private void CancelInitialConnectionAttempt()
+        {
+            CancellationTokenSource cts = _connectLifecycleCts;
+            _connectLifecycleCts = null;
+            if (cts == null) return;
+            try { cts.Cancel(); } catch { }
+            cts.Dispose();
+        }
+
         /// <summary>
-        /// 调用注入的重新鉴权钩子并吞掉其异常，统一转换为成功 / 失败布尔值，
-        /// 避免鉴权实现抛出的异常中断重连退避循环。未注入钩子时视为无需鉴权，直接成功。
+        /// 调用注入的重新鉴权钩子并吞掉普通异常，区分成功、可重试失败与会话永久过期。
+        /// 未注入钩子时视为无需鉴权，直接成功；生命周期取消仍向上传播以立即停止本轮恢复。
         /// </summary>
         /// <returns>会话是否已恢复（或无需恢复）。</returns>
-        private async UniTask<bool> TryReauthenticateAsync()
+        private async UniTask<NetworkReauthenticationResult> TryReauthenticateAsync(
+            CancellationToken cancellationToken)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (_reauthenticator == null)
             {
-                return true;
+                return NetworkReauthenticationResult.Succeeded;
             }
 
             try
             {
-                return await _reauthenticator();
+                NetworkReauthenticationResult result = await _reauthenticator();
+                cancellationToken.ThrowIfCancellationRequested();
+                return result;
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
             }
             catch (Exception ex)
             {
                 GameLog.Warning($"[NetworkManager] 重连重新鉴权异常: {ex.Message}");
-                return false;
+                return NetworkReauthenticationResult.RetryableFailure;
             }
         }
 

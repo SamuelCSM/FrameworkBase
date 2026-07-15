@@ -41,6 +41,17 @@ namespace Framework.Editor
                     $"[HotUpdateSecurityBuildCheck] 更新服务 URL 未通过安全准入：{reason}");
             }
 
+            if (!string.IsNullOrWhiteSpace(config.UpdateServerUrl) &&
+                !UpdateSecurity.ValidateCdnEndpointConfiguration(
+                    config.UpdateServerUrl,
+                    config.UpdateCdnEndpoints,
+                    config.AppEnv,
+                    out reason))
+            {
+                throw new BuildFailedException(
+                    $"[HotUpdateSecurityBuildCheck] 可信 CDN 配置未通过安全准入：{reason}");
+            }
+
             if (config.EnableHotUpdate &&
                 UpdateSecurity.IsProductionEnv(config.AppEnv) &&
                 string.IsNullOrWhiteSpace(config.UpdateServerUrl))

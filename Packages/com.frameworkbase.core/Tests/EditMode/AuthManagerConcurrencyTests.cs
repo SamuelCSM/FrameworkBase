@@ -2,7 +2,9 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Threading;
 using Cysharp.Threading.Tasks;
+using Framework.Core;
 using Framework.Core.Auth;
+using Framework.Network;
 using Framework.Security;
 using NUnit.Framework;
 using UnityEngine.TestTools;
@@ -79,6 +81,23 @@ namespace Framework.Tests
             Assert.AreEqual("new-user", AuthSession.UserId);
             Assert.AreEqual("new-token", AuthSession.SessionToken);
             Assert.AreEqual(LoginFlowState.Success, _manager.State);
+        });
+
+        [UnityTest]
+        public IEnumerator 重连令牌被明确拒绝_返回SessionExpired而非重复退避() => UniTask.ToCoroutine(async () =>
+        {
+            UniTask<LoginResult> login = _manager.LoginAccountAsync("account", "password", 5000);
+            await UniTask.WaitUntil(() => _backend.CallCount >= 1);
+            _backend.Complete(0, LoginResult.Ok("user", "session-token"));
+            Assert.IsTrue((await login).Success);
+
+            UniTask<NetworkReauthenticationResult> reauth = _manager.ReauthenticateWithResultAsync();
+            await UniTask.WaitUntil(() => _backend.CallCount >= 2);
+            _backend.Complete(1, LoginResult.Fail(
+                TelemetryErrorCodes.Auth.InvalidCredential,
+                "token expired"));
+
+            Assert.AreEqual(NetworkReauthenticationResult.SessionExpired, await reauth);
         });
 
         /// <summary>

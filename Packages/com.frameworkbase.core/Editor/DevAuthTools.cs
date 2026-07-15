@@ -29,5 +29,14 @@ namespace Framework.Editor
                 Debug.Log("[DevAuthTools] 已清除持久化登录会话，下次 Play 将回到登录界面");
             }
         }
+
+        /// <summary>
+        /// 是否存在可用的持久化登录会话。供验收驱动断言「登出 / 互踢后凭据已清」——
+        /// 游戏侧编辑器程序集经本公开入口读取，不直碰 <see cref="AuthSessionStore"/> internal。
+        /// </summary>
+        public static bool HasPersistedSession()
+        {
+            return AuthSessionStore.TryLoad(out _);
+        }
     }
 }

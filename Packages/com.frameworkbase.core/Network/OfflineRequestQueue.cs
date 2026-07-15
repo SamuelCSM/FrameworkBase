@@ -43,9 +43,12 @@ namespace Framework.Network
         /// <param name="fail">失败收尾动作。</param>
         /// <param name="ttlSeconds">最长等待时长（秒），到期未能补发则失败收尾。</param>
         /// <param name="now">当前队列时钟（秒）。</param>
-        public bool TryEnqueue(Action send, Action fail, double ttlSeconds, double now)
+        /// <param name="isReplaySafe">调用方已明确证明请求为只读或具备服务端幂等去重。</param>
+        public bool TryEnqueue(Action send, Action fail, double ttlSeconds, double now, bool isReplaySafe)
         {
             if (send == null || fail == null)
+                return false;
+            if (!isReplaySafe)
                 return false;
             if (_items.Count >= MaxItems)
                 return false;

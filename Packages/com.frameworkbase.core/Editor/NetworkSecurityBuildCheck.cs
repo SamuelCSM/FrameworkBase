@@ -52,6 +52,15 @@ namespace Framework.Editor
 
             bool production = UpdateSecurity.IsProductionEnv(expected);
 
+            if (float.IsNaN(config.NetworkBackgroundGraceSeconds) ||
+                float.IsInfinity(config.NetworkBackgroundGraceSeconds) ||
+                config.NetworkBackgroundGraceSeconds < 0f || config.NetworkBackgroundGraceSeconds > 300f)
+                throw new BuildFailedException("[NetworkSecurity] NetworkBackgroundGraceSeconds 必须位于 0～300 秒。");
+            if (float.IsNaN(config.NetworkForegroundProbeTimeoutSeconds) ||
+                float.IsInfinity(config.NetworkForegroundProbeTimeoutSeconds) ||
+                config.NetworkForegroundProbeTimeoutSeconds <= 0f || config.NetworkForegroundProbeTimeoutSeconds > 60f)
+                throw new BuildFailedException("[NetworkSecurity] NetworkForegroundProbeTimeoutSeconds 必须位于 0～60 秒。");
+
             // 生产环境禁止静默落到 MockAuthBackend。Mock 只能服务 Editor、开发环境和自动化测试；
             // 如果项目确实不需要账号系统，应使用非 prod 环境模板或显式替换整套启动模板，而不是伪装登录成功。
             if (production && !config.UseNetworkLogin)

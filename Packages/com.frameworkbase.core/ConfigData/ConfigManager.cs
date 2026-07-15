@@ -131,7 +131,9 @@ namespace Framework
 
             if (!File.Exists(_dbPath))
             {
-                GameLog.Warning($"[ConfigManager] Database is not ready yet: {_dbPath}");
+                // 首装设备此时必然无库（LaunchFlow 随后从首包安装），属正常序列而非异常；
+                // 真正的"装完仍无可用库"在 EnsureDatabaseReadyAsync 里以 Warning/Error 报告。
+                GameLog.Log($"[ConfigManager] Database is not ready yet (fresh install expected): {_dbPath}");
             }
             else
             {
