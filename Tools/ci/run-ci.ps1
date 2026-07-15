@@ -7,6 +7,7 @@
 #   .\Tools\ci\run-ci.ps1 -SkipPlayMode       # 只跑 EditMode + 资源门禁（快速自查）
 #   .\Tools\ci\run-ci.ps1 -SkipAssetGate      # 跳过资源门禁（Addressables/字体）
 #   .\Tools\ci\run-ci.ps1 -StrictFonts        # 字体缺字从告警升级为阻断
+#   .\Tools\ci\run-ci.ps1 -TemplateSlice      # 附加模板切片 Play 验收（nightly/手动；PR 门禁默认不跑）
 #   $env:UNITY_EDITOR_PATH = "...\Unity.exe"; .\Tools\ci\run-ci.ps1
 #
 # 退出码：0 = 全部通过；非 0 = 编译失败 / 有测试未通过 / 资源门禁被阻断。
@@ -15,6 +16,7 @@ param(
     [switch]$SkipPlayMode,
     [switch]$SkipAssetGate,
     [switch]$StrictFonts,
+    [switch]$TemplateSlice,
     [string]$BuildSizeDir,
     [switch]$BuildSizeUpdateBaseline,
     [switch]$BuildSizeWarnOnly
@@ -282,7 +284,8 @@ Write-Host "Unity   : $UnityPath"
 Write-Host "Project : $projectPath"
 Write-Host ("步骤    : 编译 + EditMode 测试" + `
     $(if ($SkipAssetGate) { "" } else { " + 资源门禁" }) + `
-    $(if ($SkipPlayMode) { "" } else { " + PlayMode 冒烟" }) + "（产物 $artifacts）")
+    $(if ($SkipPlayMode) { "" } else { " + PlayMode 冒烟" }) + `
+    $(if ($TemplateSlice) { " + 模板切片 Play 验收" } else { "" }) + "（产物 $artifacts）")
 
 # ── 干净副本可复现性预检：关键输入缺失或未纳入 Git 时直接阻断 ──────────
 & (Join-Path $PSScriptRoot "check-reproducibility.ps1")
@@ -322,6 +325,17 @@ if ($finalExit -eq 0 -and -not $SkipPlayMode) {
 elseif ($finalExit -ne 0) {
     Write-Host ""
     Write-Host "前序步骤未通过，跳过 PlayMode。"
+}
+
+# 模板切片 Play 验收（切片 F）：整机端到端（启动壳/配表/玩法/存档 + 真实登录/切号隔离/互踢）。
+# 耗时较长（两次 Unity 启动进 Play），仅 -TemplateSlice 显式开启（nightly/手动触发；PR 门禁默认不含）。
+if ($finalExit -eq 0 -and $TemplateSlice) {
+    & (Join-Path $PSScriptRoot "template-slice-check.ps1") -UnityPath $UnityPath
+    if ($LASTEXITCODE -ne 0) { $finalExit = 1 }
+}
+elseif ($TemplateSlice -and $finalExit -ne 0) {
+    Write-Host ""
+    Write-Host "前序步骤未通过，跳过模板切片验收。"
 }
 
 Write-Host ""
