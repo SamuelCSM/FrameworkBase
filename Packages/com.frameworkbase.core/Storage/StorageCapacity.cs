@@ -4,10 +4,17 @@ using UnityEngine;
 
 namespace Framework.Storage
 {
+    /// <summary>
+    /// 磁盘预检结论。<see cref="Unknown"/> 是失败关闭的关键：卷空间查询失败绝不当作空间充足，
+    /// 只有 <see cref="Sufficient"/> 允许安装继续。
+    /// </summary>
     public enum StorageCapacityStatus
     {
+        /// <summary>可用空间满足预算，允许继续。</summary>
         Sufficient,
+        /// <summary>可用空间不足预算，中止安装。</summary>
         Insufficient,
+        /// <summary>无法确认卷空间（查询失败/平台不支持）；按失败关闭一律中止。</summary>
         Unknown
     }
 
@@ -34,6 +41,10 @@ namespace Framework.Storage
             new StorageVolumeSnapshot(false, 0, string.Empty, error);
     }
 
+    /// <summary>
+    /// 目标路径所在卷的可用空间查询抽象。平台实现见 <see cref="SystemStorageCapacityProvider"/>；
+    /// 抽象出来是为了让预检逻辑能注入「充足/不足/查询失败」三种测试替身，不触碰开发机真实卷。
+    /// </summary>
     public interface IStorageCapacityProvider
     {
         StorageVolumeSnapshot Query(string path);
@@ -118,6 +129,11 @@ namespace Framework.Storage
             left > long.MaxValue - right ? long.MaxValue : left + right;
     }
 
+    /// <summary>
+    /// 磁盘预检结果。<see cref="CanProceed"/> 仅在 <see cref="StorageCapacityStatus.Sufficient"/> 时为真，
+    /// 携带预算/可用/Payload 明细与稳定错误码（<see cref="StoragePreflight.InsufficientCode"/> /
+    /// <see cref="StoragePreflight.UnknownCode"/>），供上层提示与排障。
+    /// </summary>
     public readonly struct StoragePreflightResult
     {
         internal StoragePreflightResult(

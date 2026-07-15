@@ -4,11 +4,19 @@ using System.Linq;
 
 namespace Framework.Storage
 {
+    /// <summary>
+    /// 缓存条目类别。枚举值同时是清理优先级：值越小越先删（Temporary 最先，Diagnostic 最后），
+    /// 使清理顺序完全确定、可预期。
+    /// </summary>
     public enum CacheEntryKind
     {
+        /// <summary>临时文件（下载中间产物等），最优先回收。</summary>
         Temporary = 0,
+        /// <summary>无主暂存目录（未提交为正式槽的 staging 残留）。</summary>
         OrphanStaging = 1,
+        /// <summary>已过期的历史版本目录（非 Active/Pending/LKG）。</summary>
         ObsoleteRelease = 2,
+        /// <summary>诊断/日志类文件，最后才回收。</summary>
         Diagnostic = 3
     }
 
@@ -22,10 +30,19 @@ namespace Framework.Storage
         public bool IsProtected { get; set; }
     }
 
+    /// <summary>
+    /// 缓存保留策略：配额上限与高/低水位。缓存超过「上限×高水位」触发清理，目标回落到「上限×低水位」，
+    /// 用滞后区间避免在阈值附近反复抖动清理。
+    /// </summary>
     public sealed class CacheRetentionPolicy
     {
+        /// <summary>缓存配额上限（字节）。默认 512 MiB。</summary>
         public long MaxCacheBytes { get; set; } = 512L * 1024L * 1024L;
+
+        /// <summary>触发清理的高水位比例（相对上限）。默认 0.90。</summary>
         public double HighWatermarkRatio { get; set; } = 0.90d;
+
+        /// <summary>清理的目标回落比例（相对上限），必须小于高水位。默认 0.70。</summary>
         public double LowWatermarkRatio { get; set; } = 0.70d;
 
         internal void Validate()
@@ -38,6 +55,10 @@ namespace Framework.Storage
         }
     }
 
+    /// <summary>
+    /// 一次清理请求的输入快照：当前缓存占用、本次安装所需自由空间、卷现有自由空间。
+    /// 规划器据此同时评估「磁盘缺口」与「缓存高水位」两个触发条件。
+    /// </summary>
     public readonly struct CacheCleanupRequest
     {
         public CacheCleanupRequest(long currentCacheBytes, long requiredFreeBytes, long availableFreeBytes)
@@ -52,6 +73,7 @@ namespace Framework.Storage
         public long AvailableFreeBytes { get; }
     }
 
+    /// <summary>清理计划：目标释放量与按确定顺序选出的待删条目。仅规划、不执行删除，便于测试与审计。</summary>
     public sealed class CacheCleanupPlan
     {
         internal CacheCleanupPlan(long targetBytes, IReadOnlyList<CacheEntry> entries)
@@ -66,6 +88,7 @@ namespace Framework.Storage
         public IReadOnlyList<CacheEntry> Entries { get; }
     }
 
+    /// <summary>清理执行后的实际结果：请求释放量、真实释放量、成功与失败条目数。失败条目不阻断流程，仅上报。</summary>
     public readonly struct CacheCleanupReport
     {
         public CacheCleanupReport(long requestedBytes, long freedBytes, int deletedEntries, int failedEntries)
@@ -82,6 +105,10 @@ namespace Framework.Storage
         public int FailedEntries { get; }
     }
 
+    /// <summary>
+    /// 内容缓存清理器抽象。由具体子系统（如热更槽管理）实现「枚举候选 → 保护事务槽 → 规划 → 删除」，
+    /// 让空间准入编排（<see cref="StorageAdmission"/>）与具体缓存布局解耦、可注入测试替身。
+    /// </summary>
     public interface IContentCacheCleaner
     {
         CacheCleanupReport Cleanup(CacheCleanupRequest request);
