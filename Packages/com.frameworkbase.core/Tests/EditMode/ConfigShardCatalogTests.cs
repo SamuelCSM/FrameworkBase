@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using NUnit.Framework;
 
 namespace Framework.Tests
@@ -9,7 +10,10 @@ namespace Framework.Tests
     /// </summary>
     public class ConfigShardCatalogTests
     {
-        private const string MainDb = @"D:\persist\config.db";
+        // 路径分隔符按运行平台构造：被测代码走 Path.GetDirectoryName/Combine（平台相关），
+        // 断言若硬编码 Windows 的 "D:\..." 在 Linux CI 上会因反斜杠不是分隔符而全成文件名，故用 Path.Combine 生成。
+        private static readonly string MainDir = Path.Combine(Path.GetTempPath(), "persist");
+        private static readonly string MainDb = Path.Combine(MainDir, "config.db");
 
         [Test]
         public void 路由_language表归language片_未登记表归主片()
@@ -41,7 +45,7 @@ namespace Framework.Tests
 
             Assert.IsFalse(fellBack);
             StringAssert.EndsWith("language.db", path);
-            StringAssert.StartsWith(@"D:\persist", path, "片库与主库同目录");
+            StringAssert.StartsWith(MainDir, path, "片库与主库同目录");
         }
 
         [Test]
@@ -69,10 +73,11 @@ namespace Framework.Tests
         public void 路径推导_主库文件名允许自定义()
         {
             // 测试/多实例场景主库可能不叫 config.db；主片路径必须原样返回，辅片跟随其目录。
-            const string customMain = @"D:\t\custom_main.db";
+            string customDir = Path.Combine(Path.GetTempPath(), "t");
+            string customMain = Path.Combine(customDir, "custom_main.db");
             Assert.AreEqual(customMain,
                 ConfigShardCatalog.GetShardDbPath(customMain, ConfigShardCatalog.MainShardFileName));
-            StringAssert.StartsWith(@"D:\t", ConfigShardCatalog.GetShardDbPath(
+            StringAssert.StartsWith(customDir, ConfigShardCatalog.GetShardDbPath(
                 customMain, ConfigShardCatalog.LanguageShardFileName));
         }
 
