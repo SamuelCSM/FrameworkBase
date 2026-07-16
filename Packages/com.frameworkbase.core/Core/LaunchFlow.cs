@@ -70,7 +70,7 @@ namespace Framework.Core
                 // 显示错误面板，等待玩家点击重试
                 var tcs = new UniTaskCompletionSource();
                 loading.ShowError(
-                    "网络连接失败，请检查网络后重试",
+                    Language.GetOrDefault("#1_launch_network_error", "网络连接失败，请检查网络后重试"),
                     onRetry: () => tcs.TrySetResult()
                 );
                 await tcs.Task;
@@ -98,7 +98,7 @@ namespace Framework.Core
             {
                 // ── Step 1: 读取本地版本 ──────────────────────────
                 var step1 = LaunchTelemetryHelper.BeginPhaseMetric(runMetric, LaunchPhase.LocalVersionLoad, "step01_local_version_load");
-                loading.SetStatus("正在读取版本信息...");
+                loading.SetStatus(Language.GetOrDefault("#1_launch_reading_version", "正在读取版本信息..."));
                 loading.SetProgress(0.05f);
                 var localVersion = HotUpdate.VersionManager.GetLocalVersion();
                 loading.SetVersion(
@@ -151,7 +151,7 @@ namespace Framework.Core
 
                 // ── Step 2: 初始化 Addressables ───────────────────
                 var step2 = LaunchTelemetryHelper.BeginPhaseMetric(runMetric, LaunchPhase.AddressablesInit, "step02_addressables_init");
-                loading.SetStatus("正在初始化资源系统...");
+                loading.SetStatus(Language.GetOrDefault("#1_launch_init_resource", "正在初始化资源系统..."));
                 loading.SetProgress(0.1f);
                 await GameEntry.Resource.InitializeAsync();
                 Debug.Log("[LaunchFlow] Step 2  Addressables 初始化完成");
@@ -164,13 +164,13 @@ namespace Framework.Core
 
                 if (string.IsNullOrEmpty(updateUrl))
                 {
-                    loading.SetStatus("未配置更新服务器，跳过版本检查");
+                    loading.SetStatus(Language.GetOrDefault("#1_launch_no_update_server", "未配置更新服务器，跳过版本检查"));
                     loading.SetProgress(0.2f);
                     Debug.Log("[LaunchFlow] Step 3  未配置 UpdateServerUrl，跳过");
                 }
                 else
                 {
-                    loading.SetStatus("正在检查更新...");
+                    loading.SetStatus(Language.GetOrDefault("#1_launch_checking_update", "正在检查更新..."));
                     loading.SetProgress(0.2f);
                     serverVersion = await GameEntry.HotUpdate.CheckUpdateAsync(updateUrl);
 
@@ -307,7 +307,7 @@ namespace Framework.Core
                 // ── 热更总开关：无业务热更程序集的项目（纯框架壳/单机）跳过 Step 7-9，直接进入登录 ──
                 if (!IsHotUpdateEnabled())
                 {
-                    loading.SetStatus("正在进入游戏...");
+                    loading.SetStatus(Language.GetOrDefault("#1_launch_entering_game", "正在进入游戏..."));
                     loading.SetProgress(0.95f);
                     Debug.Log("[LaunchFlow] 热更已关闭（AppConfig.EnableHotUpdate=false），跳过 AOT 元数据 / 热更程序集 / StartHotfix");
                     // 纯框架模式的统一确认点：无 Hotfix 入口即视为启动就绪，内容事务在此确认。
@@ -328,7 +328,7 @@ namespace Framework.Core
 
                 // ── Step 7: 加载 AOT 元数据（须在热更 DLL 之前）────
                 var step7 = LaunchTelemetryHelper.BeginPhaseMetric(runMetric, LaunchPhase.MetadataLoad, "step07_metadata_load");
-                loading.SetStatus("正在加载运行时元数据...");
+                loading.SetStatus(Language.GetOrDefault("#1_launch_loading_metadata", "正在加载运行时元数据..."));
                 loading.SetProgress(0.85f);
                 bool metadataOk = await GameEntry.HotUpdate.LoadMetadataAsync();
                 if (!metadataOk)
@@ -343,7 +343,7 @@ namespace Framework.Core
 
                 // ── Step 8: 加载热更程序集 ─────────────────────────
                 var step8 = LaunchTelemetryHelper.BeginPhaseMetric(runMetric, LaunchPhase.HotUpdateAssemblyLoad, "step08_hotupdate_assembly_load");
-                loading.SetStatus("正在加载游戏数据...");
+                loading.SetStatus(Language.GetOrDefault("#1_launch_loading_assembly", "正在加载游戏数据..."));
                 loading.SetProgress(0.9f);
                 bool assemblyOk = await GameEntry.HotUpdate.LoadHotUpdateAssemblyAsync();
                 if (!assemblyOk)
@@ -358,7 +358,7 @@ namespace Framework.Core
 
                 // ── Step 9: 启动热更逻辑，淡出 Loading ───────────
                 var step9 = LaunchTelemetryHelper.BeginPhaseMetric(runMetric, LaunchPhase.HotfixStart, "step09_hotfix_start");
-                loading.SetStatus("正在进入游戏...");
+                loading.SetStatus(Language.GetOrDefault("#1_launch_entering_game", "正在进入游戏..."));
                 loading.SetProgress(0.95f);
                 if (!GameEntry.HotUpdate.StartHotfix())
                 {
