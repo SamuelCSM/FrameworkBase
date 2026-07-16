@@ -163,16 +163,23 @@ namespace Framework.Tests
         }
 
         [Test]
-        public void 异步处理器_按UniTask完成后返回()
+        public void 异步处理器_挂起后完成才返回结果()
         {
+            // 不用 UniTask.Yield：EditMode 下同步 Wait 一个依赖 PlayerLoop 的挂起任务会直接抛
+            // "Not yet completed"。改用完成源手动控制挂起→完成，真实覆盖异步路径。
             CommandRegistry registry = NewDevRegistry();
+            var gate = new UniTaskCompletionSource();
             registry.Register(new CommandInfo("async", "异步命令"), async _ =>
             {
-                await UniTask.Yield();
+                await gate.Task;
                 return CommandResult.Ok("done");
             });
 
-            CommandResult result = Wait(registry.ExecuteAsync("async"));
+            UniTask<CommandResult> pending = registry.ExecuteAsync("async");
+            Assert.AreEqual(UniTaskStatus.Pending, pending.Status, "处理器挂起期间执行不得提前返回");
+
+            gate.TrySetResult();
+            CommandResult result = Wait(pending);
             Assert.IsTrue(result.Success);
             Assert.AreEqual("done", result.Message);
         }

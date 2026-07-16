@@ -46,11 +46,18 @@ namespace Framework.Tests
         }
 
         [Test]
-        public void 清单完整性_Framework程序集全部具体Manager都已登记()
+        public void 清单完整性_框架程序集全部具体Manager都已登记()
         {
-            // 完整性方向一：程序集里新增了 FrameworkComponent 派生 Manager 却忘进清单 → 挡下。
-            // （反方向「清单里有程序集外的类型」由悬空依赖用例与本用例的集合相等断言共同覆盖。）
-            var concreteManagers = typeof(GameEntry).Assembly.GetTypes()
+            // 完整性方向一：框架程序集里新增了 FrameworkComponent 派生 Manager 却忘进清单 → 挡下。
+            // 扫描范围 = GameEntry 所在程序集 ∪ 清单现有类型所在的全部程序集：Manager 不全在
+            // Framework——Event/Timer 经 .asmref 划归 Framework.Kernel，只扫 GameEntry 程序集会漏。
+            // （新 Manager 若落进一个此前从无 Manager 的新程序集会逃过本扫描，属可接受盲区：
+            // 该程序集一旦有第一个 Manager 进清单，后续同程序集的新增即被覆盖。）
+            var assemblies = GameEntry.ManagerManifest.Select(r => r.ManagerType.Assembly)
+                .Append(typeof(GameEntry).Assembly)
+                .Distinct();
+            var concreteManagers = assemblies
+                .SelectMany(a => a.GetTypes())
                 .Where(t => typeof(FrameworkComponent).IsAssignableFrom(t) && !t.IsAbstract)
                 .ToHashSet();
             var manifest = GameEntry.ManagerManifest.Select(r => r.ManagerType).ToHashSet();
@@ -62,7 +69,7 @@ namespace Framework.Tests
                 "以下 Manager 未登记进 GameEntry.ManagerManifest（新增 Manager 必须在清单声明初始化时机与依赖）：" +
                 string.Join(", ", missing));
             Assert.IsEmpty(unknown,
-                "清单中存在 Framework 程序集之外/非 FrameworkComponent 的登记项：" + string.Join(", ", unknown));
+                "清单中存在非 FrameworkComponent 的登记项：" + string.Join(", ", unknown));
         }
     }
 }
