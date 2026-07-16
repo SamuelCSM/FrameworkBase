@@ -19,7 +19,7 @@ namespace Framework
     ///   3. 按分组/标签计算并下载远端资源包
     ///   4. 提供带引用计数的异步加载 / 实例化 / 释放接口
     /// </summary>
-    public class ResourceManager : Core.FrameworkComponent<ResourceManager>, IResourceScopeHost
+    public class ResourceManager : Core.FrameworkComponent<ResourceManager>, IResourceService
     {
         // 资源引用计数字典（仅统计 LoadAsset/LoadAssetAsync 加载的资源句柄）
         private Dictionary<string, int> _referenceCount = new Dictionary<string, int>();

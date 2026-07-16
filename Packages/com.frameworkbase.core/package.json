@@ -2,7 +2,7 @@
   "name": "com.frameworkbase.core",
   "version": "0.16.0",
   "displayName": "FrameworkBase Core",
-  "description": "可复用 Unity 纯底层框架：启动流程 / HybridCLR 热更（含供应链安全闭环）/ TCP 强联网 / Addressables 资源 / UI 框架 / Excel→SQLite 配置表 / 加密存档 / 崩溃回捞。主干不含业务概念。\n\n依赖说明：UniTask 与 HybridCLR 为 git URL 包，无法在此声明，须由工程 manifest.json 提供（本仓库壳工程已内置）。",
+  "description": "可复用 Unity 纯底层框架：启动流程 / HybridCLR 热更（含供应链安全闭环）/ TCP 强联网 / Addressables 资源 / UI 框架 / Excel→SQLite 配置表 / 加密存档 / 崩溃回捞。主干不含业务概念。\n\n依赖说明：UniTask 与 HybridCLR 为 git URL 包、PrimeTween 为 npm scoped registry 包（com.kyrylokuzyk），均无法在包 manifest 内声明作用域/来源，须由工程 manifest.json 提供（本仓库壳工程已内置 scopedRegistries + 依赖）。三者同为框架硬依赖（PrimeTween 是选定的通用补间标准，非可选厂商件，故不加 define 门控）。",
   "unity": "2022.3",
   "dependencies": {
     "com.unity.addressables": "1.28.2",

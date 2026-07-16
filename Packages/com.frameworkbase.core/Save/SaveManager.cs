@@ -39,7 +39,7 @@ namespace Framework.Save
     ///   SaveManager.Instance.SetPref(PlayerSettings.MusicOn, true);
     ///   bool on = SaveManager.Instance.GetPref(PlayerSettings.MusicOn, defaultValue: true);
     /// </summary>
-    public class SaveManager : Singleton<SaveManager>
+    public class SaveManager : Singleton<SaveManager>, ISaveService
     {
         // ── 当前账号 ─────────────────────────────────────────────────────────
         private string _currentUserId = "guest";

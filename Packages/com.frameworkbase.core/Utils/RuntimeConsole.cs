@@ -1,4 +1,6 @@
 using System.Collections.Generic;
+using Cysharp.Threading.Tasks;
+using Framework.Diagnostics;
 using UnityEngine;
 
 namespace Framework
@@ -10,6 +12,8 @@ namespace Framework
     /// 使用方式：
     ///   - 开发包直接挂组件，正式包通过 DEVELOPMENT_BUILD 宏自动禁用显示
     ///   - 运行时按 Tab 键（PC）或三指点击（移动端）展开/收起面板
+    ///   - 组合根经 <see cref="AttachCommands"/> 接入命令总线后，面板底部出现命令输入行：
+    ///     输入命令回车/点执行，结果以日志形式回显；输入前缀时给出候选命令按钮
     /// </summary>
     public class RuntimeConsole : MonoBehaviour
     {
@@ -38,6 +42,16 @@ namespace Framework
         private bool _stylesBuilt = false;
 
         private int _logCount, _warnCount, _errorCount;
+
+        // ── 命令输入（AttachCommands 接入后启用）───────────────
+        private CommandRegistry _commands;
+        private string _input = string.Empty;
+        private readonly List<string> _cmdHistory = new List<string>();
+        private int _historyIndex = -1;
+        private bool _inputFocused;
+        private const string InputControlName = "RC_CmdInput";
+        private const int MaxCmdHistory = 32;
+        private const int MaxSuggestions = 6;
 
         // ── FPS / 内存采样（每 0.5s 刷新一次显示，避免数字抖动）──
         private float _fpsTimer;
@@ -71,6 +85,15 @@ namespace Framework
             Application.logMessageReceived -= OnLogReceived;
         }
 
+        /// <summary>
+        /// 接入命令总线（组合根调用）。接入后面板底部出现命令输入行；
+        /// 传 null 可摘除。命令授权由总线自身门禁，本面板只负责输入与回显。
+        /// </summary>
+        public void AttachCommands(CommandRegistry registry)
+        {
+            _commands = registry;
+        }
+
         private void OnLogReceived(string condition, string stackTrace, LogType type)
         {
             _logs.Add(new LogEntry
@@ -97,8 +120,8 @@ namespace Framework
 
         private void Update()
         {
-            // PC：Tab 键切换显示/隐藏
-            if (UnityEngine.Input.GetKeyDown(KeyCode.Tab))
+            // PC：Tab 键切换显示/隐藏（命令输入框聚焦时不抢键）
+            if (UnityEngine.Input.GetKeyDown(KeyCode.Tab) && !_inputFocused)
                 _visible = !_visible;
 
             // FPS 采样（unscaled，暂停/慢动作时仍反映真实渲染帧率）
@@ -192,9 +215,10 @@ namespace Framework
             }
             GUILayout.EndHorizontal();
 
-            // 主日志列表
+            // 主日志列表（接入命令总线后为输入区预留高度：候选行 + 输入行）
             float detailHeight = _showDetail ? 120 : 0;
-            float listHeight   = _windowRect.height - 60 - detailHeight;
+            float commandHeight = _commands != null ? 84 : 0;
+            float listHeight   = _windowRect.height - 60 - detailHeight - commandHeight;
 
             _scrollPos = GUILayout.BeginScrollView(_scrollPos,
                 GUILayout.Height(listHeight));
@@ -233,7 +257,116 @@ namespace Framework
                 GUILayout.EndVertical();
             }
 
+            // 命令输入区
+            if (_commands != null)
+                DrawCommandBar();
+
             GUI.DragWindow(new Rect(0, 0, _windowRect.width, 30));
+        }
+
+        // ── 命令输入区 ─────────────────────────────────────────
+
+        private void DrawCommandBar()
+        {
+            // 键盘事件先于控件绘制处理：回车提交、上下键翻历史（仅输入框聚焦时）
+            Event e = Event.current;
+            bool focused = GUI.GetNameOfFocusedControl() == InputControlName;
+            if (focused && e.type == EventType.KeyDown)
+            {
+                if ((e.keyCode == KeyCode.Return || e.keyCode == KeyCode.KeypadEnter)
+                    && !string.IsNullOrWhiteSpace(_input))
+                {
+                    SubmitCommand();
+                    e.Use();
+                }
+                else if (e.keyCode == KeyCode.UpArrow && _cmdHistory.Count > 0)
+                {
+                    _historyIndex = _historyIndex < 0
+                        ? _cmdHistory.Count - 1
+                        : Mathf.Max(0, _historyIndex - 1);
+                    _input = _cmdHistory[_historyIndex];
+                    e.Use();
+                }
+                else if (e.keyCode == KeyCode.DownArrow && _historyIndex >= 0)
+                {
+                    _historyIndex++;
+                    if (_historyIndex >= _cmdHistory.Count)
+                    {
+                        _historyIndex = -1;
+                        _input = string.Empty;
+                    }
+                    else
+                    {
+                        _input = _cmdHistory[_historyIndex];
+                    }
+                    e.Use();
+                }
+            }
+
+            // 候选命令行：输入了命令名前缀（尚未打空格进入参数）时给出可点选的补全按钮
+            GUILayout.BeginHorizontal(GUILayout.Height(34));
+            if (_input.Length > 0 && !_input.Contains(" "))
+            {
+                int shown = 0;
+                foreach (CommandInfo info in _commands.ListAvailable())
+                {
+                    if (!info.Name.StartsWith(_input, System.StringComparison.OrdinalIgnoreCase))
+                        continue;
+                    if (GUILayout.Button(info.Name, GUILayout.Height(30)))
+                    {
+                        _input = info.Name + " ";
+                        GUI.FocusControl(InputControlName);
+                    }
+                    if (++shown >= MaxSuggestions)
+                        break;
+                }
+            }
+            GUILayout.FlexibleSpace();
+            GUILayout.EndHorizontal();
+
+            // 输入行
+            GUILayout.BeginHorizontal(GUILayout.Height(40));
+            GUI.SetNextControlName(InputControlName);
+            _input = GUILayout.TextField(_input, new GUIStyle(GUI.skin.textField) { fontSize = fontSize },
+                GUILayout.ExpandWidth(true), GUILayout.Height(36));
+            if (GUILayout.Button("执行", GUILayout.Width(80), GUILayout.Height(36))
+                && !string.IsNullOrWhiteSpace(_input))
+            {
+                SubmitCommand();
+            }
+            GUILayout.EndHorizontal();
+
+            // 供 Update 的 Tab 显隐判断使用（GetNameOfFocusedControl 只能在 OnGUI 里读）
+            if (e.type == EventType.Repaint)
+                _inputFocused = GUI.GetNameOfFocusedControl() == InputControlName;
+        }
+
+        private void SubmitCommand()
+        {
+            string line = _input.Trim();
+            _input = string.Empty;
+            _historyIndex = -1;
+
+            // 相邻去重后入历史，封顶丢最旧
+            if (_cmdHistory.Count == 0 || _cmdHistory[_cmdHistory.Count - 1] != line)
+            {
+                _cmdHistory.Add(line);
+                if (_cmdHistory.Count > MaxCmdHistory)
+                    _cmdHistory.RemoveAt(0);
+            }
+
+            RunCommandAsync(line).Forget();
+        }
+
+        /// <summary>执行命令并把结果回显进日志列表（失败走 Warning 黄色醒目；命令由人工输入，不会污染自动化验收的零告警门禁）。</summary>
+        private async UniTaskVoid RunCommandAsync(string line)
+        {
+            Debug.Log($"[Cmd] > {line}");
+            CommandResult result = await _commands.ExecuteAsync(line);
+            if (result.Success)
+                Debug.Log($"[Cmd] {(string.IsNullOrEmpty(result.Message) ? "OK" : result.Message)}");
+            else
+                Debug.LogWarning($"[Cmd] {result.Message}");
         }
     }
 }

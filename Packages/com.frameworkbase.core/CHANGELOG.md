@@ -7,6 +7,14 @@
 
 ### 新增
 
+- 通用补间接入 **PrimeTween**（零 GC、AOT/IL2CPP 安全、WebGL 可 await）：新增 `Tween/`——`TweenBootstrap`
+  启动期一次性配置补间容量与默认缓动（杜绝运行期扩容 GC）、`TweenAsyncExtensions` 提供 `Tween`/`Sequence`
+  的 `ToUniTask(ct)` 桥（取消即停在当前值、不抛、await 正常返回，对齐框架既有动画语义）、`TWEEN_GUIDE.md`
+  指南。框架**不再包一层补间门面**，业务/热更 `using PrimeTween;` 直调即可（理由见 ADR-007）。`UIAnimator`
+  改由 PrimeTween 驱动（公共签名不变，`UIBase` 零改动；新增 `UseUnscaledTime` 开关，默认跟随 timeScale）。
+  PrimeTween 与 UniTask/HybridCLR 同为**硬依赖**（选定的通用补间标准，非可选厂商件，故不加 define 门控），
+  由工程 `manifest.json` 提供（npm scoped registry `com.kyrylokuzyk`，壳工程已内置）。`ARCHITECTURE_DECISIONS.md`
+  新增 **ADR-007**。
 - `DevAuthTools.HasPersistedSession()`（Framework.Editor 公开入口）：供验收驱动断言「登出/互踢后持久化凭据已清」，游戏侧编辑器程序集不再需要触碰 `AuthSessionStore` internal。配套：`GameEntry` 登出请求日志从 Warning 降为普通日志（登出属正常业务流，Warning 会污染 Play 验收「零告警」门禁）。
 - `AppFlow` 应用主状态机（Login ⇄ InGame，骑在通用 `AsyncStateMachine` 上）：登录活动 → 身份贯通 → 业务入口（InGame.Enter）→ 挂起等登出 → 拆卸（InGame.Exit：业务退出→鉴权登出→清身份）→ 自动回登录页（此前登出只拆卸、无回登录路径）。纯逻辑全注入，EditMode 脱离 Play 单测 7 例；三个登出源（服务端互踢/玩家主动/渠道会话失效）统一改调 `RequestLogout(reason)`——只记原因+唤醒主循环，拆卸不再发生在事件回调栈深处，同会话多信号合并首个原因生效，登录态收到登出为 no-op，业务入口 await 期间的登出后置合并（入口完成后立即拆卸）；全部钩子异常隔离上报，主循环含 Faulted 防御恢复。`OnBusinessEntryAsync` 语义更新为每登录会话调用一次（业务须支持重入，Clicker 样例已天然满足）。
 - `AsyncStateMachine<TState,TTrigger>` 强类型串行异步状态机（Framework.Foundation）：Builder 一次性构建并做拓扑校验（目标未声明/规则不可达/非法超时构建期即拒绝），运行期拓扑不可变；事务化提交（Exit+Enter 全成功才切状态），失败走显式 `OnRollback` 补偿且 fail-closed（缺补偿或补偿失败进 Faulted，须显式 `RecoverAsync`）；处理器内重入触发入队串行执行（链式超限判死循环）；同状态 Ignore/Reject/Reenter 策略先于守卫求值；支持同触发器多守卫规则选路与内部转换；有界审计历史 + 观察者异常隔离到诊断出口。EditMode 测试 19 例。

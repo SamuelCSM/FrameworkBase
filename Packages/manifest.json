@@ -7,6 +7,7 @@
     "com.code-philosophy.hybridclr": "https://github.com/focus-creative-games/hybridclr_unity.git#v8.12.0",
     "com.cysharp.unitask": "https://github.com/Cysharp/UniTask.git?path=src/UniTask/Assets/Plugins/UniTask",
     "com.github-glitchenzo.nugetforunity": "https://github.com/GlitchEnzo/NuGetForUnity.git?path=/src/NuGetForUnity",
+    "com.kyrylokuzyk.primetween": "1.4.8",
     "com.unity.addressables": "1.28.2",
     "com.unity.collab-proxy": "2.7.1",
     "com.unity.feature.development": "1.0.1",
@@ -43,5 +44,14 @@
     "com.unity.modules.vr": "1.0.0",
     "com.unity.modules.wind": "1.0.0",
     "com.unity.modules.xr": "1.0.0"
-  }
+  },
+  "scopedRegistries": [
+    {
+      "name": "npmmirror",
+      "url": "https://registry.npmmirror.com",
+      "scopes": [
+        "com.kyrylokuzyk"
+      ]
+    }
+  ]
 }

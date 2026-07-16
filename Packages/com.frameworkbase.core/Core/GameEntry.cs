@@ -116,16 +116,32 @@ namespace Framework.Core
         /// <summary>远程配置管理器 — 键值配置/功能开关/灰度放量（磁盘缓存 last-known-good，后端可注入）。</summary>
         public static Framework.RemoteConfig.RemoteConfigManager RemoteConfig { get; private set; }
 
+        /// <summary>
+        /// 调试命令总线 — 框架与业务的调试/GM 命令统一注册与执行入口。
+        /// 授权 fail-closed：Editor / Development Build 由本组合根授予 Development；
+        /// 正式包默认 None，GM 白名单账号经业务侧服务端验证后自行
+        /// <c>Commands.SetGrantedAccess(CommandAccessLevel.Privileged)</c>，登出时撤销回 None。
+        /// </summary>
+        public static Framework.Diagnostics.CommandRegistry Commands { get; private set; }
+
         // ── 生命周期 ─────────────────────────────────────────────────────────
 
         protected override void Awake()
         {
             base.Awake();
 
+            // 命令总线最早就位：Manager 初始化期间即可注册自己的调试命令。
+            // 授权 fail-closed：仅开发环境授予 Development；正式包保持 None，白名单授权由业务鉴权路径驱动。
+            Commands = new Framework.Diagnostics.CommandRegistry();
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+            Commands.SetGrantedAccess(Framework.Diagnostics.CommandAccessLevel.Development);
+#endif
+
 #if !UNITY_EDITOR && DEVELOPMENT_BUILD
-            // 非 Editor 的 Development Build 自动挂载屏幕日志面板
+            // 非 Editor 的 Development Build 自动挂载屏幕日志面板（接入命令总线后带命令输入行）
             if (GetComponent<RuntimeConsole>() == null)
                 gameObject.AddComponent<RuntimeConsole>();
+            GetComponent<RuntimeConsole>().AttachCommands(Commands);
 #endif
 
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
@@ -136,6 +152,8 @@ namespace Framework.Core
 
             Debug.Log("[GameEntry] 开始初始化框架...");
             ApplyPerformanceSettings();
+            // 通用补间（PrimeTween）容量与默认缓动一次性引导：须早于任何 UI 过渡 / 场景动画。
+            TweenBootstrap.Initialize();
             InitializeManagers();
             Application.lowMemory += HandleLowMemory;
             Debug.Log("[GameEntry] 框架初始化完成");
@@ -355,9 +373,105 @@ namespace Framework.Core
             Telemetry.CrashReporter.SetUser(string.Empty);
         }
 
+        // ── Manager 注册清单 ─────────────────────────────────────────────────
+
         /// <summary>
-        /// 初始化所有 Manager（按依赖顺序）。
-        /// UIManager 创建后立即注入 UIBootstrap，确保后续 OpenUIAsync 调用时 Canvas 层级已就绪。
+        /// Manager 注册项：类型 + 初始化时序硬依赖 + 装配动作。
+        /// DependsOn 只声明「初始化时刻真实存在」的依赖（装配动作里会立即触达对方实例），
+        /// 运行期才互调的软依赖不在此列——清单是时序契约，不是完整依赖图。
+        /// </summary>
+        public sealed class ManagerRegistration
+        {
+            internal ManagerRegistration(Type managerType, Type[] dependsOn, Action<GameEntry> install)
+            {
+                ManagerType = managerType;
+                DependsOn = dependsOn ?? Array.Empty<Type>();
+                Install = install;
+            }
+
+            /// <summary>Manager 具体类型。</summary>
+            public Type ManagerType { get; }
+
+            /// <summary>初始化前必须已就绪的 Manager 类型。</summary>
+            public IReadOnlyList<Type> DependsOn { get; }
+
+            /// <summary>构造 Manager、登记静态门面并完成装配期接线。</summary>
+            internal Action<GameEntry> Install { get; }
+        }
+
+        /// <summary>
+        /// Manager 注册清单（声明顺序即初始化顺序，关闭时逆序）。
+        /// 新增 Manager 只在此登记一条：初始化循环、依赖校验与 EditMode 拓扑/完整性测试
+        /// （GameEntryManagerManifestTests）都以本清单为唯一事实源，漏登记或顺序违规会被测试挡下。
+        /// </summary>
+        public static IReadOnlyList<ManagerRegistration> ManagerManifest { get; } = new[]
+        {
+            Reg<EventManager>(g => Event = g.AddComponent<EventManager>()),
+            Reg<TimerManager>(g => Timer = g.AddComponent<TimerManager>()),
+            Reg<ResourceManager>(g => Resource = g.AddComponent<ResourceManager>()),
+
+            // SDK 管理器尽早就位：渠道实现由业务组合根注册（RegisterProvider），
+            // 初始化时机由业务显式驱动（通常在 LaunchFlow 前 / HotfixEntry 内）。
+            Reg<Framework.Sdk.SdkManager>(g => Sdk = g.AddComponent<Framework.Sdk.SdkManager>()),
+
+            // 埋点管道紧随其后：LaunchFlow 的启动阶段指标依赖它上报。
+            Reg<Framework.Analytics.AnalyticsManager>(
+                g => Analytics = g.AddComponent<Framework.Analytics.AnalyticsManager>()),
+
+            // 远程配置紧随埋点：磁盘缓存值启动早期即可读，拉取由 LaunchFlow 并行发起。
+            Reg<Framework.RemoteConfig.RemoteConfigManager>(
+                g => RemoteConfig = g.AddComponent<Framework.RemoteConfig.RemoteConfigManager>()),
+
+            // UIBootstrap 随建随注：确保后续任何 OpenUIAsync 调用时 Canvas 层级已就绪。
+            Reg<UIManager>(g =>
+            {
+                UI = g.AddComponent<UIManager>();
+                UI.SetBootstrap(g._uiBootstrap);
+            }),
+            Reg<InputManager>(g =>
+            {
+                Input = g.AddComponent<InputManager>();
+                Input.SetBootstrap(g._uiBootstrap);
+            }),
+
+            Reg<NetworkManager>(g =>
+            {
+                Network = g.AddComponent<NetworkManager>();
+                g.ApplyNetworkLogSettings();
+            }),
+            Reg<TipManager>(g => Tips = g.AddComponent<TipManager>()),
+
+            // 组合根注入：让网络层在断线重连后，经鉴权层静默重放登录握手恢复服务端会话身份，
+            // 否则重连得到的匿名连接会导致快照/落子等业务请求被服务端静默丢弃（断线重连失效）。
+            Reg<AuthManager>(g =>
+            {
+                Auth = g.AddComponent<AuthManager>();
+                Network.SetReauthenticationProvider(() => Auth.ReauthenticateWithResultAsync());
+            }, dependsOn: new[] { typeof(NetworkManager) }),
+
+            Reg<ConfigManager>(g => RefData = g.AddComponent<ConfigManager>()),
+            Reg<AudioManager>(g => Audio = g.AddComponent<AudioManager>()),
+            Reg<SceneManager>(g => Scene = g.AddComponent<SceneManager>()),
+            Reg<GameStageManager>(g => StageManager = g.AddComponent<GameStageManager>()),
+
+            // 导航栈操作的是 GameStageManager.Instance，属初始化时序硬依赖。
+            Reg<GameStageNavigationManager>(
+                g => StageNavigation = g.AddComponent<GameStageNavigationManager>(),
+                dependsOn: new[] { typeof(GameStageManager) }),
+
+            Reg<HotUpdateManager>(g => HotUpdate = g.AddComponent<HotUpdateManager>()),
+        };
+
+        /// <summary>清单声明糖：类型参数即注册类型，杜绝「清单类型与实际构造类型不一致」的笔误。</summary>
+        private static ManagerRegistration Reg<T>(Action<GameEntry> install, Type[] dependsOn = null)
+            where T : FrameworkComponent
+        {
+            return new ManagerRegistration(typeof(T), dependsOn, install);
+        }
+
+        /// <summary>
+        /// 按注册清单初始化全部 Manager，随后完成跨模块组合根接线。
+        /// 依赖顺序违规立即抛出（装配错误属启动即炸），与 EditMode 拓扑测试同源双保险。
         /// </summary>
         private void InitializeManagers()
         {
@@ -365,34 +479,23 @@ namespace Framework.Core
             // 积压记录的上报在全部 Manager 就绪后异步尝试（端点未配置时仅本地缓存）。
             Telemetry.CrashReporter.Install();
 
-            Event     = AddComponent<EventManager>();
-            Timer     = AddComponent<TimerManager>();
-            Resource  = AddComponent<ResourceManager>();
+            var initialized = new HashSet<Type>();
+            foreach (ManagerRegistration registration in ManagerManifest)
+            {
+                for (int i = 0; i < registration.DependsOn.Count; i++)
+                {
+                    Type dependency = registration.DependsOn[i];
+                    if (!initialized.Contains(dependency))
+                    {
+                        throw new InvalidOperationException(
+                            $"Manager 注册清单顺序错误：{registration.ManagerType.Name} 依赖 {dependency.Name}，但后者尚未初始化。");
+                    }
+                }
+                registration.Install(this);
+                initialized.Add(registration.ManagerType);
+            }
 
-            // SDK 管理器尽早就位：渠道实现由业务组合根注册（RegisterProvider），
-            // 初始化时机由业务显式驱动（通常在 LaunchFlow 前 / HotfixEntry 内）。
-            Sdk = AddComponent<Framework.Sdk.SdkManager>();
-
-            // 埋点管道紧随其后：LaunchFlow 的启动阶段指标依赖它上报。
-            Analytics = AddComponent<Framework.Analytics.AnalyticsManager>();
-
-            // 远程配置紧随埋点：磁盘缓存值启动早期即可读，拉取由 LaunchFlow 并行发起。
-            RemoteConfig = AddComponent<Framework.RemoteConfig.RemoteConfigManager>();
-
-            UI = AddComponent<UIManager>();
-            UI.SetBootstrap(_uiBootstrap);
-
-            Input = AddComponent<InputManager>();
-            Input.SetBootstrap(_uiBootstrap);
-
-            Network         = AddComponent<NetworkManager>();
-            ApplyNetworkLogSettings();
-            Tips            = AddComponent<TipManager>();
-            Auth            = AddComponent<AuthManager>();
-
-            // 组合根注入：让网络层在断线重连后，经鉴权层静默重放登录握手恢复服务端会话身份，
-            // 否则重连得到的匿名连接会导致快照/落子等业务请求被服务端静默丢弃（断线重连失效）。
-            Network.SetReauthenticationProvider(() => Auth.ReauthenticateWithResultAsync());
+            // ── 跨模块组合根接线（全部 Manager 就绪后；仍在 Awake 内，先于任何事件发布）──
 
             // 组合根注入：ErrorCenter 属 Kernel 层、不认识 Tips/Analytics（ADR-002），
             // 由此处注入 UI 呈现器并把限流后的错误上报转发给埋点管道。
@@ -411,16 +514,22 @@ namespace Framework.Core
             // 组合根编排：强制登出 / 玩家登出 / 渠道会话失效统一清鉴权凭据与跨模块身份。
             WireForcedLogoutHandling();
 
-            RefData         = AddComponent<ConfigManager>();
-            Audio           = AddComponent<AudioManager>();
-            Scene           = AddComponent<SceneManager>();
-            StageManager    = AddComponent<GameStageManager>();
-            StageNavigation = AddComponent<GameStageNavigationManager>();
-            HotUpdate       = AddComponent<HotUpdateManager>();
-
             // 上一次运行留下的崩溃记录：后台尝试上报（不阻塞启动，失败静默保留下次再试）。
             // 上报端点由后端自读（默认后端读 AppConfig.CrashReportUrl，原生后端走自身管道）。
             Telemetry.CrashReporter.TryUploadPendingAsync().Forget();
+
+            // 内置调试命令（help/version/loglevel/perfhud 等安全项）；业务命令由业务侧自行注册。
+            // GM 命令使用审计：每次执行尝试转发埋点 + 崩溃面包屑（命令常是复现路径的关键线索）。
+            Framework.Diagnostics.BuiltinCommands.RegisterAll(Commands);
+            Commands.Executed += record =>
+            {
+                Analytics?.Track("gm_command", new Dictionary<string, object>
+                {
+                    { "name", record.Name },
+                    { "success", record.Success },
+                });
+                Telemetry.CrashReporter.LeaveBreadcrumb($"cmd:{record.Name} ok={record.Success}");
+            };
 
             Debug.Log("[GameEntry] 所有 Manager 初始化完成");
         }
