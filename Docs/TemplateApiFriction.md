@@ -35,5 +35,5 @@
 - 切片 D **真机联调**：`EnableHotUpdate=1` 下经 HybridCLR 运行时加载 v2 dll 冷启动跑出新玩法数值（编辑器不实际热加载）；"改一格 Excel（二进制 xlsx，需再走一次 Unity 导出）"并入该批次。发布→回滚链路、资源+代码联合发布、v1→v2 内容跳变已在本机自动化验证。
 - 切片 D 真机验证 v1→v2→回滚后，再决定业务入口钩子是否需要版本/重复注册治理。
 - **字体子集化**（上表"通用"行）：真机/构建期按 language 表字符裁 TMP 字库减包体；当前仅检测缺字（已进门禁）。
-- **启动早期文案的 frame-1 本地化**：`GetOrDefault` 已让全部启动/登录文案可翻译，但 config.db 语言表加载前（LaunchFlow Step 1~3）仍显示源语言默认值。若需从第一帧起按用户语言出字，需引入随包内建的分语言 bootstrap 字符串表（独立于可热更的 config.db）；属功能增强，暂记 backlog，不在切片 G 范围内当场做。
+- ~~**启动早期文案的 frame-1 本地化**~~：**已由 ADR-006 配表分片消解**（2026-07-16，922fc6e..eaf8dac）——language 表独立成 language.db 片，LaunchFlow 在第一条 Loading 文案前 `EnsureShardReadyAsync` 提前提取小片，首装早期文案即走配表；未引入独立 bootstrap 字符串表（避免第二套本地化机制），`GetOrDefault` 兜底降级为异常保险。首批 14 条 `#1_launch_*/#1_login_*` 中英文案已随模板入 `Language.xlsx`。
 - **消费者工程包边界门禁**：Clicker 代码在 `Assets/Scripts/HotUpdate/`、语义测试在 `Assets/Tests/`（构造上已不在 UPM 包内），但尚无自动门禁验证"只安装 `com.frameworkbase.core` 包时不携带任何 Clicker 代码/测试"。建议加一个最小消费者工程 CI 步骤兜住此边界。
