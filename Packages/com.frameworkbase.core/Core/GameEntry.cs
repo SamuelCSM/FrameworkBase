@@ -116,16 +116,32 @@ namespace Framework.Core
         /// <summary>远程配置管理器 — 键值配置/功能开关/灰度放量（磁盘缓存 last-known-good，后端可注入）。</summary>
         public static Framework.RemoteConfig.RemoteConfigManager RemoteConfig { get; private set; }
 
+        /// <summary>
+        /// 调试命令总线 — 框架与业务的调试/GM 命令统一注册与执行入口。
+        /// 授权 fail-closed：Editor / Development Build 由本组合根授予 Development；
+        /// 正式包默认 None，GM 白名单账号经业务侧服务端验证后自行
+        /// <c>Commands.SetGrantedAccess(CommandAccessLevel.Privileged)</c>，登出时撤销回 None。
+        /// </summary>
+        public static Framework.Diagnostics.CommandRegistry Commands { get; private set; }
+
         // ── 生命周期 ─────────────────────────────────────────────────────────
 
         protected override void Awake()
         {
             base.Awake();
 
+            // 命令总线最早就位：Manager 初始化期间即可注册自己的调试命令。
+            // 授权 fail-closed：仅开发环境授予 Development；正式包保持 None，白名单授权由业务鉴权路径驱动。
+            Commands = new Framework.Diagnostics.CommandRegistry();
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+            Commands.SetGrantedAccess(Framework.Diagnostics.CommandAccessLevel.Development);
+#endif
+
 #if !UNITY_EDITOR && DEVELOPMENT_BUILD
-            // 非 Editor 的 Development Build 自动挂载屏幕日志面板
+            // 非 Editor 的 Development Build 自动挂载屏幕日志面板（接入命令总线后带命令输入行）
             if (GetComponent<RuntimeConsole>() == null)
                 gameObject.AddComponent<RuntimeConsole>();
+            GetComponent<RuntimeConsole>().AttachCommands(Commands);
 #endif
 
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
@@ -423,6 +439,19 @@ namespace Framework.Core
             // 上一次运行留下的崩溃记录：后台尝试上报（不阻塞启动，失败静默保留下次再试）。
             // 上报端点由后端自读（默认后端读 AppConfig.CrashReportUrl，原生后端走自身管道）。
             Telemetry.CrashReporter.TryUploadPendingAsync().Forget();
+
+            // 内置调试命令（help/version/loglevel/perfhud 等安全项）；业务命令由业务侧自行注册。
+            // GM 命令使用审计：每次执行尝试转发埋点 + 崩溃面包屑（命令常是复现路径的关键线索）。
+            Framework.Diagnostics.BuiltinCommands.RegisterAll(Commands);
+            Commands.Executed += record =>
+            {
+                Analytics?.Track("gm_command", new Dictionary<string, object>
+                {
+                    { "name", record.Name },
+                    { "success", record.Success },
+                });
+                Telemetry.CrashReporter.LeaveBreadcrumb($"cmd:{record.Name} ok={record.Success}");
+            };
 
             Debug.Log("[GameEntry] 所有 Manager 初始化完成");
         }
