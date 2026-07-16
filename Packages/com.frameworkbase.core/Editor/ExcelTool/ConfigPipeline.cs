@@ -66,6 +66,14 @@ namespace Framework.Editor
             {
                 foreach (ExcelReader.ExcelSheetData sheet in reader.ReadExcel(file))
                 {
+                    // 框架 Bootstrap 表（如 language）只导数据不生成代码：
+                    // 生成类已预置于包内 ConfigData/Bootstrap/，再生成会在热更侧长出重复类（ADR-006）。
+                    if (ConfigShardCatalog.IsFrameworkBootstrapTable(sheet.SheetName))
+                    {
+                        Debug.Log($"[ConfigPipeline] 跳过代码生成（框架 Bootstrap 表，生成类预置于 ConfigData/Bootstrap）：{sheet.SheetName}");
+                        continue;
+                    }
+
                     CodeGenerator.GenerateResult result = generator.GenerateConfigClass(sheet);
                     WriteGenerated(result.DataClassPath, result.DataClassCode);
                     WriteGenerated(result.TableClassPath, result.TableClassCode);
