@@ -87,6 +87,18 @@ namespace Framework.Core
             Debug.Log("[LaunchFlow] ========== 游戏启动流程开始 ==========");
             var runMetric = LaunchTelemetryHelper.BeginRunMetric();
 
+            // language 片提前就绪（ADR-006）：在第一条 Loading 文案之前完成小片提取，
+            // 使首装启动早期文案即可走配表本地化（后续启动为存在性检查，幂等且廉价）。
+            // 失败不阻断——Language.GetOrDefault 的源语言兜底仍在（三级取值的异常保险）。
+            try
+            {
+                await GameEntry.RefData.EnsureShardReadyAsync(ConfigShardCatalog.LanguageShardFileName);
+            }
+            catch (Exception ex)
+            {
+                Debug.Log($"[LaunchFlow] language 片提前就绪失败（文案走源语言兜底）：{ex.Message}");
+            }
+
             // 远程配置与启动序列并行拉取：不阻塞启动、失败静默沿用磁盘缓存/代码默认值
             // （FetchAndActivateAsync 自带重入保护，重试循环再次进入本方法不会重复拉取）。
             // 需要硬门控的业务（开关决定登录后流程）自行 await GameEntry.RemoteConfig.FetchAndActivateAsync()。

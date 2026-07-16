@@ -145,24 +145,70 @@ namespace Framework
         }
 
         /// <summary>
-        /// 确保持久化目录中存在可读数据库，必要时从 StreamingAssets 拷贝。
+        /// 确保持久化目录中存在可读数据库（全部片），必要时从 StreamingAssets 拷贝。
+        /// <para>
+        /// ADR-006：主片必需（决定返回值）；辅片 best-effort——项目未导出该片属正常
+        /// （表读取回退主库），只记 Log 不告警。
+        /// </para>
         /// </summary>
+        /// <param name="streamingAssetRelativePath">主片的随包相对路径（辅片固定 RefData/{片文件名}）。</param>
         public async UniTask<bool> EnsureDatabaseReadyAsync(string streamingAssetRelativePath = DefaultStreamingConfigPath)
         {
             EnsureInitialized();
 
-            string[] sourcePaths =
-            {
-                streamingAssetRelativePath,
-                DefaultDatabaseFileName
-            };
+            bool mainReady = await EnsureShardDatabaseReadyAsync(
+                ConfigShardCatalog.MainShardFileName,
+                new[] { streamingAssetRelativePath, DefaultDatabaseFileName },
+                required: true);
 
-            if (File.Exists(_dbPath))
+            foreach (string shardFileName in ConfigShardCatalog.GetAllShardFileNames())
             {
-                DatabaseRefreshResult refreshResult = await TryRefreshExistingDatabaseFromPackagedAsync(sourcePaths);
+                if (string.Equals(shardFileName, ConfigShardCatalog.MainShardFileName, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                await EnsureShardDatabaseReadyAsync(
+                    shardFileName, new[] { $"RefData/{shardFileName}" }, required: false);
+            }
+
+            return mainReady;
+        }
+
+        /// <summary>
+        /// 确保单个片的持久化库就绪（ADR-006）。供 LaunchFlow 在第一条 Loading 文案之前
+        /// 提前就绪 language 片——小文件提取，后续启动为存在性检查，幂等且廉价。
+        /// </summary>
+        /// <param name="shardFileName">片文件名，如 <see cref="ConfigShardCatalog.LanguageShardFileName"/>。</param>
+        /// <returns>该片就绪返回 true；无随包来源/提取失败返回 false（读取将回退主库或文案兜底）。</returns>
+        public async UniTask<bool> EnsureShardReadyAsync(string shardFileName)
+        {
+            EnsureInitialized();
+
+            bool isMain = string.Equals(
+                shardFileName, ConfigShardCatalog.MainShardFileName, StringComparison.OrdinalIgnoreCase);
+            string[] sourcePaths = isMain
+                ? new[] { DefaultStreamingConfigPath, DefaultDatabaseFileName }
+                : new[] { $"RefData/{shardFileName}" };
+
+            return await EnsureShardDatabaseReadyAsync(shardFileName, sourcePaths, required: isMain);
+        }
+
+        /// <summary>
+        /// 单片就绪逻辑：已存在则做随包基线刷新检查/完整性校验，缺失则从随包来源提取。
+        /// </summary>
+        /// <param name="shardFileName">片文件名。</param>
+        /// <param name="sourcePaths">随包来源相对路径（按序尝试）。</param>
+        /// <param name="required">必需片无来源记 Warning；辅片记 Log（未导出属正常）。</param>
+        private async UniTask<bool> EnsureShardDatabaseReadyAsync(
+            string shardFileName, string[] sourcePaths, bool required)
+        {
+            string dbPath = ShardDbPath(shardFileName);
+
+            if (File.Exists(dbPath))
+            {
+                DatabaseRefreshResult refreshResult = await TryRefreshExistingDatabaseFromPackagedAsync(dbPath, sourcePaths);
                 if (refreshResult.Refreshed)
                 {
-                    GameLog.Log($"[ConfigManager] Database was refreshed from packaged baseline: {_dbPath}");
+                    GameLog.Log($"[ConfigManager] Database was refreshed from packaged baseline: {dbPath}");
                     // 首包配置自动替换旧持久化库后，刷新已显示的 TextMeshProEx。
                     Language.Refresh();
                     return true;
@@ -170,25 +216,25 @@ namespace Framework
 
                 if (refreshResult.IncompatibleDetected)
                 {
-                    GameLog.Warning($"[ConfigManager] Existing database is incompatible and could not be refreshed automatically: {_dbPath}");
+                    GameLog.Warning($"[ConfigManager] Existing database is incompatible and could not be refreshed automatically: {dbPath}");
                     return false;
                 }
 
-                if (!ValidateDatabaseFile(_dbPath))
+                if (!ValidateDatabaseFile(dbPath))
                 {
-                    GameLog.Warning($"[ConfigManager] Existing database is invalid and will be reinstalled: {_dbPath}");
-                    DeleteFileQuietly(_dbPath);
+                    GameLog.Warning($"[ConfigManager] Existing database is invalid and will be reinstalled: {dbPath}");
+                    DeleteFileQuietly(dbPath);
                 }
                 else
                 {
-                    GameLog.Log($"[ConfigManager] Database is ready: {_dbPath}");
+                    GameLog.Log($"[ConfigManager] Database is ready: {dbPath}");
                     // 配置库可能晚于 UI Awake 完成，数据库 ready 后主动刷新一次多语言文本。
                     Language.Refresh();
                     return true;
                 }
             }
 
-            EnsureDatabaseDirectory(_dbPath);
+            EnsureDatabaseDirectory(dbPath);
 
             for (int i = 0; i < sourcePaths.Length; i++)
             {
@@ -198,17 +244,20 @@ namespace Framework
                 }
 
                 string sourcePath = PathUtil.GetStreamingAssetsPath(sourcePaths[i]);
-                bool copied = await TryCopyStreamingDatabaseAsync(sourcePath, _dbPath);
+                bool copied = await TryCopyStreamingDatabaseAsync(sourcePath, dbPath);
                 if (copied)
                 {
-                    GameLog.Log($"[ConfigManager] Installed packaged database: {sourcePaths[i]} -> {_dbPath}");
+                    GameLog.Log($"[ConfigManager] Installed packaged database: {sourcePaths[i]} -> {dbPath}");
                     // 首包配置首次安装后，刷新已显示的 TextMeshProEx。
                     Language.Refresh();
                     return true;
                 }
             }
 
-            GameLog.Warning($"[ConfigManager] No usable database found at persistentDataPath or StreamingAssets/RefData/config.db: {_dbPath}");
+            if (required)
+                GameLog.Warning($"[ConfigManager] No usable database found at persistentDataPath or StreamingAssets sources: {dbPath}");
+            else
+                GameLog.Log($"[ConfigManager] 分片库 {shardFileName} 无随包来源（项目未导出该片时属正常，读取将回退主库）。");
             return false;
         }
 
@@ -234,56 +283,32 @@ namespace Framework
                 return ConfigInstallResult.Failed(ConfigInstallStatus.DownloadFailed, "配置数据库地址为空");
             }
 
-            // ── 阶段 1：从 Addressables 加载载荷（区分"不存在"与"下载失败"两种终态）──
-            byte[] payload;
-            AsyncOperationHandle<TextAsset> handle = default;
-            try
+            // ── 按片迭代安装（ADR-006）────────────────────────────────────────
+            // address 参数仅作用于主片（保持既有调用语义），辅片按目录约定 RefData/{片文件名}。
+            // 任一片失败即整轮失败并回滚本轮已装片——绝不出现"新 language + 旧 main"的跨片错配；
+            // 单片"key 不存在"（NotIncluded）是正常路径（本次发行不含该片）。
+            var changedShards = new List<string>();
+            foreach (string shardFileName in ConfigShardCatalog.GetAllShardFileNames())
             {
-                handle = Addressables.LoadAssetAsync<TextAsset>(address);
-                await handle.Task;
+                bool isMain = string.Equals(
+                    shardFileName, ConfigShardCatalog.MainShardFileName, StringComparison.OrdinalIgnoreCase);
+                string shardAddress = isMain ? address : $"RefData/{shardFileName}";
 
-                if (handle.Status != AsyncOperationStatus.Succeeded || handle.Result == null)
+                ConfigInstallResult shardResult = await DownloadAndInstallShardAsync(shardFileName, shardAddress);
+                if (!shardResult.Succeeded)
                 {
-                    // key 存在但下载/加载失败（网络、bundle 损坏）必须阻断；
-                    // 只有 key 不存在（InvalidKeyException）才是"本次发行不包含配置"。
-                    if (handle.OperationException != null &&
-                        handle.OperationException.GetType().Name == "InvalidKeyException")
-                    {
-                        GameLog.Log($"[ConfigManager] 本次发行不包含热更配置数据库：{address}");
-                        return ConfigInstallResult.NotIncluded();
-                    }
-
-                    string reason = handle.OperationException?.Message ?? $"状态={handle.Status}";
-                    GameLog.Error($"[ConfigManager] 热更配置数据库下载失败 [{address}]：{reason}");
-                    return ConfigInstallResult.Failed(ConfigInstallStatus.DownloadFailed, reason);
+                    RollbackShards(changedShards, $"同轮片 {shardFileName} 安装失败");
+                    return shardResult;
                 }
 
-                payload = handle.Result.bytes;
+                if (shardResult.DatabaseChanged)
+                    changedShards.Add(shardFileName);
             }
-            catch (Exception ex) when (ex.GetType().Name == "InvalidKeyException")
-            {
-                GameLog.Log($"[ConfigManager] 本次发行不包含热更配置数据库（key 不存在）：{address}");
+
+            if (changedShards.Count == 0)
                 return ConfigInstallResult.NotIncluded();
-            }
-            catch (Exception ex)
-            {
-                GameLog.Error($"[ConfigManager] 热更配置数据库下载异常 [{address}]：{ex.Message}");
-                return ConfigInstallResult.Failed(ConfigInstallStatus.DownloadFailed, ex.Message);
-            }
-            finally
-            {
-                if (handle.IsValid())
-                {
-                    Addressables.Release(handle);
-                }
-            }
 
-            // ── 阶段 2：事务化安装（备份保留至启动确认点，见 ConfigDatabaseInstaller）──
-            ConfigInstallResult installResult = Installer.Install(payload, $"Addressables:{address}");
-            if (!installResult.DatabaseChanged)
-                return installResult;
-
-            // ── 阶段 3：重载已缓存配置（失败即恢复备份并失败关闭）───────────────
+            // ── 重载已缓存配置（失败即恢复本轮全部已装片并失败关闭）──────────────
             if (reloadLoadedConfigs)
             {
                 var loadedConfigTypes = new List<Type>(_tableConfigCache.Keys);
@@ -297,14 +322,14 @@ namespace Framework
                     catch (Exception ex)
                     {
                         GameLog.Error($"[ConfigManager] 新配置数据库重载失败，恢复上一份已确认库：{ex.Message}");
+                        RollbackShards(changedShards, "新库重载失败");
                         try
                         {
-                            Installer.RestoreLastConfirmed();
                             ReloadConfigs(loadedConfigTypes);
                         }
                         catch (Exception restoreEx)
                         {
-                            GameLog.Error($"[ConfigManager] 恢复旧配置数据库失败（备份保留待下次启动）：{restoreEx.Message}");
+                            GameLog.Error($"[ConfigManager] 恢复旧配置数据库后重载失败（备份保留待下次启动）：{restoreEx.Message}");
                         }
                         return ConfigInstallResult.Failed(ConfigInstallStatus.LoadFailed, ex.Message);
                     }
@@ -313,15 +338,117 @@ namespace Framework
 
             // 热更配置替换后，刷新可能受 language 表影响的 UI 文本。
             Language.Refresh();
-            return installResult;
+            return ConfigInstallResult.Installed();
         }
 
-        // 配置数据库事务化安装器：备份生命周期延伸到统一启动确认点。
-        // 所有权边界：installer 由本组件独占持有；dbPath 在 Initialize 后不再变化。
-        private ConfigDatabaseInstaller _installer;
+        /// <summary>
+        /// 单片下载 + 事务化安装：从 Addressables 加载载荷（区分"不存在"与"下载失败"两种终态），
+        /// 成功后经该片的 <see cref="ConfigDatabaseInstaller"/> 安装（备份保留至启动确认点）。
+        /// </summary>
+        /// <param name="shardFileName">片文件名。</param>
+        /// <param name="address">该片的 Addressables 地址。</param>
+        private async UniTask<ConfigInstallResult> DownloadAndInstallShardAsync(string shardFileName, string address)
+        {
+            byte[] payload;
+            AsyncOperationHandle<TextAsset> handle = default;
+            try
+            {
+                handle = Addressables.LoadAssetAsync<TextAsset>(address);
+                await handle.Task;
 
-        private ConfigDatabaseInstaller Installer =>
-            _installer ??= new ConfigDatabaseInstaller(_dbPath, ValidateDatabaseFile, GameLog.Log, GameLog.Error);
+                if (handle.Status != AsyncOperationStatus.Succeeded || handle.Result == null)
+                {
+                    // key 存在但下载/加载失败（网络、bundle 损坏）必须阻断；
+                    // 只有 key 不存在（InvalidKeyException）才是"本次发行不包含该片"。
+                    if (handle.OperationException != null &&
+                        handle.OperationException.GetType().Name == "InvalidKeyException")
+                    {
+                        GameLog.Log($"[ConfigManager] 本次发行不包含热更配置数据库片：{address}");
+                        return ConfigInstallResult.NotIncluded();
+                    }
+
+                    string reason = handle.OperationException?.Message ?? $"状态={handle.Status}";
+                    GameLog.Error($"[ConfigManager] 热更配置数据库片下载失败 [{address}]：{reason}");
+                    return ConfigInstallResult.Failed(ConfigInstallStatus.DownloadFailed, reason);
+                }
+
+                payload = handle.Result.bytes;
+            }
+            catch (Exception ex) when (ex.GetType().Name == "InvalidKeyException")
+            {
+                GameLog.Log($"[ConfigManager] 本次发行不包含热更配置数据库片（key 不存在）：{address}");
+                return ConfigInstallResult.NotIncluded();
+            }
+            catch (Exception ex)
+            {
+                GameLog.Error($"[ConfigManager] 热更配置数据库片下载异常 [{address}]：{ex.Message}");
+                return ConfigInstallResult.Failed(ConfigInstallStatus.DownloadFailed, ex.Message);
+            }
+            finally
+            {
+                if (handle.IsValid())
+                {
+                    Addressables.Release(handle);
+                }
+            }
+
+            return InstallerFor(shardFileName).Install(payload, $"Addressables:{address}");
+        }
+
+        /// <summary>
+        /// 回滚本轮已安装的片（各片消费自己的 .bak）。单片回滚失败只记日志继续——
+        /// 备份保留待下次启动 Step1.5 兜底重试。
+        /// </summary>
+        private void RollbackShards(List<string> shardFileNames, string reason)
+        {
+            foreach (string shardFileName in shardFileNames)
+            {
+                try
+                {
+                    InstallerFor(shardFileName).RestoreLastConfirmed();
+                }
+                catch (Exception ex)
+                {
+                    GameLog.Error($"[ConfigManager] 回滚配置片 {shardFileName} 失败（{reason}）：{ex.Message}");
+                }
+            }
+        }
+
+        // 配置数据库事务化安装器（按片实例化，ADR-006）：备份生命周期延伸到统一启动确认点。
+        // 所有权边界：installer 由本组件独占持有；dbPath 在 Initialize 后不再变化。
+        private readonly Dictionary<string, ConfigDatabaseInstaller> _installersByShard =
+            new Dictionary<string, ConfigDatabaseInstaller>(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>取指定片的事务安装器（懒创建，片库路径由主库路径推导）。</summary>
+        private ConfigDatabaseInstaller InstallerFor(string shardFileName)
+        {
+            if (!_installersByShard.TryGetValue(shardFileName, out ConfigDatabaseInstaller installer))
+            {
+                installer = new ConfigDatabaseInstaller(
+                    ShardDbPath(shardFileName), ValidateDatabaseFile, GameLog.Log, GameLog.Error);
+                _installersByShard[shardFileName] = installer;
+            }
+
+            return installer;
+        }
+
+        /// <summary>由主库路径推导片库路径（主片即主库本身，其余片同目录按片文件名落盘）。</summary>
+        private string ShardDbPath(string shardFileName)
+        {
+            return ConfigShardCatalog.GetShardDbPath(_dbPath, shardFileName);
+        }
+
+        /// <summary>
+        /// 解析表的实际读取库路径（ADR-006 片路由）。片文件缺失时回退主库并记 Log——
+        /// 未导出分片的老项目零迁移；该日志刻意不用 Warning（零告警验收环境属正常路径）。
+        /// </summary>
+        private string ResolveTableDbPath(string tableName)
+        {
+            string path = ConfigShardCatalog.ResolveDbPathForTable(_dbPath, tableName, File.Exists, out bool fellBack);
+            if (fellBack)
+                GameLog.Log($"[ConfigManager] 分片库缺失，表 {tableName} 回退主库读取。");
+            return path;
+        }
 
         /// <summary>
         /// 是否存在未确认的配置数据库备份。
@@ -333,51 +460,68 @@ namespace Framework
             get
             {
                 EnsureInitialized();
-                return Installer.HasUnconfirmedBackup;
+                foreach (string shardFileName in ConfigShardCatalog.GetAllShardFileNames())
+                {
+                    if (InstallerFor(shardFileName).HasUnconfirmedBackup)
+                        return true;
+                }
+
+                return false;
             }
         }
 
         /// <summary>
         /// 统一启动确认点动作：本次启动的全部内容（代码/资源/配置）都确认成功后，
-        /// 由 LaunchFlow 调用以清理配置数据库备份。确认前禁止调用。
+        /// 由 LaunchFlow 调用以清理全部片的配置数据库备份。确认前禁止调用。
         /// </summary>
         public void ConfirmHotUpdateDatabase()
         {
             EnsureInitialized();
-            Installer.ConfirmInstalled();
+            foreach (string shardFileName in ConfigShardCatalog.GetAllShardFileNames())
+                InstallerFor(shardFileName).ConfirmInstalled();
         }
 
         /// <summary>
-        /// 内容级出厂回退：删除持久化数据库与备份，下次 EnsureDatabaseReadyAsync 会从
+        /// 内容级出厂回退：删除全部片的持久化数据库与备份，下次 EnsureDatabaseReadyAsync 会从
         /// StreamingAssets 重新安装出厂基线。仅由内容级崩溃循环恢复路径调用。
         /// </summary>
         public void ResetDatabaseToFactoryBaseline()
         {
             EnsureInitialized();
             UnloadAllConfigs();
-            DeleteFileQuietly(_dbPath);
-            DeleteFileQuietly(Installer.BackupPath);
-            GameLog.Warning("[ConfigManager] 配置数据库已回退出厂基线（持久化库与备份已清除）。");
+            foreach (string shardFileName in ConfigShardCatalog.GetAllShardFileNames())
+            {
+                DeleteFileQuietly(ShardDbPath(shardFileName));
+                DeleteFileQuietly(InstallerFor(shardFileName).BackupPath);
+            }
+
+            GameLog.Warning("[ConfigManager] 配置数据库已回退出厂基线（全部片的持久化库与备份已清除）。");
         }
 
         /// <summary>
-        /// 启动确认前失败的恢复动作：恢复上一份已确认配置数据库（若存在备份）。
+        /// 启动确认前失败的恢复动作：恢复上一份已确认配置数据库（全部片，各自有备份才恢复）。
         /// 由 LaunchFlow 失败路径或下次启动早期（检测到未确认 Pending 时）调用。
         /// </summary>
-        /// <returns>实际发生了恢复返回 true。</returns>
+        /// <returns>任一片实际发生了恢复返回 true。</returns>
         public bool RestoreLastConfirmedDatabaseIfAny()
         {
             EnsureInitialized();
-            try
+            bool anyRestored = false;
+            foreach (string shardFileName in ConfigShardCatalog.GetAllShardFileNames())
             {
-                return Installer.RestoreLastConfirmed();
+                try
+                {
+                    anyRestored |= InstallerFor(shardFileName).RestoreLastConfirmed();
+                }
+                catch (Exception ex)
+                {
+                    // 恢复失败已在 installer 内保留备份供下次启动重试；这里只向上暴露日志，
+                    // 不抛出中断恢复链——其余片仍要继续尝试恢复。
+                    GameLog.Error($"[ConfigManager] 配置数据库片 {shardFileName} 恢复失败：{ex.Message}");
+                }
             }
-            catch (Exception ex)
-            {
-                // 恢复失败已在 installer 内保留备份供下次启动重试；这里只向上暴露日志，不再抛出中断恢复链。
-                GameLog.Error($"[ConfigManager] 配置数据库恢复失败：{ex.Message}");
-                return false;
-            }
+
+            return anyRestored;
         }
 
         /// <summary>
@@ -559,7 +703,7 @@ namespace Framework
                     ? GetTableNameFromType(configType)
                     : config.TableName;
 
-                config.Load(_dbPath, tableName);
+                config.Load(ResolveTableDbPath(tableName), tableName);
                 _tableConfigCache[configType] = config;
 
                 GameLog.Log($"[ConfigManager] Loaded table config {configType.Name} with {config.Count} rows.");
@@ -592,7 +736,7 @@ namespace Framework
                 ? GetTableNameFromType(configType)
                 : config.TableName;
 
-            config.Load(_dbPath, tableName);
+            config.Load(ResolveTableDbPath(tableName), tableName);
             _tableConfigCache[configType] = config;
 
             GameLog.Log($"[ConfigManager] Preloaded table config {configType.Name} with {config.Count} rows.");
@@ -612,7 +756,7 @@ namespace Framework
             {
                 string tableName = GetTableName(configType);
                 TConfig config;
-                using (var db = new SQLiteHelper(_dbPath))
+                using (var db = new SQLiteHelper(ResolveTableDbPath(tableName)))
                 {
                     // general 配置表保持 Key/ValueType/Value/Comment 纵向结构，运行时再组装为强类型对象。
                     var rows = db.Query<GeneralConfigRow>(
@@ -853,9 +997,10 @@ namespace Framework
         }
 
         /// <summary>
-        /// 当持久化数据库结构落后于首包数据库时，自动用首包数据库刷新本地库。
+        /// 当持久化数据库结构落后于首包数据库时，自动用首包数据库刷新本地库（按片路径操作）。
         /// </summary>
-        private async UniTask<DatabaseRefreshResult> TryRefreshExistingDatabaseFromPackagedAsync(string[] sourcePaths)
+        private async UniTask<DatabaseRefreshResult> TryRefreshExistingDatabaseFromPackagedAsync(
+            string targetDbPath, string[] sourcePaths)
         {
             var result = new DatabaseRefreshResult();
             if (sourcePaths == null || sourcePaths.Length == 0)
@@ -873,7 +1018,7 @@ namespace Framework
                 string sourcePath = PathUtil.GetStreamingAssetsPath(sourcePaths[i]);
 
 #if UNITY_ANDROID && !UNITY_EDITOR
-                string tempSourcePath = _dbPath + ".packaged";
+                string tempSourcePath = targetDbPath + ".packaged";
                 byte[] sourceBytes = await TryReadStreamingDatabaseBytesAsync(sourcePath);
                 if (sourceBytes == null || sourceBytes.Length == 0)
                 {
@@ -883,7 +1028,7 @@ namespace Framework
                 try
                 {
                     File.WriteAllBytes(tempSourcePath, sourceBytes);
-                    bool installed = TryInstallPackagedDatabaseIfRefreshNeeded(tempSourcePath, $"StreamingAssets:{sourcePaths[i]}", ref result);
+                    bool installed = TryInstallPackagedDatabaseIfRefreshNeeded(targetDbPath, tempSourcePath, $"StreamingAssets:{sourcePaths[i]}", ref result);
                     if (installed || !result.IncompatibleDetected)
                     {
                         return result;
@@ -899,7 +1044,7 @@ namespace Framework
                     continue;
                 }
 
-                bool installed = TryInstallPackagedDatabaseIfRefreshNeeded(sourcePath, $"StreamingAssets:{sourcePaths[i]}", ref result);
+                bool installed = TryInstallPackagedDatabaseIfRefreshNeeded(targetDbPath, sourcePath, $"StreamingAssets:{sourcePaths[i]}", ref result);
                 if (installed || !result.IncompatibleDetected)
                 {
                     return result;
@@ -930,24 +1075,24 @@ namespace Framework
 #endif
 
         /// <summary>
-        /// 如果持久化数据库缺少首包数据库已有结构，或首包内容基线更新，则安装首包数据库。
+        /// 如果持久化数据库缺少首包数据库已有结构，或首包内容基线更新，则安装首包数据库（按片路径操作）。
         /// </summary>
-        private bool TryInstallPackagedDatabaseIfRefreshNeeded(string packagedDbPath, string sourceName, ref DatabaseRefreshResult result)
+        private bool TryInstallPackagedDatabaseIfRefreshNeeded(string targetDbPath, string packagedDbPath, string sourceName, ref DatabaseRefreshResult result)
         {
             if (!ValidateDatabaseFile(packagedDbPath))
             {
                 return false;
             }
 
-            bool currentDatabaseValid = ValidateDatabaseFile(_dbPath);
+            bool currentDatabaseValid = ValidateDatabaseFile(targetDbPath);
             if (currentDatabaseValid
-                && IsDatabaseCompatibleWithPackaged(_dbPath, packagedDbPath)
-                && !ShouldRefreshFromNewerPackagedBaseline(packagedDbPath))
+                && IsDatabaseCompatibleWithPackaged(targetDbPath, packagedDbPath)
+                && !ShouldRefreshFromNewerPackagedBaseline(targetDbPath, packagedDbPath))
             {
                 return false;
             }
 
-            if (!currentDatabaseValid || !IsDatabaseCompatibleWithPackaged(_dbPath, packagedDbPath))
+            if (!currentDatabaseValid || !IsDatabaseCompatibleWithPackaged(targetDbPath, packagedDbPath))
             {
                 result.IncompatibleDetected = true;
                 GameLog.Warning($"[ConfigManager] Existing database schema is older than packaged baseline. Reinstalling from {sourceName}.");
@@ -960,9 +1105,9 @@ namespace Framework
 
             try
             {
-                EnsureDatabaseDirectory(_dbPath);
-                File.Copy(packagedDbPath, _dbPath, overwrite: true);
-                result.Refreshed = ValidateDatabaseFile(_dbPath);
+                EnsureDatabaseDirectory(targetDbPath);
+                File.Copy(packagedDbPath, targetDbPath, overwrite: true);
+                result.Refreshed = ValidateDatabaseFile(targetDbPath);
                 return result.Refreshed;
             }
             catch (Exception ex)
@@ -975,7 +1120,7 @@ namespace Framework
         /// <summary>
         /// 判断首包数据库文件是否比当前持久化数据库更新，且本地没有安装更高资源版本的热更库。
         /// </summary>
-        private bool ShouldRefreshFromNewerPackagedBaseline(string packagedDbPath)
+        private bool ShouldRefreshFromNewerPackagedBaseline(string targetDbPath, string packagedDbPath)
         {
 #if UNITY_ANDROID && !UNITY_EDITOR
             // Android 包内 StreamingAssets 没有可靠文件时间戳，保留结构兼容刷新和 Addressables 热更刷新。
@@ -983,13 +1128,13 @@ namespace Framework
 #else
             if (string.IsNullOrEmpty(packagedDbPath)
                 || !File.Exists(packagedDbPath)
-                || !File.Exists(_dbPath))
+                || !File.Exists(targetDbPath))
             {
                 return false;
             }
 
             DateTime packagedWriteTimeUtc = File.GetLastWriteTimeUtc(packagedDbPath);
-            DateTime currentWriteTimeUtc = File.GetLastWriteTimeUtc(_dbPath);
+            DateTime currentWriteTimeUtc = File.GetLastWriteTimeUtc(targetDbPath);
             if (packagedWriteTimeUtc <= currentWriteTimeUtc)
             {
                 return false;
