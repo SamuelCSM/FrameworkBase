@@ -113,6 +113,37 @@ namespace Framework.Diagnostics
                 _ => LogDump.DumpAsync());
 
             registry.Register(
+                new CommandInfo("reddot", "查询共享红点树：无参列出全部非零节点，带路径查单点",
+                    usage: "reddot [路径]",
+                    requiredAccess: CommandAccessLevel.Privileged),
+                args =>
+                {
+                    var tree = Core.GameEntry.RedDots;
+                    if (tree == null)
+                        return CommandResult.Ok("红点树未初始化。");
+
+                    string path = args.GetStringOrDefault(0);
+                    if (!string.IsNullOrEmpty(path))
+                        return CommandResult.Ok($"{path} = {tree.GetCount(path)}");
+
+                    var sb = new StringBuilder(256);
+                    sb.Append("红点树（非零节点，总计 ").Append(tree.TotalCount).Append("）：");
+                    int shown = 0;
+                    foreach (Framework.Foundation.RedDotNodeInfo info in tree.Snapshot())
+                    {
+                        if (info.TotalCount == 0)
+                            continue;
+                        sb.AppendLine().Append("  ").Append(info.Path).Append(" = ").Append(info.TotalCount);
+                        if (info.HasChildren)
+                            sb.Append("（聚合）");
+                        shown++;
+                    }
+                    if (shown == 0)
+                        sb.AppendLine().Append("  （全空）");
+                    return CommandResult.Ok(sb.ToString());
+                });
+
+            registry.Register(
                 new CommandInfo("sysinfo", "设备与运行环境信息",
                     requiredAccess: CommandAccessLevel.Privileged),
                 _ =>

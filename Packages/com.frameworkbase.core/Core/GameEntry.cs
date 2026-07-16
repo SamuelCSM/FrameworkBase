@@ -124,6 +124,14 @@ namespace Framework.Core
         /// </summary>
         public static Framework.Diagnostics.CommandRegistry Commands { get; private set; }
 
+        /// <summary>
+        /// 共享红点树 — 业务往叶子写计数（<c>RedDots.SetCount("Mail/System", n)</c>），
+        /// UI 挂 <see cref="RedDotBadge"/> 或代码 Subscribe 绑定路径。
+        /// 登出时业务应自行清理账号态红点（框架不猜哪些路径属于账号维度）。
+        /// 独立玩法可自建局部 <see cref="Framework.Foundation.RedDotTree"/>，不必都挤共享树。
+        /// </summary>
+        public static Framework.Foundation.RedDotTree RedDots { get; private set; }
+
         // ── 生命周期 ─────────────────────────────────────────────────────────
 
         protected override void Awake()
@@ -136,6 +144,17 @@ namespace Framework.Core
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
             Commands.SetGrantedAccess(Framework.Diagnostics.CommandAccessLevel.Development);
 #endif
+
+            // 共享红点树与命令总线同期就位：Manager / 业务初始化期即可写数或绑定。
+            // 订阅者异常送崩溃面包屑（红点回调炸 UI 是常见的隐性事故源，留痕辅助定位）。
+            RedDots = new Framework.Foundation.RedDotTree
+            {
+                ObserverErrorSink = ex =>
+                {
+                    Debug.LogError("[GameEntry] 红点订阅者异常（已隔离）");
+                    Debug.LogException(ex);
+                },
+            };
 
 #if !UNITY_EDITOR && DEVELOPMENT_BUILD
             // 非 Editor 的 Development Build 自动挂载屏幕日志面板（接入命令总线后带命令输入行）
