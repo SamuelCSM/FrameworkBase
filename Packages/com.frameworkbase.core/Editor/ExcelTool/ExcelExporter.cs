@@ -4,6 +4,7 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text;
+using Framework;
 using UnityEditor;
 using UnityEngine;
 using SQLite;
@@ -119,6 +120,12 @@ namespace Editor.ExcelTool
         private bool _deferAddressableSync;
 
         /// <summary>
+        /// 本轮导出实际写入/清理过的片文件名（ADR-006）：批量结束后只对这些片同步热更 .bytes。
+        /// </summary>
+        private readonly HashSet<string> _touchedShardFileNames =
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
         /// 构造函数
         /// </summary>
         public ExcelExporter(ExportConfig config = null)
@@ -194,6 +201,7 @@ namespace Editor.ExcelTool
             var results = new List<ExportResult>();
             bool canceled = false;
             _deferAddressableSync = _config.OutputTarget == DatabaseOutputTarget.Both;
+            _touchedShardFileNames.Clear();
 
             try
             {
@@ -305,7 +313,9 @@ namespace Editor.ExcelTool
         /// </summary>
         private void ExportToSQLite(ExcelReader.ExcelSheetData sheetData, ExportResult result)
         {
-            string outputDbPath = ResolveOutputDbPath();
+            // ADR-006 片路由：表落到片目录声明的库文件（未登记表归主片 config.db）。
+            string shardFileName = ConfigShardCatalog.ResolveFileNameByTable(sheetData.SheetName);
+            string outputDbPath = ResolveOutputDbPath(shardFileName);
 
             var directory = Path.GetDirectoryName(outputDbPath);
             if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
@@ -327,100 +337,149 @@ namespace Editor.ExcelTool
                 InsertData(connection, sheetData, result);
             }
 
+            _touchedShardFileNames.Add(shardFileName);
             result.Success = true;
 
             if (!_deferAddressableSync)
-                FinalizeOutputIfNeeded();
+                FinalizeOutputIfNeeded(shardFileName);
         }
 
         /// <summary>
-        /// 根据输出目标解析实际写入的 SQLite 路径。
+        /// 首包侧片库路径：主片沿用配置路径原样（允许项目自定义主库文件名），辅片同目录换片文件名。
         /// </summary>
-        private string ResolveOutputDbPath()
+        private string StreamingShardDbPath(string shardFileName)
+        {
+            return IsMainShard(shardFileName)
+                ? _config.OutputDbPath
+                : WithFileName(_config.OutputDbPath, shardFileName);
+        }
+
+        /// <summary>
+        /// 热更侧片 .bytes 路径：主片沿用配置路径原样，辅片同目录按「{片文件名}.bytes」落盘
+        /// （ResourcesOut 同步规则去 .bytes 后地址即 RefData/{片文件名}）。
+        /// </summary>
+        private string AddressableShardBytesPath(string shardFileName)
+        {
+            return IsMainShard(shardFileName)
+                ? _config.AddressableBytesOutputPath
+                : WithFileName(_config.AddressableBytesOutputPath, shardFileName + ".bytes");
+        }
+
+        private static bool IsMainShard(string shardFileName)
+        {
+            return string.Equals(
+                shardFileName, ConfigShardCatalog.MainShardFileName, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static string WithFileName(string basePath, string fileName)
+        {
+            string directory = Path.GetDirectoryName(basePath);
+            return string.IsNullOrEmpty(directory) ? fileName : Path.Combine(directory, fileName);
+        }
+
+        /// <summary>
+        /// 根据输出目标解析指定片实际写入的 SQLite 路径。
+        /// </summary>
+        private string ResolveOutputDbPath(string shardFileName)
         {
             switch (_config.OutputTarget)
             {
                 case DatabaseOutputTarget.StreamingAssetsOnly:
                     if (string.IsNullOrEmpty(_config.OutputDbPath))
                         throw new ArgumentException("首包数据库路径不能为空");
-                    return _config.OutputDbPath;
+                    return StreamingShardDbPath(shardFileName);
 
                 case DatabaseOutputTarget.HotUpdateOnly:
                     if (string.IsNullOrEmpty(_config.AddressableBytesOutputPath))
                         throw new ArgumentException("热更数据库路径不能为空");
-                    EnsureHotUpdateDatabaseExists();
-                    return _config.AddressableBytesOutputPath;
+                    EnsureHotUpdateDatabaseExists(shardFileName);
+                    return AddressableShardBytesPath(shardFileName);
 
                 case DatabaseOutputTarget.Both:
                 default:
                     if (string.IsNullOrEmpty(_config.OutputDbPath))
                         throw new ArgumentException("首包数据库路径不能为空");
-                    return _config.OutputDbPath;
+                    return StreamingShardDbPath(shardFileName);
             }
         }
 
         /// <summary>
-        /// 热更库不存在时，从首包拷贝一份作为合并基线。
+        /// 指定片的热更库不存在时，从该片首包库拷贝一份作为合并基线。
         /// </summary>
-        private void EnsureHotUpdateDatabaseExists()
+        private void EnsureHotUpdateDatabaseExists(string shardFileName)
         {
-            if (File.Exists(_config.AddressableBytesOutputPath))
+            string bytesPath = AddressableShardBytesPath(shardFileName);
+            string streamingPath = StreamingShardDbPath(shardFileName);
+
+            if (File.Exists(bytesPath))
                 return;
 
-            if (!File.Exists(_config.OutputDbPath))
+            if (!File.Exists(streamingPath))
                 return;
 
-            string directory = Path.GetDirectoryName(_config.AddressableBytesOutputPath);
+            string directory = Path.GetDirectoryName(bytesPath);
             if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
                 Directory.CreateDirectory(directory);
 
-            File.Copy(_config.OutputDbPath, _config.AddressableBytesOutputPath, overwrite: false);
+            File.Copy(streamingPath, bytesPath, overwrite: false);
 
             if (_config.VerboseLogging)
-                Debug.Log($"[ExcelExporter] 已从首包初始化热更数据库: {_config.AddressableBytesOutputPath}");
+                Debug.Log($"[ExcelExporter] 已从首包初始化热更数据库: {bytesPath}");
         }
 
         /// <summary>
-        /// 单表导出结束后，按输出目标同步热更资源。
+        /// 单表导出结束后，按输出目标同步指定片的热更资源。
         /// </summary>
-        private void FinalizeOutputIfNeeded()
+        private void FinalizeOutputIfNeeded(string shardFileName)
         {
             switch (_config.OutputTarget)
             {
                 case DatabaseOutputTarget.StreamingAssetsOnly:
-                    ImportAssetIfNeeded(_config.OutputDbPath);
+                    ImportAssetIfNeeded(StreamingShardDbPath(shardFileName));
                     break;
 
                 case DatabaseOutputTarget.HotUpdateOnly:
-                    ImportAssetIfNeeded(_config.AddressableBytesOutputPath);
+                    ImportAssetIfNeeded(AddressableShardBytesPath(shardFileName));
                     break;
 
                 case DatabaseOutputTarget.Both:
-                    SyncAddressableBytesIfNeeded();
+                    SyncAddressableBytes(shardFileName);
                     break;
             }
         }
 
         /// <summary>
-        /// 将首包整库同步为 Addressables 热更 .bytes。
+        /// 批量导出收尾：把本轮写入/清理过的每个片的首包库同步为 Addressables 热更 .bytes。
         /// </summary>
         private void SyncAddressableBytesIfNeeded()
+        {
+            foreach (string shardFileName in _touchedShardFileNames)
+                SyncAddressableBytes(shardFileName);
+        }
+
+        /// <summary>
+        /// 将指定片的首包整库同步为 Addressables 热更 .bytes。
+        /// </summary>
+        private void SyncAddressableBytes(string shardFileName)
         {
             if (string.IsNullOrEmpty(_config.AddressableBytesOutputPath))
                 throw new ArgumentException("热更数据库路径不能为空");
 
-            if (!File.Exists(_config.OutputDbPath))
-                throw new FileNotFoundException("首包配置数据库不存在，无法同步热更文件", _config.OutputDbPath);
+            string streamingPath = StreamingShardDbPath(shardFileName);
+            string bytesPath = AddressableShardBytesPath(shardFileName);
 
-            string directory = Path.GetDirectoryName(_config.AddressableBytesOutputPath);
+            if (!File.Exists(streamingPath))
+                throw new FileNotFoundException("首包配置数据库不存在，无法同步热更文件", streamingPath);
+
+            string directory = Path.GetDirectoryName(bytesPath);
             if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
                 Directory.CreateDirectory(directory);
 
-            File.Copy(_config.OutputDbPath, _config.AddressableBytesOutputPath, overwrite: true);
-            ImportAssetIfNeeded(_config.AddressableBytesOutputPath);
+            File.Copy(streamingPath, bytesPath, overwrite: true);
+            ImportAssetIfNeeded(bytesPath);
 
             if (_config.VerboseLogging)
-                Debug.Log($"[ExcelExporter] 已同步热更配置数据库: {_config.AddressableBytesOutputPath}");
+                Debug.Log($"[ExcelExporter] 已同步热更配置数据库: {bytesPath}");
         }
 
         private static void ImportAssetIfNeeded(string assetPath)
@@ -432,37 +491,57 @@ namespace Editor.ExcelTool
         }
 
         /// <summary>
-        /// 批量导出后清理数据库中不再由 Excel 源目录声明的旧表。
+        /// 批量导出后按片清理数据库中不再由 Excel 源目录声明的旧表（ADR-006）。
+        /// 每个片只保留本轮路由到该片的表——表迁片后会自动从旧片删除，杜绝两片各留一份的漂移。
         /// </summary>
         private void PruneMissingTables(IEnumerable<string> exportedTableNames)
         {
-            var keepTables = new HashSet<string>(
-                exportedTableNames.Where(t => !string.IsNullOrEmpty(t)),
-                StringComparer.OrdinalIgnoreCase);
-            string outputDbPath = ResolveOutputDbPath();
-
-            if (!File.Exists(outputDbPath))
+            // 按片分组本轮导出的表名：片 → 应保留表集合。
+            var keepTablesByShard = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+            foreach (string tableName in exportedTableNames.Where(t => !string.IsNullOrEmpty(t)))
             {
-                return;
+                string shardFileName = ConfigShardCatalog.ResolveFileNameByTable(tableName);
+                if (!keepTablesByShard.TryGetValue(shardFileName, out HashSet<string> keep))
+                {
+                    keep = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    keepTablesByShard[shardFileName] = keep;
+                }
+
+                keep.Add(tableName);
             }
 
-            using (var connection = new SQLiteConnection(outputDbPath))
+            foreach (string shardFileName in ConfigShardCatalog.GetAllShardFileNames())
             {
-                var tableNames = connection.Query<SqliteTableInfo>(
-                        "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
-                    .Select(t => t.Name)
-                    .Where(t => !string.IsNullOrEmpty(t))
-                    .ToList();
+                string pruneDbPath = _config.OutputTarget == DatabaseOutputTarget.HotUpdateOnly
+                    ? AddressableShardBytesPath(shardFileName)
+                    : StreamingShardDbPath(shardFileName);
 
-                foreach (string tableName in tableNames)
+                if (!File.Exists(pruneDbPath))
                 {
-                    if (keepTables.Contains(tableName))
-                    {
-                        continue;
-                    }
+                    continue;
+                }
 
-                    connection.Execute($"DROP TABLE IF EXISTS {QuoteSqlIdentifier(tableName)}");
-                    Debug.Log($"[ExcelExporter] 已清理旧配置表: {tableName}");
+                keepTablesByShard.TryGetValue(shardFileName, out HashSet<string> keepTables);
+
+                using (var connection = new SQLiteConnection(pruneDbPath))
+                {
+                    var tableNames = connection.Query<SqliteTableInfo>(
+                            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
+                        .Select(t => t.Name)
+                        .Where(t => !string.IsNullOrEmpty(t))
+                        .ToList();
+
+                    foreach (string tableName in tableNames)
+                    {
+                        if (keepTables != null && keepTables.Contains(tableName))
+                        {
+                            continue;
+                        }
+
+                        connection.Execute($"DROP TABLE IF EXISTS {QuoteSqlIdentifier(tableName)}");
+                        _touchedShardFileNames.Add(shardFileName); // 清理过的片同样要同步 .bytes
+                        Debug.Log($"[ExcelExporter] 已清理旧配置表 [{shardFileName}]: {tableName}");
+                    }
                 }
             }
         }

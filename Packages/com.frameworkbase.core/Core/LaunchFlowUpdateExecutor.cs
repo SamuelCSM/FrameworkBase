@@ -255,7 +255,9 @@ namespace Framework.Core
 
             Debug.LogWarning("[LaunchFlow] Step 6  需要整包更新");
             loading.ShowForceUpdate(
-                $"发现新版本 {serverVersion.AppVersion}，需要前往应用商店更新后才能继续游戏。",
+                string.Format(
+                    Language.GetOrDefault("#1_launch_force_update", "发现新版本 {0}，需要前往应用商店更新后才能继续游戏。"),
+                    serverVersion.AppVersion),
                 updateUrl: serverVersion.UpdateUrl
             );
             return true;
@@ -264,7 +266,7 @@ namespace Framework.Core
         /// <summary>执行 Step6b：准备配置数据库。</summary>
         public static async UniTask<bool> ExecuteConfigPrepareAsync(LoadingWindow loading)
         {
-            loading.SetStatus("正在准备配置数据...");
+            loading.SetStatus(Language.GetOrDefault("#1_launch_config_prepare", "正在准备配置数据..."));
             loading.SetProgress(0.82f);
             bool configReady = await GameEntry.RefData.EnsureDatabaseReadyAsync();
             if (!configReady)
@@ -285,7 +287,7 @@ namespace Framework.Core
             if (!resourceUpdated)
                 return new ConfigApplyResult { Success = true, Applied = false, Updated = false, Message = "" };
 
-            loading.SetStatus("正在应用配置更新...");
+            loading.SetStatus(Language.GetOrDefault("#1_launch_config_apply", "正在应用配置更新..."));
             loading.SetProgress(0.84f);
             ConfigInstallResult installResult = await GameEntry.RefData.UpdateDatabaseFromAddressablesAsync();
 

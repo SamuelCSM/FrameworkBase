@@ -92,18 +92,18 @@ namespace Framework.Core
                     case LoginFlowState.Connecting:
                     case LoginFlowState.Authenticating:
                         EnsureAuthInputBlock();
-                        window.SetStatus("正在登录...");
+                        window.SetStatus(Language.GetOrDefault("#1_login_authenticating", "正在登录..."));
                         window.SetInteractable(false);
                         break;
                     case LoginFlowState.Failed:
                     case LoginFlowState.Cancelled:
                         ReleaseAuthInputBlock();
                         window.SetInteractable(true);
-                        window.SetStatus("登录失败，请重试");
+                        window.SetStatus(Language.GetOrDefault("#1_login_failed", "登录失败，请重试"));
                         break;
                     case LoginFlowState.Success:
                         ReleaseAuthInputBlock();
-                        window.SetStatus("登录成功");
+                        window.SetStatus(Language.GetOrDefault("#1_login_success", "登录成功"));
                         break;
                     default:
                         ReleaseAuthInputBlock();

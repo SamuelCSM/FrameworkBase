@@ -10,16 +10,27 @@ using Framework.Storage;
 
 namespace Framework.HotUpdate
 {
+    /// <summary>
+    /// CDN 下载/校验的失败类别。它决定回退与熔断策略：传输类可短暂隔离后重试，完整性类隔离更久，
+    /// 安全/配置类与 Host 无关、继续回退也不可能恢复，必须失败关闭。
+    /// </summary>
     internal enum CdnFailureKind
     {
+        /// <summary>无失败。</summary>
         None,
+        /// <summary>传输层失败（连接、超时、非 2xx 等）；累计到阈值短暂隔离该 Host。</summary>
         Transport,
+        /// <summary>内容完整性失败（哈希/长度/身份不符）；更可能是投毒或错配，隔离时间更长。</summary>
         Integrity,
+        /// <summary>安全配置错误（如本地信任根缺失）；与 Host 无关，立即失败关闭，不再回退。</summary>
         Security,
+        /// <summary>目标 Host 处于熔断隔离期，本轮不参与候选。</summary>
         CircuitOpen,
+        /// <summary>路由/端点配置非法（不合规拓扑）；构建门禁应已拦截，运行时兜底。</summary>
         Configuration,
     }
 
+    /// <summary>单个端点一次下载后的校验结论；失败时携带类别与可读原因，供回退决策与日志使用。</summary>
     internal readonly struct CdnValidationResult
     {
         private CdnValidationResult(bool isValid, CdnFailureKind failureKind, string reason)
@@ -95,6 +106,10 @@ namespace Framework.HotUpdate
         }
     }
 
+    /// <summary>
+    /// 一个已通过安全准入的可信 CDN 渠道根。<see cref="OriginKey"/> 是「传输故障域」标识
+    /// （scheme + 主机 + 端口），熔断状态按它聚合；不同端点必须是不同 Origin 才构成独立故障域。
+    /// </summary>
     internal sealed class TrustedCdnEndpoint
     {
         public TrustedCdnEndpoint(string name, Uri baseUri)
@@ -111,6 +126,7 @@ namespace Framework.HotUpdate
         public string BuildUrl(string relativePath) => new Uri(BaseUri, relativePath).AbsoluteUri;
     }
 
+    /// <summary>某个端点 + 安全相对路径解析出的一次下载路由（绝对 URL）。相对路径是唯一输入，调用方不能注入新 Host。</summary>
     internal readonly struct TrustedCdnRoute
     {
         public TrustedCdnRoute(TrustedCdnEndpoint endpoint, string relativePath)
@@ -431,6 +447,7 @@ namespace Framework.HotUpdate
         }
     }
 
+    /// <summary>一次（可能跨多个端点回退的）下载的最终结果：成败、末次失败类别、尝试端点数、成功端点名与原因。</summary>
     internal readonly struct CdnDownloadResult
     {
         public CdnDownloadResult(bool success, CdnFailureKind failureKind, int attempts, string endpointName, string reason)
@@ -449,6 +466,10 @@ namespace Framework.HotUpdate
         public string Reason { get; }
     }
 
+    /// <summary>
+    /// 下载完成后对落盘文件做内容校验的回调。由调用方注入签名/哈希/身份校验逻辑，
+    /// 让下载器与「什么算可信」解耦；返回非 <see cref="CdnFailureKind.None"/> 即触发回退或失败关闭。
+    /// </summary>
     internal delegate UniTask<CdnValidationResult> CdnDownloadedFileValidator(
         TrustedCdnRoute route,
         string downloadedPath,

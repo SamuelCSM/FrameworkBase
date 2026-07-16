@@ -4,11 +4,19 @@ using UnityEngine;
 
 namespace Framework.Network
 {
+    /// <summary>
+    /// 网络承载类型。承载在 Wi-Fi↔蜂窝之间切换属"网络代际变化"，会触发废弃旧连接后重连，
+    /// 避免沿用换网前建立的半开连接。
+    /// </summary>
     public enum NetworkTransportKind
     {
+        /// <summary>无网络。</summary>
         None,
+        /// <summary>局域网 / Wi-Fi。</summary>
         LocalArea,
+        /// <summary>蜂窝移动网络。</summary>
         Carrier,
+        /// <summary>可达但类型未知（平台未提供细分）。</summary>
         Unknown,
     }
 
@@ -20,6 +28,7 @@ namespace Framework.Network
         SessionExpired,
     }
 
+    /// <summary>重连后重鉴权结果到"是否重试/是否可冲刷离线队列"的纯映射；集中一处避免各调用点各判各的。</summary>
     internal static class NetworkReauthenticationPolicy
     {
         public static bool ShouldRetry(NetworkReauthenticationResult result) =>
@@ -49,6 +58,10 @@ namespace Framework.Network
             string.Equals(Fingerprint, other.Fingerprint, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// 网络连通性快照来源。默认实现只能区分无网/局域网/蜂窝；项目可注入原生网络监控，
+    /// 用不含个人信息（如 SSID）的接口/路由代际作为 Fingerprint，以识别同类型网络之间的切换。
+    /// </summary>
     public interface INetworkConnectivityProvider
     {
         NetworkConnectivitySnapshot Capture();
@@ -76,15 +89,22 @@ namespace Framework.Network
         }
     }
 
+    /// <summary>回前台/网络变化后策略给出的恢复动作，从"无需处理"到"废弃旧连接并等网"逐级升级。</summary>
     internal enum NetworkRecoveryAction
     {
+        /// <summary>无需恢复（未曾进入后台或状态无变化）。</summary>
         None,
+        /// <summary>短后台且网络未变：先探活旧连接，探活通过即复用。</summary>
         ProbeExistingConnection,
+        /// <summary>需要重连，但沿用当前 Epoch（无网络代际变化）。</summary>
         Reconnect,
+        /// <summary>长后台或网络代际变化：废弃旧 Epoch 后串行重连 + 重鉴权。</summary>
         InvalidateAndReconnect,
+        /// <summary>废弃旧 Epoch，但当前无网可用，等网络恢复再重连。</summary>
         InvalidateAndWaitForNetwork,
     }
 
+    /// <summary>一次恢复决策：动作 + 可读原因 + 后台时长与是否发生网络代际变化，供执行层与日志使用。</summary>
     internal readonly struct NetworkRecoveryDecision
     {
         public NetworkRecoveryDecision(
@@ -214,6 +234,7 @@ namespace Framework.Network
         }
     }
 
+    /// <summary>单调毫秒时钟。用 <see cref="Stopwatch"/> 而非墙钟，避免系统时间被回拨/校时时误判后台时长。</summary>
     internal static class NetworkMonotonicClock
     {
         public static long NowMilliseconds() =>
