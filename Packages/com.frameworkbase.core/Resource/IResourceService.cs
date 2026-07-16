@@ -15,6 +15,9 @@ namespace Framework
     /// </summary>
     public interface IResourceService : IResourceScopeHost
     {
+        /// <summary>查询地址是否存在可加载的资源位置（只查 Catalog，不加载、不计数）。</summary>
+        UniTask<bool> ExistsAsync(string address);
+
         /// <summary>加载资源（带下载/加载进度回调）。</summary>
         UniTask<T> LoadAssetAsync<T>(string address, Action<float> onProgress) where T : UnityEngine.Object;
 

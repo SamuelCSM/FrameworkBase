@@ -363,6 +363,34 @@ namespace Framework
         }
 
         /// <summary>
+        /// 查询地址是否存在可加载的资源位置。只查 Catalog 不加载资源本体、不进引用计数，
+        /// 供「按候选链探测」类场景（如本地化资源回退）使用。
+        /// 注意结果反映当前 Catalog：Catalog 热更后同一地址的存在性可能变化，调用方缓存需自行失效。
+        /// </summary>
+        public async UniTask<bool> ExistsAsync(string address)
+        {
+            if (string.IsNullOrEmpty(address))
+                return false;
+
+            var handle = Addressables.LoadResourceLocationsAsync(address);
+            try
+            {
+                var locations = await handle.Task;
+                return locations != null && locations.Count > 0;
+            }
+            catch (Exception e)
+            {
+                GameLog.Error($"ExistsAsync: 查询资源位置异常 - {address}, 错误: {e.Message}");
+                return false;
+            }
+            finally
+            {
+                if (handle.IsValid())
+                    Addressables.Release(handle);
+            }
+        }
+
+        /// <summary>
         /// 异步加载资源
         /// </summary>
         /// <typeparam name="T">资源类型</typeparam>
