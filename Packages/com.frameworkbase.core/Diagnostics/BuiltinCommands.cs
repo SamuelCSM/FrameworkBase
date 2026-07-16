@@ -106,6 +106,12 @@ namespace Framework.Diagnostics
                         : "未连接。");
                 });
 
+            // 白名单级：正式包 GM 白名单账号可用——日志回捞正是给「真机才复现」的问题准备的。
+            registry.Register(
+                new CommandInfo("logdump", "打包日志目录并尝试上报（未配置通道时留存本地）",
+                    requiredAccess: CommandAccessLevel.Privileged),
+                _ => LogDump.DumpAsync());
+
             registry.Register(
                 new CommandInfo("sysinfo", "设备与运行环境信息",
                     requiredAccess: CommandAccessLevel.Privileged),
