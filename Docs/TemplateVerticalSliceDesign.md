@@ -1,6 +1,6 @@
 # 模板样例(参考垂直切片)落地方案
 
-> 状态：切片 A～C 已落地并完成收口；切片 D 自动化部分已落地（发布/回滚链路），真机 HybridCLR 运行时加载留联调；切片 E～G 待实施
+> 状态：切片 A～C 已落地并完成收口；切片 D 自动化部分已落地（发布/回滚链路），真机 HybridCLR 运行时加载留联调；切片 E（真实登录链路）、F（CI 集成绿）、G（接入文档 + 拷问表结项）已落地——接入文档见 `Docs/TemplateGuide.md`。剩余未决项（真机联调、字体子集化、frame-1 bootstrap 本地化、消费者工程包边界门禁）见 `Docs/TemplateApiFriction.md`
 > 关联:`Docs/ContentReleaseTransactionDesign.md`、`Docs/ReleaseSystemTargetDesign.md`、`Tools/ci/release-rehearsal.ps1`
 
 ## 1. 目标与定位
