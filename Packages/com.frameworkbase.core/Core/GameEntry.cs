@@ -136,6 +136,8 @@ namespace Framework.Core
 
             Debug.Log("[GameEntry] 开始初始化框架...");
             ApplyPerformanceSettings();
+            // 通用补间（PrimeTween）容量与默认缓动一次性引导：须早于任何 UI 过渡 / 场景动画。
+            TweenBootstrap.Initialize();
             InitializeManagers();
             Application.lowMemory += HandleLowMemory;
             Debug.Log("[GameEntry] 框架初始化完成");
