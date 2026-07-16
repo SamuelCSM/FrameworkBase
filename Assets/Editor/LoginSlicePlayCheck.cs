@@ -116,7 +116,8 @@ namespace Game.Editor
             // 残留旧库会触发「包内基线更新→重装」的一次性迁移告警，污染零告警门禁。
             try
             {
-                foreach (string relative in new[] { "config.db", "config.db.bak" })
+                // language.db 是 ADR-006 分片库（与 config.db 同目录同生命周期），一并清理走干净首装。
+                foreach (string relative in new[] { "config.db", "config.db.bak", "language.db", "language.db.bak" })
                 {
                     string path = System.IO.Path.Combine(Application.persistentDataPath, relative);
                     if (System.IO.File.Exists(path))

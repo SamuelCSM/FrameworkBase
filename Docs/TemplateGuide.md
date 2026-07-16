@@ -126,8 +126,11 @@
 **本地化文案**（大厂标准：屏幕文本不写死）：
 
 - UI 静态文本用 `#2` 前缀 key，挂 `TextMeshProEx` 自动翻译；程序控制文案用 `Language.Get("#1_...")`。
-- **框架自身的启动/登录流程**（config 表加载前就要出字）用 `Language.GetOrDefault("#1_launch_xxx", "源语言默认值")`：
-  配表补上该 key 行即自动翻译，缺行时用内联默认值兜底——**可翻译**，不像写死字符串那样锁死语言。
+- **language 表独立成片**（ADR-006）：`Assets/RefData_Excel/Language.xlsx` 导出到 `language.db`
+  （与 `config.db` 分开），启动第一条 Loading 文案前就提前就绪——改文案只热更小片不动大库。
+  框架启动/登录流程的全部 key（`#1_launch_*` / `#1_login_*`）已随模板带首批中英文案。
+- **框架自身的启动/登录流程**用 `Language.GetOrDefault("#1_launch_xxx", "源语言默认值")`：
+  配表命中该 key 即翻译，缺行时用内联默认值兜底——**可翻译**，不像写死字符串那样锁死语言。
 - 开发期开 `PseudoLocalizer.Enabled`：所有走 `Language` 的文案被变形成 `⟦Ẃéĺćóḿé·~⟧`；
   **没被 `⟦⟧` 界标包住的屏幕文本 = 写死没走本地化**，一眼揪出。
 - 上线前跑菜单 **Framework → Localization → Check Font Coverage (language 表)** 查缺字，

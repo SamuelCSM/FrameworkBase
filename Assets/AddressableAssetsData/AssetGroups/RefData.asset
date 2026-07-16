@@ -23,6 +23,12 @@ MonoBehaviour:
     m_SerializedLabels:
     - remote
     FlaggedDuringContentUpdateRestriction: 0
+  - m_GUID: 8b16f900c0d2eb340ae747da69ae39a3
+    m_Address: RefData/language.db
+    m_ReadOnly: 0
+    m_SerializedLabels:
+    - remote
+    FlaggedDuringContentUpdateRestriction: 0
   m_ReadOnly: 0
   m_Settings: {fileID: 11400000, guid: 07d7dcbec820f444b9783faf74200f7b, type: 2}
   m_SchemaSet:

@@ -22,7 +22,12 @@ namespace Framework.Editor
     /// </summary>
     public static class FontCoverageChecker
     {
-        private const string DbRelativePath = "RefData/config.db";
+        /// <summary>
+        /// language 表候选库（按序尝试）：ADR-006 分片后 language 表独立在 language.db；
+        /// 保留 config.db 回退以兼容未分片导出的老项目。
+        /// </summary>
+        private static readonly string[] DbRelativePaths = { "RefData/language.db", "RefData/config.db" };
+
         private const int MaxReportChars = 200;
 
         [MenuItem("Framework/Localization/Check Font Coverage (language 表)")]
@@ -166,57 +171,59 @@ namespace Framework.Editor
             return false;
         }
 
-        /// <summary>读 language 表全部行、聚合所有语言列（LanguageRef 的 string 字段，Key 除外）的字符。</summary>
+        /// <summary>
+        /// 读 language 表全部行、聚合所有语言列（LanguageRef 的 string 字段，Key 除外）的字符。
+        /// 按 <see cref="DbRelativePaths"/> 顺序找第一个含 language 表的库（分片优先，回退主库）。
+        /// </summary>
         /// <param name="rowCount">language 表行数。</param>
-        /// <param name="silent">db 不存在时是否静默返回 null（batchmode/CI 传 true，避免弹窗阻塞）。</param>
+        /// <param name="silent">无可用库时是否静默返回 null（batchmode/CI 传 true，避免弹窗阻塞）。</param>
         private static HashSet<char> CollectLanguageTableCharacters(out int rowCount, bool silent = false)
         {
             rowCount = 0;
-            string dbPath = Path.Combine(Application.streamingAssetsPath, DbRelativePath);
-            if (!File.Exists(dbPath))
+            foreach (string relativePath in DbRelativePaths)
             {
-                if (!silent)
-                    EditorUtility.DisplayDialog("字体覆盖检查",
-                        $"未找到配置库：{dbPath}\n请先用 ExcelTool 导出配置。", "确定");
-                return null;
-            }
+                string dbPath = Path.Combine(Application.streamingAssetsPath, relativePath);
+                if (!File.Exists(dbPath))
+                    continue;
 
-            var characters = new HashSet<char>();
-            using (var db = new SQLiteHelper(dbPath))
-            {
-                // config.db 存在不等于含 language 表：项目可能只导出了业务配置表。
-                // 无 language 表时按「跳过」处理（与 db 不存在同义），而非让 QueryConfigTable 抛
-                // "no such table: language" 崩掉整个门禁——字体覆盖检查本就依赖本地化数据，无数据即无从检查。
-                int hasLanguageTable = db.ExecuteScalar<int>(
-                    "SELECT COUNT(1) FROM sqlite_master WHERE type='table' AND name='language'");
-                if (hasLanguageTable == 0)
+                using (var db = new SQLiteHelper(dbPath))
                 {
-                    if (!silent)
-                        EditorUtility.DisplayDialog("字体覆盖检查",
-                            $"配置库存在但无 language 表：{dbPath}\n（项目尚未导出本地化表，跳过检查）", "确定");
-                    return null;
-                }
+                    // 库存在不等于含 language 表：项目可能只导出了业务配置表。
+                    // 无 language 表时尝试下一候选库，全部不含才按「跳过」处理——
+                    // 字体覆盖检查本就依赖本地化数据，无数据即无从检查。
+                    int hasLanguageTable = db.ExecuteScalar<int>(
+                        "SELECT COUNT(1) FROM sqlite_master WHERE type='table' AND name='language'");
+                    if (hasLanguageTable == 0)
+                        continue;
 
-                List<LanguageRef> rows = db.QueryConfigTable<LanguageRef>("language");
-                rowCount = rows.Count;
+                    List<LanguageRef> rows = db.QueryConfigTable<LanguageRef>("language");
+                    rowCount = rows.Count;
 
-                // 语言列随项目扩展（Zh_cn/En_us/…），按反射遍历全部 string 属性，Key 列除外
-                PropertyInfo[] props = typeof(LanguageRef).GetProperties(BindingFlags.Public | BindingFlags.Instance);
-                foreach (LanguageRef row in rows)
-                {
-                    foreach (PropertyInfo prop in props)
+                    var characters = new HashSet<char>();
+                    // 语言列随项目扩展（Zh_cn/En_us/…），按反射遍历全部 string 属性，Key 列除外
+                    PropertyInfo[] props = typeof(LanguageRef).GetProperties(BindingFlags.Public | BindingFlags.Instance);
+                    foreach (LanguageRef row in rows)
                     {
-                        if (prop.PropertyType != typeof(string) || prop.Name == "Key" || !prop.CanRead)
-                            continue;
-                        var text = (string)prop.GetValue(row);
-                        if (string.IsNullOrEmpty(text))
-                            continue;
-                        foreach (char c in text)
-                            characters.Add(c);
+                        foreach (PropertyInfo prop in props)
+                        {
+                            if (prop.PropertyType != typeof(string) || prop.Name == "Key" || !prop.CanRead)
+                                continue;
+                            var text = (string)prop.GetValue(row);
+                            if (string.IsNullOrEmpty(text))
+                                continue;
+                            foreach (char c in text)
+                                characters.Add(c);
+                        }
                     }
+
+                    return characters;
                 }
             }
-            return characters;
+
+            if (!silent)
+                EditorUtility.DisplayDialog("字体覆盖检查",
+                    "未找到含 language 表的配置库（RefData/language.db 或 RefData/config.db）。\n请先用 ExcelTool 导出配置。", "确定");
+            return null;
         }
     }
 }
