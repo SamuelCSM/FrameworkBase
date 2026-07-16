@@ -104,6 +104,32 @@ namespace Framework
         }
 
         /// <summary>
+        /// 取当前语言文案，缺 key 时回退到调用处内联的<b>源语言默认值</b>（而非把 key 吐给玩家）。
+        /// <para>
+        /// 用于框架自身在 language 配表尚未加载 / 尚未补该行时仍需出字的场景（启动 Loading、登录状态提示）：
+        /// 文案照常经本地化通道，配表补上 <paramref name="key"/> 行即自动翻译；缺行时用 <paramref name="fallback"/> 兜底。
+        /// 与直接写死字符串的本质区别是——它<b>可翻译</b>：接入方补一行配表即可切语言，无需改框架源码，
+        /// 也不会像 <see cref="Get(string)"/> 那样在缺 key 时把 <paramref name="key"/> 原样显示给玩家。
+        /// </para>
+        /// </summary>
+        /// <param name="key">language 表中的 Key（约定 <see cref="CodePrefix"/> 前缀）。</param>
+        /// <param name="fallback">缺 key（含配表未加载）时的源语言默认值，由调用处内联。</param>
+        /// <returns>命中配表则返回其文案；否则返回 <paramref name="fallback"/>。</returns>
+        public static string GetOrDefault(string key, string fallback)
+        {
+            if (TryGet(key, out string value))
+                return value;
+
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+            // 已走本地化通道、只是配表还没这条 key：兜底值同样过一遍伪本地化，
+            // 让「已接入本地化（有 ⟦⟧ 界标）但缺翻译」与「根本没走 Language（无界标）」在屏幕上仍可区分。
+            if (PseudoLocalizer.Enabled)
+                return PseudoLocalizer.Transform(fallback ?? string.Empty);
+#endif
+            return fallback ?? string.Empty;
+        }
+
+        /// <summary>
         /// 按数量取当前语言的复数文案。
         /// 依当前语言的 CLDR 复数规则选变体 key <c>{keyBase}_{类别}</c>（如 <c>_one</c> / <c>_other</c>），
         /// 命中即用，缺该变体时回退 <c>{keyBase}_other</c>，仍缺则返回 <paramref name="keyBase"/> 兜底不吐空。
