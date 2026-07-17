@@ -6,14 +6,19 @@ namespace Framework
     /// 引导断点存储抽象。<see cref="GuideFlow"/> 每步推进即写档（崩溃 / 杀进程重进从断点续）。
     /// 默认实现 <see cref="PrefsGuideProgressStore"/> 落 PlayerPrefs（设备级）；
     /// 引导进度需要跟账号走（换号重看 / 云同步）时，业务用账号存档自行实现本接口注入。
+    /// <para>
+    /// 断点存的是步骤 <b>id</b>（而非序号）：线上剧本插入 / 重排步骤时，<see cref="GuideFlow"/>
+    /// 按 id 在当前剧本里重新定位，玩家不会续到错位的步骤上；断点步骤被删 / 改名（id 找不到）
+    /// 则从头重播。存序号的旧模型无法区分这两种情况，插一步就会让所有后续断点错位一位。
+    /// </para>
     /// </summary>
     public interface IGuideProgressStore
     {
-        /// <summary>读断点步骤序号；未开始返回 0。</summary>
-        int GetStepIndex(string guideId);
+        /// <summary>读断点步骤 id；未开始返回 null / 空串。</summary>
+        string GetStepId(string guideId);
 
-        /// <summary>写断点步骤序号。</summary>
-        void SetStepIndex(string guideId, int index);
+        /// <summary>写断点步骤 id（当前进入、尚未完成的那一步）。</summary>
+        void SetStepId(string guideId, string stepId);
 
         /// <summary>该引导是否已整条完成。</summary>
         bool IsCompleted(string guideId);
@@ -34,11 +39,11 @@ namespace Framework
         private static string StepKey(string guideId) => "guide_step_" + guideId;
         private static string DoneKey(string guideId) => "guide_done_" + guideId;
 
-        public int GetStepIndex(string guideId)
-            => SaveManager.Instance.GetPref(StepKey(guideId), 0);
+        public string GetStepId(string guideId)
+            => SaveManager.Instance.GetPref(StepKey(guideId), string.Empty);
 
-        public void SetStepIndex(string guideId, int index)
-            => SaveManager.Instance.SetPref(StepKey(guideId), index);
+        public void SetStepId(string guideId, string stepId)
+            => SaveManager.Instance.SetPref(StepKey(guideId), stepId ?? string.Empty);
 
         public bool IsCompleted(string guideId)
             => SaveManager.Instance.GetPref(DoneKey(guideId), false);

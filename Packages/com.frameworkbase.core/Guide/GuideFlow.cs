@@ -8,8 +8,9 @@ namespace Framework
     /// 框架四原语之「步骤流 + 断点」：业务在 <see cref="StepEntered"/> 里按步骤 id 编排表现
     /// （配合 <see cref="GuideMaskOverlay"/> 挖孔高亮），步骤达成时调 <see cref="CompleteStep"/>
     /// 推进——必须带当前步骤 id，乱序完成是接线错误直接抛（fail-loud）。
-    /// 每步推进即写档：崩溃 / 杀进程重进 <see cref="Start"/> 从断点续；存档步骤越界
-    /// （剧本改短了）按已完成处理，不把玩家卡死在不存在的步骤上。
+    /// 每步推进即写档（存的是步骤 <b>id</b>）：崩溃 / 杀进程重进 <see cref="Start"/> 从断点续。
+    /// 断点按 id 在当前剧本里重新定位——线上剧本插入 / 重排步骤，玩家仍续在正确的那一步上，
+    /// 不会因序号漂移错位；断点步骤被删 / 改名（id 找不到）则从头重播，不把玩家卡死在不存在的步骤上。
     /// </para>
     /// <para>纯 C# 零 Unity 依赖；订阅者异常隔离经 <see cref="ObserverErrorSink"/>。仅主线程访问。</para>
     /// </summary>
@@ -52,21 +53,24 @@ namespace Framework
 
         /// <summary>
         /// 启动（或断点续跑）。已完成返回 false 不做任何事；重复 Start 运行中的流程返回 false。
-        /// 存档断点越界（剧本步骤被改少）按完成收尾，返回 false。
+        /// 断点按存档步骤 id 在当前剧本里重新定位：id 找不到（该步被删 / 改名）则从头重播。
         /// </summary>
         public bool Start()
         {
             if (_running || _store.IsCompleted(_script.Id))
                 return false;
 
-            int saved = _store.GetStepIndex(_script.Id);
-            if (saved < 0)
-                saved = 0;
-            if (saved >= _script.Steps.Count)
+            string savedId = _store.GetStepId(_script.Id);
+            int saved = 0;
+            if (!string.IsNullOrEmpty(savedId))
             {
-                // 剧本改短后旧存档越界：按完成处理，不把玩家卡死在不存在的步骤上
-                FinishInternal();
-                return false;
+                saved = IndexOfStep(savedId);
+                if (saved < 0)
+                {
+                    // 断点步骤在当前剧本已不存在（线上删 / 改名了该步）：无法可靠续跑，
+                    // 从头重播——不静默跳过后续未看内容，也不把玩家卡死在不存在的步骤上。
+                    saved = 0;
+                }
             }
 
             _currentIndex = saved;
@@ -98,7 +102,7 @@ namespace Framework
             }
 
             _currentIndex = next;
-            _store.SetStepIndex(_script.Id, next); // 每步落档：崩溃重进从这里续
+            _store.SetStepId(_script.Id, _script.Steps[next]); // 每步落档存 id：崩溃重进按 id 续
             NotifyStepEntered();
         }
 
@@ -125,6 +129,17 @@ namespace Framework
             _store.MarkCompleted(_script.Id);
             try { Completed?.Invoke(); }
             catch (Exception ex) { NotifyObserverError(ex); }
+        }
+
+        /// <summary>步骤 id 在当前剧本中的序号；不存在返回 -1。</summary>
+        private int IndexOfStep(string stepId)
+        {
+            for (int i = 0; i < _script.Steps.Count; i++)
+            {
+                if (string.Equals(_script.Steps[i], stepId, StringComparison.Ordinal))
+                    return i;
+            }
+            return -1;
         }
 
         private void NotifyStepEntered()
