@@ -75,14 +75,16 @@
 - 登录/登出组合根统一贯通和清理 Save、Analytics、RemoteConfig、CrashReporter 的玩家身份。
 - 内容发行的 Catalog、配置、AOT 与热更程序集共用 Pending/Active/LKG 确认边界和中断恢复语义。
 - Clicker 等参考样例专属验收与业务语义测试归属壳工程，不进入可复用核心包。
-- **CJK 字体回退接线 + 字体覆盖门禁按运行时链判定**（严格模式恢复仍待入库子集字体）：`CjkDevFallback SDF`
-  （动态字体，从源 `.ttc` 按需补字形）挂进 `TMP Settings` 全局 fallback 列表——此前它是无人引用的孤儿资产，
-  language 表首批中文文案在有该字体的机器上原本也不渲染（豆腐块）。`FontCoverageChecker` CI 门禁改为按<b>运行时字形
-  解析链</b>评估：只查 TMP 默认字体及其回退链（自身 fallback + 全局 fallback，递归去重），不再要求纯 fallback 用途的
-  字体各自独立覆盖全字集（消除「CJK 回退字缺拉丁字母」伪缺字）；动态字体按<b>源字体文件</b>的字形覆盖判定而非只看已
-  烘焙图集。**注意**：该字体所在 `Assets/FrameworkTemplate/Fonts` 整目录 gitignore，CI 干净 clone 里不存在，故 `ci.yml`
-  资源门禁仍保持字体覆盖为告警（不带 `-strictFonts`）；恢复严格模式的真实前置是把一个入库的、覆盖 language 表字符的
-  CJK 子集字体纳入版本控制（licensing / 体积可控），届时上面的接线与门禁逻辑即可直接支撑严格模式。
+- **入库思源黑体 SC 子集作 CJK 回退 + 字体覆盖门禁恢复严格模式**：新增 `Assets/FrameworkTemplate/Fonts/Committed/`
+  下的 `SourceHanSansSC-Subset.otf`（思源黑体 SC Regular 子集到 GB2312 + ASCII，7542 字符 / 3.5MB，**SIL OFL 1.1**
+  可再分发，随附 `OFL.txt`）与其动态 SDF 资产 `SourceHanSansSC SDF.asset`，挂进 `TMP Settings` 全局 fallback——
+  替换此前无人引用又 gitignore 的 `CjkDevFallback`（系统字体、不可再分发）。动态图集按需从子集源字体补字形，入库体积
+  由源字体（几 MB）而非预烘全字集大图集决定。`FontCoverageChecker` CI 门禁改为按<b>运行时字形解析链</b>评估：只查
+  TMP 默认字体及其回退链（自身 fallback + 全局 fallback，递归去重），不再要求纯 fallback 用途字体各自独立覆盖全字集
+  （消除「CJK 回退字缺拉丁字母」伪缺字）；动态字体按<b>源字体文件</b>的字形覆盖判定而非只看已烘焙图集。覆盖与运行时
+  对齐、字体入库后，`ci.yml` 资源门禁恢复 `-strictFonts` 严格模式（缺字重新阻断，撤销 e0b19e2 的临时降级）。新增
+  `Framework/Localization/Build CJK Fallback SDF` 菜单与 batchmode 入口 `CjkFallbackFontBuilder.BuildForBatch`
+  从子集 OTF 重建动态 SDF 资产。**注意**：字体入包后 Android 包体增长，需按门禁提示滚动 build-size 基线。
 
 ## [0.16.0] - 2026-07-09
 

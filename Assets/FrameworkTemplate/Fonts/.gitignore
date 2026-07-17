@@ -1,3 +1,7 @@
 # 开发期本机字体（系统字体授权不可再分发；资产 GUID 每机不同）
 *
 !.gitignore
+# Committed/ 例外：入库的可再分发字体（思源黑体 SC 子集，SIL OFL 1.1）+ 其 SDF 资产
+!Committed/
+!Committed/**
+!Committed.meta
