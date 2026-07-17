@@ -28,6 +28,7 @@ Build 存在。本模块把运行时性能聚合成低频埋点事件，走 `Ana
 | `managed_peak_mb` / `native_peak_mb` | 托管堆 / Native 已分配内存的窗口峰值（5s 采样一次） |
 | `gc_count` | 距上次上报的 GC(gen0) 次数增量 |
 | `scene` | 窗口结算时的活动场景名 |
+| `tier` | 设备档位（Low/Mid/High，见 `DEVICE_TIER_GUIDE.md`）——大盘按档位分组的核心维度 |
 
 **阈值为什么是绝对值**：卡顿 100ms / 严重 500ms 不随目标帧率变化。大盘口径必须跨设备可比，
 相对阈值会让高刷设备"更容易卡"，污染对比。阈值可经 `PerfWindowAggregator` 构造参数调整，

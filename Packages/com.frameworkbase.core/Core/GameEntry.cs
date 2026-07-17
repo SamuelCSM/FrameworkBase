@@ -67,6 +67,9 @@ namespace Framework.Core
         /// <summary>是否挂载线上性能采样（全构建生效，约 1 条 perf_window 埋点/分钟，见 Performance/PERFORMANCE_GUIDE.md）。</summary>
         [SerializeField] private bool _enablePerfSampling = true;
 
+        /// <summary>是否按设备分级自动映射 Quality Level（低端→最低档等，见 Performance/DEVICE_TIER_GUIDE.md）。关闭后仍分级（业务可读档位），只是不动画质。</summary>
+        [SerializeField] private bool _autoQualityByDeviceTier = true;
+
         // ── Manager 静态访问点 ────────────────────────────────────────────────
 
         /// <summary>资源管理器 — Addressables 加载、实例化、释放</summary>
@@ -193,6 +196,9 @@ namespace Framework.Core
         /// </summary>
         private void ApplyPerformanceSettings()
         {
+            // 设备分级先行：画质档位在任何重资产加载前定下，业务与 perf_window 埋点均可读档位
+            Framework.Performance.DeviceTierService.Initialize(_autoQualityByDeviceTier);
+
             if (_targetFrameRate > 0)
             {
                 QualitySettings.vSyncCount = 0;

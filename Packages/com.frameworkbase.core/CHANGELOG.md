@@ -7,6 +7,14 @@
 
 ### 新增
 
+- **设备分级 / 画质自适应 `Performance/DeviceTier*`**（低端机保命、高端机吃满）：`DeviceTierClassifier`
+  （纯逻辑）按内存/显存/核数把设备粗分低/中/高三档，规则刻意保守——任一已知维度踩低端线即判低端
+  （误判低只是画质保守，误判高是 OOM 与卡顿投诉，代价不对称）；判高端要求内存已知且全部已知维度达标，
+  内存未知封顶中端；阈值经 `DeviceTierThresholds` 按目标市场调整。`DeviceTierService` 启动早期
+  （任何重资产加载前）分级并映射 Quality Level（低→0 / 中→中间档 / 高→最高档，Inspector 可关映射只留分级），
+  玩家手动选档 `SetOverride` 持久化、传 null 回自动档，`AutoTier` 供设置界面展示推荐档。
+  `perf_window` 事件新增 `tier` 字段——大盘按档位分组看实测卡顿率，用数据回调分级阈值。
+  EditMode 测试 8 例。见 `Performance/DEVICE_TIER_GUIDE.md`。
 - **线上性能采样（APM）`Performance/`**（正式包运行时性能从零采集到有大盘口径）：`PerfWindowAggregator`
   （纯逻辑）按分钟级窗口聚合平均 FPS / 最差帧 / 卡顿帧数（≥100ms）/ 严重卡顿帧数（≥500ms）/
   托管与 Native 内存峰值——阈值取绝对值而非相对目标帧率，大盘口径跨设备可比；`PerfSampler`

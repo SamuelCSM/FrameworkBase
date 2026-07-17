@@ -102,6 +102,7 @@ namespace Framework.Performance
                 { "native_peak_mb", report.NativePeakBytes / Mb },
                 { "gc_count", gcDelta },
                 { "scene", UnityEngine.SceneManagement.SceneManager.GetActiveScene().name },
+                { "tier", DeviceTierService.Tier.ToString() },
             });
         }
     }
