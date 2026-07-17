@@ -7,6 +7,13 @@
 
 ### 新增
 
+- **反作弊值类型 `Security/AntiCheatValue`**（对抗内存搜索改值的基线防护）：`AntiCheatInt` /
+  `AntiCheatLong` / `AntiCheatFloat` 把真值异或实例密钥存储（内存搜不到明文），另存双输入校验和
+  （值+密钥），直改混淆字段或校验和均在下次读取时失配并触发 `AntiCheat.TamperDetected`（业务在此
+  埋点/处置，无订阅静默）。与原生类型隐式互转、算术照写；实例密钥无锁生成，同值不同实例混淆结果
+  不同；`default` 态读 0 不误报。边界明确：提高门槛非不可破（注入级 hook 挡不住，强对抗接厂商
+  SDK），权威数据以服务端为准，持久化取 `Value` 明文走 AES 存档、混淆态不落盘。
+  EditMode 测试 8 例。见 `Security/ANTICHEAT_GUIDE.md`。
 - **设备分级 / 画质自适应 `Performance/DeviceTier*`**（低端机保命、高端机吃满）：`DeviceTierClassifier`
   （纯逻辑）按内存/显存/核数把设备粗分低/中/高三档，规则刻意保守——任一已知维度踩低端线即判低端
   （误判低只是画质保守，误判高是 OOM 与卡顿投诉，代价不对称）；判高端要求内存已知且全部已知维度达标，
