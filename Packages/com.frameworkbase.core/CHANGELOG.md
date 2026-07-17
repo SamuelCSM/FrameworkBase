@@ -7,6 +7,13 @@
 
 ### 新增
 
+- **纹理审计门禁 `Editor/TextureAudit`**（资源门禁第四项，问题纹理带病入包当场拦）：与 Addressables
+  校验器同款「采集（Unity API）/ 规则（纯逻辑可单测）」分层。四条规则：Read/Write Enabled 判 Error
+  （CPU 侧常驻拷贝内存翻倍，确需 CPU 采样走 `ReadWriteAllowlistPrefixes` 显式豁免、随代码进评审）；
+  导入尺寸单边 >4096 Error / >2048 Warning（以实际入包尺寸计，被 maxTextureSize 压下来的不算）；
+  未压缩 Warning（RGBA32 是压缩格式 4~8 倍）；Sprite 开 Mipmap Warning（UI 用不到 mip 链白吃 1/3
+  显存）。只扫 Assets/（Packages 不可变不归本工程管）。接入 `CiGate` 资源门禁与菜单
+  Framework → Audit Textures。EditMode 测试 8 例。
 - **反作弊值类型 `Security/AntiCheatValue`**（对抗内存搜索改值的基线防护）：`AntiCheatInt` /
   `AntiCheatLong` / `AntiCheatFloat` 把真值异或实例密钥存储（内存搜不到明文），另存双输入校验和
   （值+密钥），直改混淆字段或校验和均在下次读取时失配并触发 `AntiCheat.TamperDetected`（业务在此

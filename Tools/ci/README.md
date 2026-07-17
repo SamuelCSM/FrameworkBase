@@ -12,7 +12,7 @@ FrameworkBase 主干要求：干净副本可复现、Unity 编译通过、EditMo
 
 1. `check-reproducibility.ps1`：关键 ProjectSettings、Addressables、AppConfig、packages-lock 必须存在并已纳入 Git；
 2. EditMode 测试；
-3. required 资源门禁；
+3. required 资源门禁（可复现性 / Addressables / 纹理审计 / 字体覆盖，纹理规则见 Editor/TextureAudit）；
 4. 可选包体大小门禁；
 5. PlayMode 冒烟。
 
