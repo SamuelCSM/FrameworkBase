@@ -7,6 +7,40 @@
 
 ### 新增
 
+- **薄引导框架 `Guide/`**（步骤流 / 断点 / 遮罩挖孔 / 触发接线四原语，纯逻辑与表现分离）：`GuideScript`
+  构造即校验、构造后不可变的有序步骤序列；`GuideFlow` 驱动步骤推进——业务在 `StepEntered` 回调按步骤 id
+  编排表现、步骤达成调 `CompleteStep(id)` 推进，乱序 / 迟到完成属接线错误直接抛（fail-loud）。**每步推进即写档
+  存步骤 id**（非序号）：崩溃 / 杀进程重进 `Start` 从断点续，且线上剧本插入 / 重排步骤时按 id 重新定位，
+  玩家不会因序号漂移续到错位的步骤上；断点步骤被删 / 改名（id 找不到）则从头重播不卡死。`IGuideProgressStore`
+  抽象断点存储，默认 `PrefsGuideProgressStore` 落 PlayerPrefs（设备级），需按账号走的项目自行实现注入。
+  `GuideMaskOverlay`（`MaskableGraphic`）全屏压暗 + 目标控件矩形挖孔，孔内点击穿透给真实控件、孔外触发
+  `DimClicked` 做提示，挖孔每帧跟随目标。订阅者异常经 `ObserverErrorSink` 隔离。EditMode 测试 10 例。
+- **本地化资源回退**（`Localization/`：地址@语言约定 + 候选链探测 + 切语言自动重载）：变体地址按
+  `{基础地址}@{语言代码}` 约定命名（如 `UI/banner@en_us`），`LocalizedAssetResolver`（纯逻辑）按
+  「当前语言 → 自定义回退链 → 默认语言 → 原始地址」生成有序候选，`LocalizedAssets` 逐个探测存在性取首个命中并缓存；
+  释放须用返回的实际地址。**Catalog 热更后自动失效解析缓存**（`ResourceManager.CheckAndUpdateCatalogsAsync`
+  在 Catalog 实际更新后调 `LocalizedAssets.ClearCache`，无需业务手动介入）。`LocalizedImage` 组件按候选链加载
+  Sprite 并在切语言时自动重载（await 期禁用 / 销毁即归还引用计数，不悬挂），与 `TextMeshProEx` 文案刷新同款体验。
+  `IResourceService.ExistsAsync` 补齐「只查 Catalog 不加载」的存在性探测。EditMode 测试 8 例。
+- **红点 / Badge 树系统 `Foundation/RedDotTree`**（路径寻址计数聚合）：计数只写叶子（`SetCount`/`AddCount`），
+  父节点值 = 子树叶子之和，增量聚合 O(深度) 更新；对非叶子写计数、对持数叶子挂子节点均属结构性错误直接抛
+  （fail-loud，杜绝双重计数歧义）。叶子变化沿祖先链传播，路径上值变化的节点通知订阅者（值未变不通知）；订阅默认立即
+  回调当前值，UI 绑定无需关心「先订阅还是先写数」。`ClearSubtree` 一键已读，`Snapshot` 稳定序调试快照。纯 C# 零
+  Unity 依赖可自由实例化（独立玩法建局部树），共享默认树经 `GameEntry.RedDots` 暴露。`RedDotBadge` 组件把路径绑定到
+  徽标显隐与计数文本（OnEnable 订阅 / OnDisable 退订，徽标须为独立子对象否则隐藏即退订）。EditMode 测试若干例。
+- **日志回捞最短路径 `Diagnostics/LogDump`**（冲刷 → 打包 → 可选上报）：`LogArchiver` 把日志目录压成单个 zip 落独立
+  产物目录（共享读打开正被写线程持有的当前日志文件，产物目录自带保留上限最旧先删，纯文件系统逻辑 EditMode 可测）；
+  `LogDump.DumpAsync` 编排冲刷 / 打包 / 上报，上报通道由业务注入 `UploadHandler`（未注入只留存本地，回捞包本身即具备
+  「玩家反馈时导出」价值），全部失败路径返回失败结果不抛，动作留崩溃面包屑。EditMode 测试若干例。
+- **调试命令总线 + 真机调试面板**（`Diagnostics/`）：`CommandRegistry` 显式注册 + fail-closed 权限门禁
+  （正式包默认 None，白名单授权由业务鉴权路径驱动；重名注册直接抛属装配错误）；`RuntimeConsole` 屏幕日志面板带命令
+  输入行（非 Editor 的 Development Build 自动挂载）。`BuiltinCommands` 内置安全无副作用命令集：help / version /
+  loglevel / perfhud / fps / timescale / gc / net / logdump / reddot / **lang（查看 / 切换当前语言）** /
+  **guide（引导断点 status / reset / skip 调试）** / sysinfo；有业务后果的命令由业务自行按风险注册。
+- **三大 Manager 补瘦接口**（`INetworkService` / `IResourceService` / `ISaveService`）：Network / Resource / Save
+  对外暴露最小契约面，刻意不求全（Catalog 热更、下载预估等启动运维面只在具体类上），便于测试替身与依赖倒置。
+- **`GameEntry` Manager 初始化注册表化 + 依赖拓扑 EditMode 门禁**：Manager 初始化改为显式注册表 + 依赖声明，
+  拓扑顺序由依赖关系推导并在 EditMode 门禁校验（漏声明 / 环 / 顺序错在测试期即炸出），替代此前手写初始化顺序。
 - 通用补间接入 **PrimeTween**（零 GC、AOT/IL2CPP 安全、WebGL 可 await）：新增 `Tween/`——`TweenBootstrap`
   启动期一次性配置补间容量与默认缓动（杜绝运行期扩容 GC）、`TweenAsyncExtensions` 提供 `Tween`/`Sequence`
   的 `ToUniTask(ct)` 桥（取消即停在当前值、不抛、await 正常返回，对齐框架既有动画语义）、`TWEEN_GUIDE.md`
@@ -41,6 +75,16 @@
 - 登录/登出组合根统一贯通和清理 Save、Analytics、RemoteConfig、CrashReporter 的玩家身份。
 - 内容发行的 Catalog、配置、AOT 与热更程序集共用 Pending/Active/LKG 确认边界和中断恢复语义。
 - Clicker 等参考样例专属验收与业务语义测试归属壳工程，不进入可复用核心包。
+- **入库思源黑体 SC 子集作 CJK 回退 + 字体覆盖门禁恢复严格模式**：新增 `Assets/FrameworkTemplate/Fonts/Committed/`
+  下的 `SourceHanSansSC-Subset.otf`（思源黑体 SC Regular 子集到 GB2312 + ASCII，7542 字符 / 3.5MB，**SIL OFL 1.1**
+  可再分发，随附 `OFL.txt`）与其动态 SDF 资产 `SourceHanSansSC SDF.asset`，挂进 `TMP Settings` 全局 fallback——
+  替换此前无人引用又 gitignore 的 `CjkDevFallback`（系统字体、不可再分发）。动态图集按需从子集源字体补字形，入库体积
+  由源字体（几 MB）而非预烘全字集大图集决定。`FontCoverageChecker` CI 门禁改为按<b>运行时字形解析链</b>评估：只查
+  TMP 默认字体及其回退链（自身 fallback + 全局 fallback，递归去重），不再要求纯 fallback 用途字体各自独立覆盖全字集
+  （消除「CJK 回退字缺拉丁字母」伪缺字）；动态字体按<b>源字体文件</b>的字形覆盖判定而非只看已烘焙图集。覆盖与运行时
+  对齐、字体入库后，`ci.yml` 资源门禁恢复 `-strictFonts` 严格模式（缺字重新阻断，撤销 e0b19e2 的临时降级）。新增
+  `Framework/Localization/Build CJK Fallback SDF` 菜单与 batchmode 入口 `CjkFallbackFontBuilder.BuildForBatch`
+  从子集 OTF 重建动态 SDF 资产。**注意**：字体入包后 Android 包体增长，需按门禁提示滚动 build-size 基线。
 
 ## [0.16.0] - 2026-07-09
 

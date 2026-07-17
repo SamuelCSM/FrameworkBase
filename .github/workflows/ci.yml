@@ -146,10 +146,10 @@ jobs:
           targetPlatform: StandaloneLinux64
           buildMethod: Framework.Editor.CiGate.RunAssetGateForBuilder
           allowDirtyBuild: false
-          # 字体覆盖暂降级为告警（不带 -strictFonts）：language 表已进中文文案，但内置
-          # LiberationSans 无中文字形、CjkDevFallback SDF 未挂进 fallback 链，缺字会阻断门禁。
-          # 字体子集化/补 fallback 作为独立任务跟进，届时恢复 customParameters: -strictFonts。
-          customParameters: ""
+          # 字体覆盖严格模式：已入库思源黑体 SC 子集（GB2312+ASCII，SIL OFL 1.1，
+          # Assets/FrameworkTemplate/Fonts/Committed/）挂进 TMP Settings 全局 fallback，
+          # FontCoverageChecker 按运行时主字体链 + 动态字体源文件判定覆盖，缺字重新阻断门禁。
+          customParameters: -strictFonts
 
   android-player:
     name: Android Player/IL2CPP 构建验证

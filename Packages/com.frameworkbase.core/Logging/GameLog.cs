@@ -86,6 +86,39 @@ namespace Framework
             get { return _logFilePath; }
         }
 
+        /// <summary>日志目录（未启用文件日志时为空串）。日志回捞打包的输入。</summary>
+        public static string LogDirectory
+        {
+            get { return _logDirectory; }
+        }
+
+        /// <summary>
+        /// 冲刷未落盘队列（日志回捞打包前调用，保证 zip 里是最新内容）。
+        /// 唤醒写线程并有界等待队列排空，随后再做一次文件 Flush 兜底。
+        /// 只保证调用时刻已入队的行；等待期间新入队的行不承诺包含。
+        /// </summary>
+        /// <param name="timeoutMs">等待队列排空的上限毫秒数。</param>
+        /// <returns>超时前队列已排空返回 true；false 表示打包内容可能缺尾部若干行。</returns>
+        public static bool FlushToDisk(int timeoutMs = 1000)
+        {
+            if (!_enableFileLog)
+                return true;
+
+            int deadline = Environment.TickCount + timeoutMs;
+            while (Volatile.Read(ref _pendingCount) > 0 && Environment.TickCount - deadline < 0)
+            {
+                _writeSignal.Set();
+                Thread.Sleep(10);
+            }
+
+            lock (_fileLock)
+            {
+                try { _logWriter?.Flush(); }
+                catch { /* 与写线程同款：磁盘异常时丢日志可接受 */ }
+            }
+            return Volatile.Read(ref _pendingCount) == 0;
+        }
+
         /// <summary>
         /// 查询指定级别当前是否会输出，供热路径在构造昂贵日志字符串前显式短路：
         /// <c>if (GameLog.IsEnabled(LogLevel.Log)) GameLog.Log(BuildExpensiveString());</c>

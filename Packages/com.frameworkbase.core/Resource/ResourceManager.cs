@@ -136,6 +136,13 @@ namespace Framework
                 GameLog.Log("[ResourceManager] Catalog 已是最新（Editor Play Mode 下属正常，" +
                             "如需强制测试下载流程请先调用 ClearCache）");
             }
+            else if (result.CatalogChanged)
+            {
+                // Catalog 已换：本地化资源候选链的存在性可能已变（新增语言变体 / 原缺资源现已上架），
+                // 失效解析缓存，否则启动期记下的负结果会把热更后的新变体一直挡在原始地址上。
+                // 框架自持缓存自负一致性，不指望业务在热更完成处记得手动 ClearCache。
+                LocalizedAssets.ClearCache();
+            }
             return result;
         }
 
@@ -360,6 +367,34 @@ namespace Framework
                 LoadAssetAsync<T>(address),
                 ReleaseAsset,
                 cancellationToken);
+        }
+
+        /// <summary>
+        /// 查询地址是否存在可加载的资源位置。只查 Catalog 不加载资源本体、不进引用计数，
+        /// 供「按候选链探测」类场景（如本地化资源回退）使用。
+        /// 注意结果反映当前 Catalog：Catalog 热更后同一地址的存在性可能变化，调用方缓存需自行失效。
+        /// </summary>
+        public async UniTask<bool> ExistsAsync(string address)
+        {
+            if (string.IsNullOrEmpty(address))
+                return false;
+
+            var handle = Addressables.LoadResourceLocationsAsync(address);
+            try
+            {
+                var locations = await handle.Task;
+                return locations != null && locations.Count > 0;
+            }
+            catch (Exception e)
+            {
+                GameLog.Error($"ExistsAsync: 查询资源位置异常 - {address}, 错误: {e.Message}");
+                return false;
+            }
+            finally
+            {
+                if (handle.IsValid())
+                    Addressables.Release(handle);
+            }
         }
 
         /// <summary>
