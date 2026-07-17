@@ -7,6 +7,7 @@ using Framework.Table;
 using TMPro;
 using UnityEditor;
 using UnityEngine;
+using UnityEngine.TextCore.LowLevel;
 
 namespace Framework.Editor
 {
@@ -59,13 +60,23 @@ namespace Framework.Editor
         }
 
         /// <summary>
-        /// CI 门禁入口（batchmode 安全，无弹窗）：扫描工程全部 TMP_FontAsset 对 language 表字符的覆盖。
+        /// CI 门禁入口（batchmode 安全，无弹窗）：检查<b>玩家实际会用到的主字体链</b>对 language 表字符的覆盖。
+        /// <para>
+        /// 只评估 TMP Settings 的默认字体（<see cref="TMP_Settings.defaultFontAsset"/>）及其运行时回退链
+        /// ——字体自身 fallback 表 + TMP Settings 全局 fallback 列表（递归去重）。这与运行时 TMP 解析字形的
+        /// 路径一致：只有主字体链会渲染游戏文案，纯 fallback 用途的字体资产不必各自独立覆盖全字集，
+        /// 否则「CJK 回退字体缺拉丁字母」这类伪缺字会误阻断门禁。
+        /// </para>
+        /// <para>
+        /// 动态字体（<see cref="AtlasPopulationMode.Dynamic"/>）按<b>源字体文件</b>的字形覆盖判定，而非只看已烘焙的
+        /// 静态图集——动态字体运行时按需从源文件补字形，只数静态表会把「运行时能出、图集还没烘」误判成缺字。
+        /// </para>
         /// </summary>
-        /// <param name="report">人类可读报告（逐字体覆盖/缺字摘要）。</param>
-        /// <param name="fontsWithMissing">存在缺字的字体数量。</param>
+        /// <param name="report">人类可读报告（主字体链与缺字摘要）。</param>
+        /// <param name="fontsWithMissing">主字体链存在缺字时为 1，否则 0（沿用「>0 即阻断」的门禁语义）。</param>
         /// <returns>
         /// true = 已执行检查（report 为结果）；false = 前置不满足而跳过
-        /// （config.db 不存在 / 工程无 TMP 字体），此时 report 为跳过原因，调用方应按「不阻断」处理。
+        /// （language 库不存在 / 未配置默认字体），此时 report 为跳过原因，调用方应按「不阻断」处理。
         /// </returns>
         public static bool CheckFontsForCi(out string report, out int fontsWithMissing)
         {
@@ -78,36 +89,111 @@ namespace Framework.Editor
                 return false;
             }
 
-            string[] guids = AssetDatabase.FindAssets("t:TMP_FontAsset");
-            if (guids.Length == 0)
+            TMP_FontAsset primary = TMP_Settings.defaultFontAsset;
+            if (primary == null)
             {
-                report = "工程内无 TMP_FontAsset，跳过字体覆盖检查";
+                report = "TMP Settings 未配置默认字体，跳过字体覆盖检查";
                 return false;
             }
 
-            var sb = new StringBuilder();
-            sb.AppendLine($"[FontCoverage] language 表 {rowCount} 行，去重字符 {characters.Count} 个，检查字体 {guids.Length} 个：");
-            foreach (string guid in guids)
-            {
-                string path = AssetDatabase.GUIDToAssetPath(guid);
-                var font = AssetDatabase.LoadAssetAtPath<TMP_FontAsset>(path);
-                if (font == null)
-                    continue;
+            // 运行时字形解析链：主字体 → 自身 fallback 表 → TMP Settings 全局 fallback（递归去重）。
+            List<TMP_FontAsset> chain = BuildRuntimeFontChain(primary);
+            List<char> missing = FindMissingInChain(chain, characters);
 
-                List<char> missing = FindMissing(font, characters);
-                if (missing.Count == 0)
-                {
-                    sb.AppendLine($"  ✓ {font.name}: 全覆盖（含 fallback 链）");
-                }
-                else
-                {
-                    fontsWithMissing++;
-                    sb.AppendLine($"  ✗ {font.name}: 缺字 {missing.Count} 个（真机将显示豆腐块）");
-                }
+            var sb = new StringBuilder();
+            sb.AppendLine($"[FontCoverage] language 表 {rowCount} 行，去重字符 {characters.Count} 个；" +
+                          $"主字体链（{chain.Count} 个）：{string.Join(" → ", chain.ConvertAll(f => f.name))}");
+            if (missing.Count == 0)
+            {
+                sb.AppendLine($"  ✓ 主字体链全覆盖 language 表字符（含全局 fallback 与动态字体源文件）");
+            }
+            else
+            {
+                fontsWithMissing = 1;
+                sb.Append($"  ✗ 主字体链缺字 {missing.Count} 个（真机将显示豆腐块，需扩字库或补 fallback）：");
+                int shown = Mathf.Min(missing.Count, MaxReportChars);
+                for (int i = 0; i < shown; i++)
+                    sb.Append(' ').Append(missing[i]).Append("(U+").Append(((int)missing[i]).ToString("X4")).Append(')');
+                if (missing.Count > shown)
+                    sb.Append($" …… 其余 {missing.Count - shown} 个从略");
             }
 
             report = sb.ToString().TrimEnd();
             return true;
+        }
+
+        /// <summary>
+        /// 展开主字体的运行时回退链：BFS 遍历「自身 fallback 表 + TMP Settings 全局 fallback」，递归去重。
+        /// 顺序即运行时字形查找顺序，主字体在首位。
+        /// </summary>
+        private static List<TMP_FontAsset> BuildRuntimeFontChain(TMP_FontAsset primary)
+        {
+            var ordered = new List<TMP_FontAsset>();
+            var visited = new HashSet<TMP_FontAsset>();
+            var queue = new Queue<TMP_FontAsset>();
+            queue.Enqueue(primary);
+
+            while (queue.Count > 0)
+            {
+                TMP_FontAsset font = queue.Dequeue();
+                if (font == null || !visited.Add(font))
+                    continue;
+                ordered.Add(font);
+
+                if (font.fallbackFontAssetTable != null)
+                {
+                    foreach (TMP_FontAsset fb in font.fallbackFontAssetTable)
+                        queue.Enqueue(fb);
+                }
+
+                // 全局 fallback 只在主字体处并入一次（对整条链生效，无需每个字体重复并入）。
+                if (font == primary && TMP_Settings.fallbackFontAssets != null)
+                {
+                    foreach (TMP_FontAsset fb in TMP_Settings.fallbackFontAssets)
+                        queue.Enqueue(fb);
+                }
+            }
+            return ordered;
+        }
+
+        /// <summary>求主字体链对字符集的缺字清单（升序；跳过空白/控制符；动态字体计源文件字形）。</summary>
+        private static List<char> FindMissingInChain(List<TMP_FontAsset> chain, HashSet<char> characters)
+        {
+            var missing = new List<char>();
+            foreach (char c in characters)
+            {
+                if (char.IsWhiteSpace(c) || char.IsControl(c))
+                    continue;
+                if (!ChainCoversChar(chain, c))
+                    missing.Add(c);
+            }
+            missing.Sort();
+            return missing;
+        }
+
+        /// <summary>字符是否被链上任一字体覆盖：静态图集命中，或动态字体源文件含该字形。</summary>
+        private static bool ChainCoversChar(List<TMP_FontAsset> chain, char c)
+        {
+            foreach (TMP_FontAsset font in chain)
+            {
+                if (font.characterLookupTable != null && font.characterLookupTable.ContainsKey(c))
+                    return true;
+                if (font.atlasPopulationMode == AtlasPopulationMode.Dynamic && SourceFontHasGlyph(font, c))
+                    return true;
+            }
+            return false;
+        }
+
+        /// <summary>动态字体的源字体文件是否含指定字符的字形（只读查询，不改图集）。</summary>
+        private static bool SourceFontHasGlyph(TMP_FontAsset font, char c)
+        {
+            Font source = font.sourceFontFile;
+            if (source == null)
+                return false;
+            // 字形索引查询与字号无关；LoadFontFace 失败（源文件缺失等）时保守视为不覆盖。
+            if (FontEngine.LoadFontFace(source, 90, 0) != FontEngineError.Success)
+                return false;
+            return FontEngine.TryGetGlyphIndex((uint)c, out uint glyphIndex) && glyphIndex != 0;
         }
 
         /// <summary>检查单个字体（含 fallback 链）对字符集的覆盖，输出缺字报告（MenuItem 路径，直接落 Console）。</summary>
