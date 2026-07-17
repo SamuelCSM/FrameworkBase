@@ -7,6 +7,14 @@
 
 ### 新增
 
+- **线上性能采样（APM）`Performance/`**（正式包运行时性能从零采集到有大盘口径）：`PerfWindowAggregator`
+  （纯逻辑）按分钟级窗口聚合平均 FPS / 最差帧 / 卡顿帧数（≥100ms）/ 严重卡顿帧数（≥500ms）/
+  托管与 Native 内存峰值——阈值取绝对值而非相对目标帧率，大盘口径跨设备可比；`PerfSampler`
+  组件接线（GameEntry 自动挂载，Inspector 可关），每窗口经 `AnalyticsManager` 上报一条 `perf_window`
+  事件（约 1 条/分钟/玩家，复用既有批量与隐私合规管道），附 GC 增量与活动场景。切后台的半截窗口
+  丢弃、恢复首帧巨额 deltaTime 跳过，不污染卡顿计数；`PerfSampler.Enabled` 静态开关供业务按
+  RemoteConfig 灰度采样人群。与 `PerfHud`（开发期屏显）分工：HUD 看瞬时值，本模块喂线上大盘。
+  EditMode 测试 7 例。见 `Performance/PERFORMANCE_GUIDE.md`。
 - **薄引导框架 `Guide/`**（步骤流 / 断点 / 遮罩挖孔 / 触发接线四原语，纯逻辑与表现分离）：`GuideScript`
   构造即校验、构造后不可变的有序步骤序列；`GuideFlow` 驱动步骤推进——业务在 `StepEntered` 回调按步骤 id
   编排表现、步骤达成调 `CompleteStep(id)` 推进，乱序 / 迟到完成属接线错误直接抛（fail-loud）。**每步推进即写档

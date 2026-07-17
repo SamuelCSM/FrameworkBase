@@ -64,6 +64,9 @@ namespace Framework.Core
         /// <summary>是否挂载性能 HUD（FPS/内存/GC/资源句柄/RTT 常驻叠加）。仅 Editor / Development Build 生效，正式包零开销。</summary>
         [SerializeField] private bool _enablePerfHud = true;
 
+        /// <summary>是否挂载线上性能采样（全构建生效，约 1 条 perf_window 埋点/分钟，见 Performance/PERFORMANCE_GUIDE.md）。</summary>
+        [SerializeField] private bool _enablePerfSampling = true;
+
         // ── Manager 静态访问点 ────────────────────────────────────────────────
 
         /// <summary>资源管理器 — Addressables 加载、实例化、释放</summary>
@@ -174,6 +177,12 @@ namespace Framework.Core
             // 通用补间（PrimeTween）容量与默认缓动一次性引导：须早于任何 UI 过渡 / 场景动画。
             TweenBootstrap.Initialize();
             InitializeManagers();
+
+            // 线上性能采样：全构建生效，窗口聚合后经 Analytics 低频上报（挂在 Manager 之后，
+            // 上报时经静态访问点取 Analytics，未就绪则静默跳过）
+            if (_enablePerfSampling && GetComponent<Framework.Performance.PerfSampler>() == null)
+                gameObject.AddComponent<Framework.Performance.PerfSampler>();
+
             Application.lowMemory += HandleLowMemory;
             Debug.Log("[GameEntry] 框架初始化完成");
         }
