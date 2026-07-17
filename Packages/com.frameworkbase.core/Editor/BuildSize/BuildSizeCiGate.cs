@@ -17,8 +17,13 @@ namespace Framework.Editor.BuildSize
     ///   -executeMethod Framework.Editor.BuildSize.BuildSizeCiGate.RunBuildSizeGate ^
     ///   -buildSizeDir &lt;产物目录&gt; [-buildSizeBaseline &lt;基线json&gt;] ^
     ///   [-buildSizeLabel v1.2.0] [-buildSizeWarnOnly] [-buildSizeUpdateBaseline] ^
+    ///   [-buildSizeBudgetMB 50] ^
     ///   -logFile Logs/ci/build-size-gate.log
     /// </code>
+    /// <para>
+    /// <c>-buildSizeBudgetMB N</c> 启用<b>预算模式</b>：总量 ≤ N MiB 即放行，无需基线、也不必逐版滚基线；
+    /// 超预算才阻断。适合「XX MB 内都算正常」的诉求。不传则走「相对上次基线涨幅」的默认模式。
+    /// </para>
     /// 结论以 ASCII 哨兵 <c>[BuildSizeGate] GATE_RESULT exit=N</c> 为准（batchmode 退出码不可靠）。
     /// </summary>
     public static class BuildSizeCiGate
@@ -73,6 +78,7 @@ namespace Framework.Editor.BuildSize
             string label = GetArgValue("-buildSizeLabel") ?? string.Empty;
             bool warnOnly = HasArg("-buildSizeWarnOnly");
             bool updateBaseline = HasArg("-buildSizeUpdateBaseline");
+            long budgetBytes = ParseBudgetBytes(GetArgValue("-buildSizeBudgetMB"));
 
             var current = BuildSizeSnapshotIO.FromDirectory(dir, label);
             if (current.totalBytes == 0 || current.entries == null || current.entries.Count == 0)
@@ -82,7 +88,8 @@ namespace Framework.Editor.BuildSize
             }
 
             var baseline = BuildSizeSnapshotIO.LoadBaseline(baselinePath);
-            if (baseline == null && !updateBaseline)
+            // 预算模式只看绝对上限，无需基线；相对涨幅模式才要求基线存在。
+            if (baseline == null && !updateBaseline && budgetBytes <= 0)
             {
                 Debug.LogError($"[BuildSizeGate] 缺少包体基线：{baselinePath}。只有显式传入 -buildSizeUpdateBaseline 才允许创建基线。");
                 return 1;
@@ -94,15 +101,54 @@ namespace Framework.Editor.BuildSize
                 return 0;
             }
 
-            var policy = new BuildSizePolicy { warnOnly = warnOnly };
-            var verdict = BuildSizeGate.Evaluate(baseline, current, policy);
-
             Debug.Log($"[BuildSizeGate] 产物总量 {BuildSizeGate.Human(current.totalBytes)}，条目 {current.entries.Count} 个");
+
+            // ── 预算模式：两档 —— 硬上限阻断 + 相对基线涨幅仅告警（大厂形：loose block + informative regression）──
+            if (budgetBytes > 0)
+                return EvaluateBudgetTwoTier(baseline, current, budgetBytes, warnOnly);
+
+            // ── 非预算模式：原「相对上次基线涨幅」阻断逻辑 ──────────────────────────────
+            var verdict = BuildSizeGate.Evaluate(baseline, current, new BuildSizePolicy { warnOnly = warnOnly });
             Debug.Log($"[BuildSizeGate] {verdict.Summary}");
             foreach (var v in verdict.Violations)
                 Debug.LogWarning($"[BuildSizeGate]   · {v.reason}");
-
             return verdict.IsBlocking ? 1 : 0;
+        }
+
+        /// <summary>
+        /// 预算模式两档裁决：<b>硬上限</b>（超预算才阻断）是唯一决定退出码的闸；<b>相对基线涨幅</b>
+        /// 只作告警信号（保留回归可见性与归因，但不拦开发速度）。基线缺失则跳过告警档。
+        /// </summary>
+        private static int EvaluateBudgetTwoTier(
+            BuildSizeSnapshot baseline, BuildSizeSnapshot current, long budgetBytes, bool warnOnly)
+        {
+            Debug.Log($"[BuildSizeGate] 预算模式：硬上限 {BuildSizeGate.Human(budgetBytes)}（超出才阻断）+ 相对基线涨幅仅告警。");
+
+            // 档一（阻断）：绝对预算
+            var budgetVerdict = BuildSizeGate.Evaluate(
+                baseline, current, new BuildSizePolicy { warnOnly = warnOnly, totalBudgetBytes = budgetBytes });
+            Debug.Log($"[BuildSizeGate] {budgetVerdict.Summary}");
+            foreach (var v in budgetVerdict.Violations)
+                Debug.LogError($"[BuildSizeGate]   · 超硬上限：{v.reason}");
+
+            // 档二（仅告警）：相对基线涨幅——给出回归信号但不影响退出码
+            if (baseline != null)
+            {
+                var relVerdict = BuildSizeGate.Evaluate(baseline, current, new BuildSizePolicy { warnOnly = true });
+                if (relVerdict.Violations.Count > 0)
+                {
+                    Debug.LogWarning($"[BuildSizeGate] 相对基线涨幅（仅告警，不阻断）：{relVerdict.Summary}");
+                    foreach (var v in relVerdict.Violations)
+                        Debug.LogWarning($"[BuildSizeGate]   ⚠ {v.reason}");
+                    Debug.LogWarning("[BuildSizeGate] 如告警持续，可用「Framework/发布/更新包体基线」滚基线重置涨幅参照（不影响放行）。");
+                }
+                else
+                {
+                    Debug.Log("[BuildSizeGate] 相对基线：无超阈项。");
+                }
+            }
+
+            return budgetVerdict.IsBlocking ? 1 : 0;
         }
 
         private static void Finish(int exitCode)
@@ -139,6 +185,19 @@ namespace Framework.Editor.BuildSize
         /// <summary>命令行是否含开关。</summary>
         private static bool HasArg(string key)
             => Environment.GetCommandLineArgs().Any(a => string.Equals(a, key, StringComparison.OrdinalIgnoreCase));
+
+        /// <summary>解析 <c>-buildSizeBudgetMB</c>（MiB，支持小数）为字节；缺失 / 非法 / 非正返回 0（关闭预算模式）。</summary>
+        private static long ParseBudgetBytes(string mbArg)
+        {
+            if (string.IsNullOrEmpty(mbArg) ||
+                !double.TryParse(mbArg, System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture, out double mb) ||
+                mb <= 0)
+            {
+                return 0;
+            }
+            return (long)(mb * 1024 * 1024);
+        }
 
         /// <summary>取 <c>-key value</c> 形式的参数值；缺失返回 null。</summary>
         private static string GetArgValue(string key)

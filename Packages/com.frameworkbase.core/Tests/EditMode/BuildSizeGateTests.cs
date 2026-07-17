@@ -111,6 +111,57 @@ namespace Framework.Tests
             Assert.IsFalse(v.IsBlocking);
         }
 
+        // ── 预算模式（绝对上限）──────────────────────────────────────────
+
+        [Test]
+        public void 预算模式_总量在预算内_Pass_即使涨幅巨大()
+        {
+            // 基线 1000 → 当前 5000（+400%），相对模式必 Fail；但预算 10000 内，预算模式放行。
+            var policy = new BuildSizePolicy { totalBudgetBytes = 10000 };
+            var v = BuildSizeGate.Evaluate(Snap(1000), Snap(5000), policy);
+            Assert.AreEqual(BuildSizeStatus.Pass, v.Status);
+        }
+
+        [Test]
+        public void 预算模式_超预算_Fail()
+        {
+            var policy = new BuildSizePolicy { totalBudgetBytes = 4000 };
+            var v = BuildSizeGate.Evaluate(Snap(1000), Snap(5000), policy);
+            Assert.AreEqual(BuildSizeStatus.Fail, v.Status);
+            Assert.AreEqual("TOTAL", v.Violations[0].category);
+            Assert.AreEqual(4000, v.Violations[0].baselineBytes); // 预算作为参照
+        }
+
+        [Test]
+        public void 预算模式_无基线也能判定()
+        {
+            // 预算模式不依赖基线：baseline 传 null 仍按绝对上限裁决。
+            var policy = new BuildSizePolicy { totalBudgetBytes = 4000 };
+            Assert.AreEqual(BuildSizeStatus.Pass, BuildSizeGate.Evaluate(null, Snap(3000), policy).Status);
+            Assert.AreEqual(BuildSizeStatus.Fail, BuildSizeGate.Evaluate(null, Snap(5000), policy).Status);
+        }
+
+        [Test]
+        public void 预算模式_跳过单类涨幅()
+        {
+            // 单个 bundle 暴涨（+400% > 25%），但总量在预算内 → 预算模式整体放行（预算是唯一总闸）。
+            long big = 200 * 1024;
+            var baseline = Snap(big, ("a.bundle", big));
+            var current = Snap(big + 100 * 1024, ("a.bundle", big + 100 * 1024));
+            var policy = new BuildSizePolicy { totalBudgetBytes = 10 * 1024 * 1024 };
+            var v = BuildSizeGate.Evaluate(baseline, current, policy);
+            Assert.AreEqual(BuildSizeStatus.Pass, v.Status);
+        }
+
+        [Test]
+        public void 预算模式_超预算_warnOnly降级为Warn()
+        {
+            var policy = new BuildSizePolicy { totalBudgetBytes = 1000, warnOnly = true };
+            var v = BuildSizeGate.Evaluate(Snap(500), Snap(2000), policy);
+            Assert.AreEqual(BuildSizeStatus.Warn, v.Status);
+            Assert.IsFalse(v.IsBlocking);
+        }
+
         [Test]
         public void 人类可读字节()
         {

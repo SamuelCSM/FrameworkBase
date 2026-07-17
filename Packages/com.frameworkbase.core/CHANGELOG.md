@@ -72,6 +72,13 @@
 
 ### 变更
 
+- **包体门禁改「两档」（硬上限阻断 + 相对涨幅告警）**：新增 `BuildSizePolicy.totalBudgetBytes`
+  （CLI `-buildSizeBudgetMB N`）绝对上限；`ci.yml` 走大厂形的两档——**硬上限**（100 MiB，超出才 Fail，
+  不需要基线、不必逐版滚基线）作唯一阻断闸，**相对上次基线涨幅**仍逐版比对但降级为**仅告警**（保留回归
+  可见性与归因，不拦开发速度）。解决孵化期功能快速累积、每次涨幅都要滚基线的运维负担，又不丢回归信号。
+  上限量的是 universal APK（含 v7a+arm64 双 .so、全密度），真实按机型切片下载约其一半 → 100 MiB universal
+  ≈ 50 MiB 单 arm64 实下载（目标轻量级）。不设预算时仍走原「相对涨幅**阻断**」模式（默认，向后兼容）。
+  EditMode 新增预算模式 5 例（预算内放行含巨幅增长 / 超预算阻断 / 无基线也能判 / 跳过单类 / warnOnly 降级）。
 - 登录/登出组合根统一贯通和清理 Save、Analytics、RemoteConfig、CrashReporter 的玩家身份。
 - 内容发行的 Catalog、配置、AOT 与热更程序集共用 Pending/Active/LKG 确认边界和中断恢复语义。
 - Clicker 等参考样例专属验收与业务语义测试归属壳工程，不进入可复用核心包。

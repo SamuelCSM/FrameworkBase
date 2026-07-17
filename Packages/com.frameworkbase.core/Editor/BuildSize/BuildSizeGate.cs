@@ -28,6 +28,30 @@ namespace Framework.Editor.BuildSize
             if (current == null)
                 return new BuildSizeVerdict(BuildSizeStatus.Pass, null, "无当前构建数据，跳过。");
 
+            // ── 预算模式：只看绝对上限，不比基线涨幅、也跳过单类（预算是唯一总闸）──────────────
+            // 「XX MB 内都算正常」：总量在预算内一律放行，无需逐版滚基线；超预算才违规。
+            if (policy.totalBudgetBytes > 0)
+            {
+                if (current.totalBytes <= policy.totalBudgetBytes)
+                {
+                    return new BuildSizeVerdict(BuildSizeStatus.Pass, null,
+                        $"通过：总量 {Human(current.totalBytes)} ≤ 预算 {Human(policy.totalBudgetBytes)}。");
+                }
+
+                var overBudget = new BuildSizeViolation
+                {
+                    category = "TOTAL",
+                    baselineBytes = policy.totalBudgetBytes,
+                    currentBytes = current.totalBytes,
+                    deltaBytes = current.totalBytes - policy.totalBudgetBytes,
+                    reason = $"总量 {Human(current.totalBytes)} 超预算 {Human(policy.totalBudgetBytes)}" +
+                             $"（超出 {Human(current.totalBytes - policy.totalBudgetBytes)}）。",
+                };
+                var budgetViolations = new List<BuildSizeViolation> { overBudget };
+                var budgetStatus = policy.warnOnly ? BuildSizeStatus.Warn : BuildSizeStatus.Fail;
+                return new BuildSizeVerdict(budgetStatus, budgetViolations, BuildSummary(budgetStatus, budgetViolations));
+            }
+
             if (baseline == null)
                 return new BuildSizeVerdict(BuildSizeStatus.Pass, null,
                     $"首次运行，无基线可比（当前总量 {Human(current.totalBytes)}），建议落盘为基线。");

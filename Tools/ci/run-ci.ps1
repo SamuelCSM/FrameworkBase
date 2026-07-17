@@ -19,7 +19,8 @@ param(
     [switch]$TemplateSlice,
     [string]$BuildSizeDir,
     [switch]$BuildSizeUpdateBaseline,
-    [switch]$BuildSizeWarnOnly
+    [switch]$BuildSizeWarnOnly,
+    [double]$BuildSizeBudgetMB = 0
 )
 
 $ErrorActionPreference = "Stop"
@@ -238,6 +239,7 @@ function Invoke-BuildSizeGate([string]$buildDir) {
     )
     if ($BuildSizeUpdateBaseline) { $gateArgs += "-buildSizeUpdateBaseline" }
     if ($BuildSizeWarnOnly) { $gateArgs += "-buildSizeWarnOnly" }
+    if ($BuildSizeBudgetMB -gt 0) { $gateArgs += @("-buildSizeBudgetMB", "$BuildSizeBudgetMB") }
 
     & $UnityPath @gateArgs
     $procExit = $LASTEXITCODE
