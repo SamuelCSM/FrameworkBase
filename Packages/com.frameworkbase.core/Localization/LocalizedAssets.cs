@@ -10,7 +10,8 @@ namespace Framework
     /// <para>
     /// 释放契约：资源经 ResourceManager 引用计数管理，释放必须用<b>解析后的实际地址</b>
     /// （<see cref="LoadAsync{T}"/> 随资源一并返回）而非基础地址。
-    /// Catalog 热更后存在性可能变化，业务在热更完成处调用 <see cref="ClearCache"/> 失效缓存。
+    /// Catalog 热更后存在性可能变化：<see cref="ResourceManager.CheckAndUpdateCatalogsAsync"/> 在 Catalog
+    /// 实际更新后已自动调 <see cref="ClearCache"/> 失效缓存，业务无需手动介入（走非标准热更路径时才需自调）。
     /// 线程约定：仅主线程访问。
     /// </para>
     /// </summary>

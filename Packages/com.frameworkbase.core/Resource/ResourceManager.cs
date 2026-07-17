@@ -136,6 +136,13 @@ namespace Framework
                 GameLog.Log("[ResourceManager] Catalog 已是最新（Editor Play Mode 下属正常，" +
                             "如需强制测试下载流程请先调用 ClearCache）");
             }
+            else if (result.CatalogChanged)
+            {
+                // Catalog 已换：本地化资源候选链的存在性可能已变（新增语言变体 / 原缺资源现已上架），
+                // 失效解析缓存，否则启动期记下的负结果会把热更后的新变体一直挡在原始地址上。
+                // 框架自持缓存自负一致性，不指望业务在热更完成处记得手动 ClearCache。
+                LocalizedAssets.ClearCache();
+            }
             return result;
         }
 
