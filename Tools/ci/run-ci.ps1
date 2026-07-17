@@ -303,6 +303,13 @@ if ($LASTEXITCODE -ne 0) {
     exit 1
 }
 
+# ── banned-API 门禁：运行时代码禁用 API 静态扫描（纯静态，先于 Unity）──────────
+& (Join-Path $PSScriptRoot "check-banned-apis.ps1")
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "banned-API 门禁未通过，跳过 Unity 测试。"
+    exit 1
+}
+
 # ── 依次跑（EditMode 先行：编译失败/逻辑用例挂了就不必再起后续）──
 $finalExit = Invoke-UnityTests "EditMode"
 

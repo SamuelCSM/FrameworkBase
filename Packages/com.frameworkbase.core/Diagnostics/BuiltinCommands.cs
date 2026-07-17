@@ -87,7 +87,7 @@ namespace Framework.Diagnostics
                 _ =>
                 {
                     long before = GC.GetTotalMemory(false) / (1024 * 1024);
-                    GC.Collect();
+                    GC.Collect(); // banned-api-allow: gc-collect 调试命令显式触发
                     Resources.UnloadUnusedAssets();
                     long after = GC.GetTotalMemory(true) / (1024 * 1024);
                     return CommandResult.Ok($"托管内存 {before}MB → {after}MB（未引用资产卸载已异步发起）。");

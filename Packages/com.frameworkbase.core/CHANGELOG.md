@@ -7,6 +7,12 @@
 
 ### 新增
 
+- **banned-API 静态门禁 `Tools/ci/check-banned-apis.ps1`**（运行时代码的 API 红线焊进 CI）：纯文本
+  扫描（无需 Unity，Windows/ubuntu 双平台），只管跑在玩家设备上的代码（Editor/Tests 不扫）。三条规则：
+  `local-time`（DateTime.Now 可被玩家改表、跨设备不可比→用 UtcNow/ServerTime）、`thread-sleep`
+  （阻塞卡帧）、`gc-collect`（全量 GC 集中卡顿，只允许加载屏/调试命令等遮蔽时机）。豁免须行内
+  `banned-api-allow: <规则id> <理由>`（当前行或上一行），随代码进评审——存量 9 处合法使用已逐处
+  写明理由。接入 run-ci（静态先行，先于 Unity）与 ci.yml 静态门禁 job；有牙验证：注入违规 exit 1。
 - **本地通知排程 `Notifications/`**（体力满/签到/活动提醒的策略收口）：`LocalNotificationPlanner`
   （纯逻辑）注册表与结算分离——业务游玩期间随时 `Register`（同 id 覆盖）/`Unregister`/`Clear`，
   切后台时结算成系统排程清单：过期过滤、免打扰时段平移（落在窗口内推迟到窗口结束，支持跨午夜

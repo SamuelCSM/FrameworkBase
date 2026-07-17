@@ -64,7 +64,7 @@ namespace Framework.Notifications
             {
                 _backend.CancelAll();
                 if (paused)
-                    _backend.ScheduleAll(Planner.BuildPlan(DateTimeOffset.Now));
+                    _backend.ScheduleAll(Planner.BuildPlan(DateTimeOffset.Now)); // banned-api-allow: local-time 免打扰时段按玩家本地时钟
             }
             catch (Exception ex)
             {
