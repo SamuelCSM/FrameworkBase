@@ -50,7 +50,14 @@ namespace Framework.Editor.BuildSize
     [Serializable]
     public class BuildSizePolicy
     {
-        /// <summary>总量增长超此百分比即违规（&lt;=0 关闭此项）。默认 10%。</summary>
+        /// <summary>
+        /// 总量绝对预算（字节，&gt;0 启用「预算模式」）：当前总量 ≤ 预算即放行、无视基线涨幅，超预算才违规。
+        /// 用于「XX MB 内都算正常」的诉求——启用后总量不再按基线百分比判定，也<b>不需要逐版滚基线</b>；
+        /// 预算模式下单类涨幅检查一并跳过（预算是唯一总闸）。默认 0 关闭，走下方相对涨幅逻辑。
+        /// </summary>
+        public long totalBudgetBytes = 0;
+
+        /// <summary>总量增长超此百分比即违规（&lt;=0 关闭此项）。默认 10%。仅在未启用预算模式时生效。</summary>
         public double maxTotalGrowthPercent = 10.0;
 
         /// <summary>总量增长超此绝对字节即违规（&lt;=0 关闭此项）。默认关闭。</summary>

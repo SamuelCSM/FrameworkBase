@@ -18,15 +18,26 @@
 | `BuildSizePolicy` | 阈值策略（总量+单类，双阈） | — |
 | `BuildSizeCiGate` | batchmode 入口 + "更新基线"菜单 | 需真实 Unity（薄胶水） |
 
-## 阈值策略
+## 两种模式
+
+- **预算模式（两档，`ci.yml` 采用）**：设 `-buildSizeBudgetMB N` 后走大厂形的「宽上限阻断 + 相对涨幅告警」：
+  - **档一·硬上限（阻断）**：总量 ≤ N MiB 即放行，超预算才 Fail。不需要基线、也不必逐版滚基线。
+  - **档二·相对涨幅（仅告警）**：仍逐版比对基线涨幅，但只发 GitHub 告警、不影响退出码——保留回归可见性与
+    归因，不拦开发速度。基线缺失则跳过此档。当前 `ci.yml` 用 `-buildSizeBudgetMB 100`。
+  - 量的是 universal APK（含 v7a+arm64 双 .so、全密度），真实按机型切片下载约其一半，故 100 MiB universal
+    ≈ 50 MiB 单 arm64 实下载（目标轻量级）。相对涨幅告警持续时可滚基线重置参照（不影响放行）。
+- **相对涨幅模式（默认，不设预算）**：无 `-buildSizeBudgetMB` 时，纯按基线逐版涨幅**阻断**。两道阈如下。
+
+## 阈值策略（相对涨幅模式）
 
 只查**增长**（缩小无害）。两道阈：
 
 | 策略项 | 默认 | 含义 |
 |---|---|---|
-| `maxTotalGrowthPercent` | 10% | 总量增长超此百分比 → 违规 |
-| `maxTotalGrowthBytes` | 关闭 | 总量增长超此绝对字节 → 违规（>0 启用） |
-| `maxEntryGrowthPercent` | 25% | 单条目增长超此百分比 → 违规 |
+| `totalBudgetBytes` | 关闭 | **总量绝对预算**：>0 启用预算模式，总量 ≤ 此值即放行、无视涨幅（CLI `-buildSizeBudgetMB`） |
+| `maxTotalGrowthPercent` | 10% | 总量增长超此百分比 → 违规（仅相对模式） |
+| `maxTotalGrowthBytes` | 关闭 | 总量增长超此绝对字节 → 违规（>0 启用；仅相对模式） |
+| `maxEntryGrowthPercent` | 25% | 单条目增长超此百分比 → 违规（仅相对模式） |
 | `entryMinBytesToCheck` | 64KB | 条目当前体积低于此值跳过百分比检查（防小文件抖动） |
 | `failOnNewEntry` | false | 出现基线没有的新条目是否算违规 |
 | `warnOnly` | false | true = 只告警不阻断（Warn 而非 Fail） |

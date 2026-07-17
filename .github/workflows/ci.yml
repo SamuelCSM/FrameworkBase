@@ -184,10 +184,12 @@ jobs:
           path: build/Android
           if-no-files-found: error
 
-      # 包体回归门禁：基线（Tools/ci/build-size-baseline.json）已提交时强制执行；
-      # 门禁本身失败关闭（缺基线即失败），此处仅在仓库尚未生成基线的引导期跳过并高亮提示。
-      # 基线生成：Editor 菜单「Framework/发布/更新包体基线」或 batchmode 传 -buildSizeUpdateBaseline，
-      # 生成后必须随代码评审一起提交，禁止 CI 隐式落盘。
+      # 包体回归门禁（两档：硬上限阻断 + 相对涨幅仅告警）：
+      #   · 硬上限 100 MiB 才阻断。注意量的是 universal APK（含 v7a+arm64 双 .so、全密度），
+      #     真实按机型切片下载约其一半 → 100 MiB universal ≈ 50 MiB 单 arm64 实下载，即目标轻量级。
+      #     孵化期框架仍在长，宽上限当真·灾难兜底；接近时再优化包体或评审调高。
+      #   · 相对上次基线涨幅仍逐版比对，但仅 GitHub 告警不阻断，保留回归可见性与归因。
+      #   切回纯相对涨幅阻断模式：去掉 -buildSizeBudgetMB 即可。
       - name: 包体回归门禁（BuildSizeGate，required）
         if: hashFiles('Tools/ci/build-size-baseline.json') != ''
         uses: game-ci/unity-builder@v4
@@ -195,7 +197,7 @@ jobs:
           targetPlatform: Android
           allowDirtyBuild: true
           buildMethod: Framework.Editor.BuildSize.BuildSizeCiGate.RunBuildSizeGateForBuilder
-          customParameters: -buildSizeDir build/Android -buildSizeLabel ${{ github.sha }}
+          customParameters: -buildSizeDir build/Android -buildSizeLabel ${{ github.sha }} -buildSizeBudgetMB 100
 
       - name: 包体基线缺失提示
         if: hashFiles('Tools/ci/build-size-baseline.json') == ''
