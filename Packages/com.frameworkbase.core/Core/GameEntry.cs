@@ -70,6 +70,9 @@ namespace Framework.Core
         /// <summary>是否按设备分级自动映射 Quality Level（低端→最低档等，见 Performance/DEVICE_TIER_GUIDE.md）。关闭后仍分级（业务可读档位），只是不动画质。</summary>
         [SerializeField] private bool _autoQualityByDeviceTier = true;
 
+        /// <summary>是否挂载本地通知生命周期接线（切后台排程/回前台清理，见 Notifications/NOTIFICATIONS_GUIDE.md）。</summary>
+        [SerializeField] private bool _enableLocalNotifications = true;
+
         // ── Manager 静态访问点 ────────────────────────────────────────────────
 
         /// <summary>资源管理器 — Addressables 加载、实例化、释放</summary>
@@ -185,6 +188,10 @@ namespace Framework.Core
             // 上报时经静态访问点取 Analytics，未就绪则静默跳过）
             if (_enablePerfSampling && GetComponent<Framework.Performance.PerfSampler>() == null)
                 gameObject.AddComponent<Framework.Performance.PerfSampler>();
+
+            // 本地通知生命周期接线：切后台按注册表结算排程，回前台全部取消
+            if (_enableLocalNotifications && GetComponent<Framework.Notifications.LocalNotificationRelay>() == null)
+                gameObject.AddComponent<Framework.Notifications.LocalNotificationRelay>();
 
             Application.lowMemory += HandleLowMemory;
             Debug.Log("[GameEntry] 框架初始化完成");

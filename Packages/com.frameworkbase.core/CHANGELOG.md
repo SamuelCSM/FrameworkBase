@@ -7,6 +7,15 @@
 
 ### 新增
 
+- **本地通知排程 `Notifications/`**（体力满/签到/活动提醒的策略收口）：`LocalNotificationPlanner`
+  （纯逻辑）注册表与结算分离——业务游玩期间随时 `Register`（同 id 覆盖）/`Unregister`/`Clear`，
+  切后台时结算成系统排程清单：过期过滤、免打扰时段平移（落在窗口内推迟到窗口结束，支持跨午夜
+  22→8，宁可晚提醒不可吵醒）、升序裁剪到条数上限（iOS 64 上限留余量默认 50，保留最近的——
+  越近对拉回越有效）。生命周期框架接管（`LocalNotificationRelay` 由 GameEntry 挂载）：切后台/
+  退出先清旧排程再按最新注册表重排，回前台全部取消（玩家在游戏里通知栏还挂"回来玩"是低级错误），
+  后端异常隔离。`ILocalNotificationBackend` 平台抽象走 ICrashBackend 同款注入模式，主干日志兜底，
+  原生实现（Unity Mobile Notifications/厂商通道）进扩展包；与 `ISdkPushService`（远程推送权限/token）
+  分工明确。EditMode 测试 10 例。见 `Notifications/NOTIFICATIONS_GUIDE.md`。
 - **纹理审计门禁 `Editor/TextureAudit`**（资源门禁第四项，问题纹理带病入包当场拦）：与 Addressables
   校验器同款「采集（Unity API）/ 规则（纯逻辑可单测）」分层。四条规则：Read/Write Enabled 判 Error
   （CPU 侧常驻拷贝内存翻倍，确需 CPU 采样走 `ReadWriteAllowlistPrefixes` 显式豁免、随代码进评审）；
