@@ -146,9 +146,11 @@ jobs:
           targetPlatform: StandaloneLinux64
           buildMethod: Framework.Editor.CiGate.RunAssetGateForBuilder
           allowDirtyBuild: false
-          # 字体覆盖严格模式：CjkDevFallback SDF 已挂进 TMP Settings 全局 fallback 链，
-          # FontCoverageChecker 按运行时主字体链 + 动态字体源文件判定覆盖，缺字重新阻断门禁。
-          customParameters: -strictFonts
+          # 字体覆盖仍为告警（不带 -strictFonts）：CjkDevFallback SDF 已挂进 TMP Settings 全局
+          # fallback 链、FontCoverageChecker 也已改为按运行时主字体链 + 动态字体源文件判定，但该字体
+          # （Assets/FrameworkTemplate/Fonts）整目录 gitignore，CI 干净 clone 里不存在，主字体链仍缺 CJK。
+          # 恢复严格模式的真实前置：一个入库的、覆盖 language 表字符的 CJK 子集字体（licensing/体积可控）。
+          customParameters: ""
 
   android-player:
     name: Android Player/IL2CPP 构建验证
