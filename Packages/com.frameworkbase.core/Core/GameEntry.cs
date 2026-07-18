@@ -488,6 +488,12 @@ namespace Framework.Core
             {
                 Auth = g.AddComponent<AuthManager>();
                 Network.SetReauthenticationProvider(() => Auth.ReauthenticateWithResultAsync());
+
+                // 遥测上报签名凭据：逐次求值读当前会话，登录/登出/换号无需重新注入；
+                // 未登录时无有效凭据即不签名（埋点/崩溃端点按未签名通道从严限流）。
+                Framework.Http.TelemetryRequestSigner.SetCredentialsProvider(() =>
+                    new Framework.Http.TelemetrySigningCredentials(
+                        AuthSession.UserId, AuthSession.SessionToken));
             }, dependsOn: new[] { typeof(NetworkManager) }),
 
             Reg<ConfigManager>(g => RefData = g.AddComponent<ConfigManager>()),

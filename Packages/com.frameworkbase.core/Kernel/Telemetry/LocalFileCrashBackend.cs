@@ -150,8 +150,12 @@ namespace Framework.Core.Telemetry
 
             try
             {
-                HttpResponse response = await HttpClients.Shared.PostTextAsync(
-                    uploadUrl, payload, "application/x-ndjson", UploadTimeoutSeconds);
+                // 与埋点同一签名契约：已登录附签名头，否则按未签名请求发送（服务端从严限流通道）。
+                HttpRequest request = HttpRequest
+                    .Post(uploadUrl, Encoding.UTF8.GetBytes(payload), "application/x-ndjson")
+                    .WithTimeout(UploadTimeoutSeconds);
+                TelemetryRequestSigner.TrySign(request);
+                HttpResponse response = await HttpClients.Shared.SendAsync(request);
 
                 if (!response.Succeeded)
                 {
