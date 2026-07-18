@@ -79,8 +79,10 @@ Length(4B) + MainId(1B) + SubId(1B) + SeqId(2B) + Payload(N B)
   "一次发送只配对一次采样"的客户端约束。
 - 心跳消息体**不是框架内建结构**：客户端经 `SetHeartbeatProvider(clientTimeMs, seq)` 注入
   请求工厂、经 `SetHeartbeatResponseParser(payload)->serverTimeMs` 注入响应解析器。
-  即心跳 proto 定义在模板层共享 `proto/` 中，ServerBase 心跳回包字段必须与该 proto 一致，
-  且必须携带**服务端 Unix 毫秒时间戳**并回显客户端序号。
+  心跳 proto 已冻结于仓库根 `proto/system.proto`：
+  `GC2GS_001_001_HeartbeatRequest{ClientTime,SequenceId}` ↔
+  `GS2GC_001_001_HeartbeatResponse{ServerTime,SequenceId}`，ServerBase 据此 codegen，
+  回包必须携带**服务端 Unix 毫秒时间戳**并回显客户端序号。
 - 客户端存活判定是"任意入站数据即存活"（默认间隔 30s，2.5×间隔未收到任何数据判超时断连）。
   服务端心跳回包除保活外真正的价值是校时：客户端按
   `ServerTime.AddSample(serverTimeMs, sentLocalMs, receivedLocalMs)` 估算偏移
@@ -90,7 +92,8 @@ Length(4B) + MainId(1B) + SubId(1B) + SeqId(2B) + Payload(N B)
 会话与重连语义：
 
 - 客户端"传输层重连成功 ≠ 会话恢复"：重连后经注入的重鉴权钩子**重放登录握手**，
-  成功前不补发应用请求。服务端必须提供"新连接凭 sessionToken 重绑会话"的握手路径，
+  成功前不补发应用请求。服务端必须提供"新连接凭 sessionToken 重绑会话"的握手路径
+  （`proto/system.proto` 的 `GC2GS_001_002_SessionBind*`，见 §4 前置项），
   并区分"可重试失败"与"会话已过期"（后者客户端停止重连、引导重登）。
 - 客户端支持按服务端下发的重连宽限窗口编排退避
   （`ConfigureReconnectWithinWindow`，窗口值约定来自配置表，如
@@ -163,10 +166,13 @@ Length(4B) + MainId(1B) + SubId(1B) + SeqId(2B) + Payload(N B)
 
 ## 4. 阶段分解（每阶段 = 一个可独立验收的切片）
 
-**前置项（先于服务端仓库动工，在客户端仓库排期）**：心跳与登录/重绑握手消息当前只
-存在于模板层注入约定（`SetHeartbeatProvider` / 重鉴权钩子）中，没有可 codegen 的事实源。
-必须先把它们升格为共享 `proto/` 的正式消息定义（双端各自生成），否则目标 2"协议单一
-事实源"没有地基，阶段三的帧级对拍也无从谈起。此项不计入服务端阶段编号。
+**前置项（已落地，2026-07，客户端仓库）**：核查结果——心跳消息此前已是正式事实源
+（`proto/system.proto` 的 `GC2GS/GS2GC_001_001_Heartbeat*`，经 `Tools/ProtoGen` 一键
+双端生成，ServerBase 只需在 `protogen.json` 增加 Server target 即得生成物）；缺失的
+另一半是 TCP 会话绑定/重绑握手，已补为 `GC2GS_001_002_SessionBindRequest` ↔
+`GS2GC_001_002_SessionBindResponse`（含 `ProtocolVersion` 协商字段；响应带 `ResultCode`，
+非零自动走客户端全局错误拦截）。客户端对握手消息的实际消费（TCP 版重鉴权钩子替换
+现行 HTTP 令牌重绑）在模板切片随阶段四联调落地，届时不改框架代码，仅换注入实现。
 
 | 阶段 | 内容 | 验收标准 |
 | --- | --- | --- |
@@ -192,7 +198,8 @@ Length(4B) + MainId(1B) + SubId(1B) + SeqId(2B) + Payload(N B)
    分别成文管理映射；新增错误码走注册表提交，禁止散落魔法值。
 4. **埋点 schema**：信封字段与 `perf_window` 等事件口径以客户端 GUIDE 为准，
    服务端按 `event_id` 去重后**原文入库不改写**；schema 演进只加不改。
-5. **协议版本协商**：TCP 登录/重绑握手预留 `protocolVersion` 字段；服务端策略为
+5. **协议版本协商**：TCP 会话绑定握手（`GC2GS_001_002_SessionBindRequest`）已含
+   `ProtocolVersion` 字段；服务端策略为
    "支持 N 与 N-1，更低版本明确拒绝并携带原因码"。首期实现为固定版本 + 拒绝路径可测。
    灰度期双版本并存依赖此约定，禁止用"猜字段"式兼容。
 6. **契约测试**：`Server.Tests` 内(a)用客户端同款 proto 生成物做编解码往返 + 帧级字节对拍；
@@ -269,8 +276,9 @@ Length(4B) + MainId(1B) + SubId(1B) + SeqId(2B) + Payload(N B)
 ## 10. 草案与代码差异清单（本次核对结果，实施时以本节为准）
 
 1. 帧格式草案未写明：**Length 含 8 字节包头、小端序**；SeqId 小端。已在 §3.1 冻结。
-2. 草案"心跳回包字段位置一经冻结"：心跳消息体不在框架内，由模板层 proto + 注入的
-   工厂/解析器定义；冻结对象修正为**共享 proto 中的心跳消息**（§5.2）。
+2. 草案"心跳回包字段位置一经冻结"：心跳消息体不在框架内，由仓库根
+   `proto/system.proto` + 注入的工厂/解析器定义；冻结对象修正为**共享 proto 中的
+   心跳消息**（§5.2）。
 3. 心跳帧 **SeqId=0**，不走请求-响应配对；客户端存活判定是"任意入站数据"。
 4. Auth 是**单一 POST 端点（URL 即 AuthServerUrl）**，无路径约定；401/403 有特殊语义
    （凭据失效），服务端限流必须用 429。草案未涉及。
