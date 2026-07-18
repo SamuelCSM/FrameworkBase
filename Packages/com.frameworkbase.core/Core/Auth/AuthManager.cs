@@ -191,6 +191,27 @@ namespace Framework.Core.Auth
                 attemptContext.SessionToken = AuthSession.SessionToken;
             }
 
+            // 服务端提供过期时刻（expiresAt）且已过期：跳过注定被拒的令牌重绑往返。
+            // 时钟基准用 ServerTime（会话内经心跳校时，本地表钟不可信）；权威判定仍在服务端，
+            // 本地时钟落后导致的漏判只是多一次被拒往返，行为等同未预判。
+            if (triedToken && AuthSession.SessionTokenExpiresAtMs > 0 &&
+                AuthSession.SessionTokenExpiresAtMs <= ServerTime.NowMs)
+            {
+                if (context.Mode == LoginMode.Account)
+                {
+                    // 账号模式密码已丢弃，无令牌即无路可走：直接按会话过期引导重新登录。
+                    GameLog.Warning("[AuthManager] 会话令牌已过期（expiresAt），停止令牌重绑并引导重新登录");
+                    return NetworkReauthenticationResult.SessionExpired;
+                }
+
+                // 游客身份锚在 DeviceId：跳过令牌尝试，直接走无令牌游客登录静默恢复。
+                GameLog.Log("[AuthManager] 会话令牌已过期（expiresAt），游客模式改走 DeviceId 静默恢复");
+                triedToken = false;
+                attemptContext = context;
+                attemptContext.Password = string.Empty;
+                attemptContext.SessionToken = string.Empty;
+            }
+
             using (var timeoutController = new TimeoutController(context.TimeoutMs))
             {
                 try
@@ -297,6 +318,28 @@ namespace Framework.Core.Auth
             // 账号模式且无令牌：密码已丢弃、无法静默恢复，必须回登录界面重新输入。
             if (!hasToken && mode == LoginMode.Account)
                 return LoginResult.Fail(TelemetryErrorCodes.Auth.TokenExpired, "account session requires re-login");
+
+            // 服务端提供过期时刻（expiresAt）且已过期：跳过注定被拒的令牌重绑往返。
+            // 冷启动无服务器校时，只能用本地 UTC 判定；本地时钟偏差的两种失误都安全——
+            // 偏快误判：账号回登录界面（与被拒同语义）、游客按 DeviceId 恢复同一身份；
+            // 偏慢漏判：多一次被拒往返，行为等同未预判。
+            if (hasToken && record.ExpiresAtMs > 0 &&
+                record.ExpiresAtMs <= DateTimeOffset.UtcNow.ToUnixTimeMilliseconds())
+            {
+                if (mode == LoginMode.Account)
+                {
+                    // 与"令牌被服务端拒绝"同处理：清持久化与内存态，回登录界面。
+                    AuthSessionStore.Clear();
+                    AuthSession.Clear();
+                    GameLog.Warning("[AuthManager] 持久化会话令牌已过期（expiresAt），跳过重绑直接回登录界面");
+                    return LoginResult.Fail(TelemetryErrorCodes.Auth.TokenExpired, "session token expired");
+                }
+
+                // 游客身份锚在 DeviceId：丢弃过期令牌，走无令牌游客登录静默恢复同一身份。
+                GameLog.Log("[AuthManager] 持久化会话令牌已过期（expiresAt），游客模式改走 DeviceId 静默恢复");
+                record.SessionToken = string.Empty;
+                hasToken = false;
+            }
 
             var context = new LoginRequestContext
             {

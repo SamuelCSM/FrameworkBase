@@ -39,9 +39,13 @@ namespace Game.Editor
             public bool success;
             public string userId;
             public string sessionToken;
+            public long expiresAt;
             public string errorCode;
             public string errorMessage;
         }
+
+        /// <summary>签发令牌的有效期（毫秒）。每次成功响应（含令牌重绑）都滑动续期。</summary>
+        private const long TokenTtlMs = 24L * 60 * 60 * 1000;
 
         private readonly HttpListener _listener;
         private readonly ConcurrentQueue<HttpListenerContext> _pending =
@@ -189,6 +193,7 @@ namespace Game.Editor
                 success = true,
                 userId = userId,
                 sessionToken = token,
+                expiresAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + TokenTtlMs,
                 errorCode = string.Empty,
                 errorMessage = string.Empty,
             };

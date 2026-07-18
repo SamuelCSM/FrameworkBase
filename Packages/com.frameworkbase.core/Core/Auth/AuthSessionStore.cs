@@ -25,6 +25,10 @@ namespace Framework.Core.Auth
             public int Mode;
             public string UserId;
             public string SessionToken;
+
+            /// <summary>令牌过期时刻（Unix 毫秒；0 = 未提供）。旧记录缺该字段时反序列化为 0，行为不变。</summary>
+            public long ExpiresAtMs;
+
             public string Account;
         }
 
@@ -36,6 +40,7 @@ namespace Framework.Core.Auth
                 Mode = (int)mode,
                 UserId = result.UserId ?? string.Empty,
                 SessionToken = result.SessionToken ?? string.Empty,
+                ExpiresAtMs = result.SessionTokenExpiresAtMs,
                 Account = mode == LoginMode.Account ? (account ?? string.Empty) : string.Empty,
             };
         }

@@ -44,16 +44,24 @@ namespace Framework.Core.Auth
         public string UserId;
         /// <summary>会话 Token（GS/未来 LS 下发；Mock 为空）。</summary>
         public string SessionToken;
+
+        /// <summary>
+        /// 会话令牌过期时刻（服务端签发的 Unix 毫秒；0 = 服务端未提供，客户端不做过期预判）。
+        /// 有值时客户端可跳过注定被拒的令牌重绑往返；权威判定仍在服务端，本值只用于省往返。
+        /// </summary>
+        public long SessionTokenExpiresAtMs;
+
         public string ErrorCode;
         public string ErrorMessage;
 
-        public static LoginResult Ok(string userId, string sessionToken = "")
+        public static LoginResult Ok(string userId, string sessionToken = "", long sessionTokenExpiresAtMs = 0)
         {
             return new LoginResult
             {
                 Success = true,
                 UserId = userId ?? string.Empty,
                 SessionToken = sessionToken ?? string.Empty,
+                SessionTokenExpiresAtMs = sessionTokenExpiresAtMs > 0 ? sessionTokenExpiresAtMs : 0,
                 ErrorCode = string.Empty,
                 ErrorMessage = string.Empty
             };
