@@ -1,7 +1,9 @@
 # ServerBase 目标设计（服务端配套工程）
 
-> 状态：目标设计（Target Design）。ServerBase 为独立仓库，本文先落在客户端仓库 `Docs/`，
-> 作为两端契约的唯一事实源；服务端仓库建立后本文随 `proto/` 一同迁移并保留回链。
+> 状态：目标设计（Target Design）。ServerBase 为独立仓库（2026-07-18 已建立）。
+> 本文迁入 ServerBase `Docs/` 后以服务端仓库份为**唯一权威**，客户端仓库原位置改为只读
+> 指针；`proto/` **不随迁**——ProtoGen 工具链与双端消息定义留在客户端仓库作为事实源，
+> 服务端经生成脚本跨仓库消费（FrameworkBase 根路径参数化，默认兄弟目录）。
 > 实施按阶段推进，每阶段必须以"现有客户端（Editor/真机）联调通过"为验收；
 > 实施中发现与现实冲突时，先回到本文对齐再动代码，不允许代码悄悄偏离设计。
 > 文中"客户端对接面"各节均已逐条对照 `com.frameworkbase.core` 现行代码核实（2026-07）。
@@ -186,9 +188,9 @@ Length(4B) + MainId(1B) + SubId(1B) + SeqId(2B) + Payload(N B)
 
 | 阶段 | 内容 | 验收标准 |
 | --- | --- | --- |
-| 一 | 仓库骨架 + CI 门禁（§9）+ 联调端口表 | CI 绿；空跑测试通过；端口表落地为客户端 `AppConfigAsset(dev)` 填写依据 |
+| 一 | 仓库骨架 + CI 门禁（§9）+ Protocol 生成物接入与帧级契约测试（服务端路由接口、Heartbeat/SessionBind 编解码往返、§3.1 帧格式逐字节对拍——纯逻辑不依赖网关，提前锁契约）+ 联调端口表 | CI 绿；空跑测试通过；往返/对拍契约测试进 CI；端口表落地为客户端 `AppConfigAsset(dev)` 填写依据 |
 | 二 | Auth 端点（游客登录、token 签发/TTL/重绑、会话存储抽象、登录限流） | 客户端 `UseNetworkLogin=true` + `AutoGuestLogin` 走通 LoginFlow；**冷启动令牌重绑命中**（不产生新游客）；错误口令 5 次触发 429；全程无客户端改动 |
-| 三 | TCP 网关 + 心跳（分帧逐字节对拍、心跳回包带服务端 Unix ms、协议版本握手字段） | 客户端 `ServerTime.IsSynchronized==true`，PerfHud 显示真实 RTT；断线重连过 `Docs/NetworkDeviceAcceptance.md` 清单；对拍测试进 CI |
+| 三 | TCP 网关 + 心跳（心跳回包带服务端 Unix ms、协议版本握手字段；帧对拍已在阶段一进 CI） | 客户端 `ServerTime.IsSynchronized==true`，PerfHud 显示真实 RTT；断线重连过 `Docs/NetworkDeviceAcceptance.md` 清单 |
 | 四 | 消息路由与会话（dispatcher、单会话消息串行化、token 重绑握手、请求去重、模板切片消息） | 模板 Play 验收器（batchmode）对真服务端全绿；重连后重鉴权恢复会话、离线队列补发不产生重复副作用 |
 | 五 | Analytics ingest（批量 JSON 数组、**event_id 幂等去重**、体积/速率限制、落盘/管道抽象） | `perf_window` / `launch_run` / `launch_phase` 端到端入库；人工重放同批次不产生重复行；`tier` 维度可分组查询 |
 | 六 | RemoteConfig 托管（版本化 JSON、按 env/channel 目录、发布/回滚） | 客户端 LKG 缓存 + 条件开关灰度链路演练通过；坏配置回滚演练通过 |
