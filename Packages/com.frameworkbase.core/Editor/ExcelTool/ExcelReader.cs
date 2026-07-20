@@ -19,8 +19,14 @@ namespace Editor.ExcelTool
         /// </summary>
         public enum ExcelSheetKind
         {
+            /// <summary>首列为唯一主键、运行时按键查询的普通配置表。</summary>
             Table,
-            General
+
+            /// <summary>单例纵向 Key/Value 配置。</summary>
+            General,
+
+            /// <summary>不要求主键、按行完整保留的关系/多对多配置列表。</summary>
+            List
         }
 
         /// <summary>

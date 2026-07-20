@@ -134,12 +134,11 @@ namespace Framework.Core
         public static Framework.Diagnostics.CommandRegistry Commands { get; private set; }
 
         /// <summary>
-        /// 共享红点树 — 业务往叶子写计数（<c>RedDots.SetCount("Mail/System", n)</c>），
-        /// UI 挂 <see cref="RedDotBadge"/> 或代码 Subscribe 绑定路径。
-        /// 登出时业务应自行清理账号态红点（框架不猜哪些路径属于账号维度）。
-        /// 独立玩法可自建局部 <see cref="Framework.Foundation.RedDotTree"/>，不必都挤共享树。
+        /// 配置驱动的共享红点 DAG — 业务只写稳定 ID 对应的 Signal，Aggregate 按目录关系自动聚合。
+        /// UI 挂 <see cref="RedDotBadge"/> 或代码 Subscribe 绑定 ID；账号切换时框架统一清运行态并加载
+        /// LocalAccount 已看版本。独立玩法仍可自建局部 <see cref="Framework.Foundation.RedDotTree"/>。
         /// </summary>
-        public static Framework.Foundation.RedDotTree RedDots { get; private set; }
+        public static Framework.Foundation.RedDotService RedDots { get; private set; }
 
         // ── 生命周期 ─────────────────────────────────────────────────────────
 
@@ -154,9 +153,10 @@ namespace Framework.Core
             Commands.SetGrantedAccess(Framework.Diagnostics.CommandAccessLevel.Development);
 #endif
 
-            // 共享红点树与命令总线同期就位：Manager / 业务初始化期即可写数或绑定。
-            // 订阅者异常送崩溃面包屑（红点回调炸 UI 是常见的隐性事故源，留痕辅助定位）。
-            RedDots = new Framework.Foundation.RedDotTree
+            // 框架只创建空服务，不持有业务拓扑。UI 可在目录安装前先订阅；热更业务侧在配置库就绪后
+            // 从标准 ConfigData 五张表组装目录，内容事务保证配置与引用它的代码处于同一发行版本。
+            // 订阅者异常送日志诊断，单个 UI 回调不会中断其它订阅者。
+            RedDots = new Framework.Foundation.RedDotService
             {
                 ObserverErrorSink = ex =>
                 {
@@ -296,8 +296,7 @@ namespace Framework.Core
                     BindLoggedInIdentity(result);
                     Debug.Log($"[GameEntry] 登录完成 userId={result.UserId} token={(string.IsNullOrEmpty(result.SessionToken) ? "(none)" : "ok")}");
                 },
-                EnterBusinessAsync = (result, _) =>
-                    OnBusinessEntryAsync != null ? OnBusinessEntryAsync(result) : UniTask.CompletedTask,
+                EnterBusinessAsync = EnterBusinessSessionAsync,
                 ExitBusiness = NotifyBusinessExit,
                 LogoutAuth = reason => Auth?.Logout(reason),
                 ClearIdentity = ClearLoggedInIdentity,
@@ -320,6 +319,27 @@ namespace Framework.Core
         /// 入口 await 期间收到的登出请求会被 AppFlow 后置合并：入口完成后立即拆卸回登录。
         /// </summary>
         public static Func<LoginResult, Cysharp.Threading.Tasks.UniTask> OnBusinessEntryAsync { get; set; }
+
+        /// <summary>
+        /// 业务会话进入前的同步装配钩子。调用时配置数据库已经完成启动安装，且早于账号红点已看记录加载；
+        /// 适合由热更侧初始化依赖 ConfigData 的业务基础服务。实现异常会阻止本次业务会话进入。
+        /// </summary>
+        public static Action OnBeforeBusinessEntry { get; set; }
+
+        /// <summary>
+        /// 身份已经贯通后先加载当前账号的 LocalAccount 红点已看版本，再把会话交给业务层。
+        /// 这样业务 Provider 首次提交快照时即可得到稳定的 EffectiveCount，不会先亮后灭。
+        /// </summary>
+        private static async UniTask EnterBusinessSessionAsync(
+            LoginResult loginResult,
+            CancellationToken cancellationToken)
+        {
+            OnBeforeBusinessEntry?.Invoke();
+            await Framework.RedDot.RedDotAccountSession.BeginAsync(RedDots);
+            cancellationToken.ThrowIfCancellationRequested();
+            if (OnBusinessEntryAsync != null)
+                await OnBusinessEntryAsync(loginResult);
+        }
 
         /// <summary>
         /// 业务会话退出钩子。框架在清空登录凭据与玩家身份之前同步调用，业务应在此取消账号级定时器、
@@ -388,17 +408,20 @@ namespace Framework.Core
         /// <summary>先让业务释放账号态资源；无论业务是否异常，调用方都继续完成框架清理。</summary>
         private static void NotifyBusinessExit(string reason)
         {
-            if (OnBusinessExit == null)
-                return;
-
             try
             {
-                OnBusinessExit(reason);
+                OnBusinessExit?.Invoke(reason);
             }
             catch (Exception ex)
             {
                 Debug.LogError($"[GameEntry] 业务退出 OnBusinessExit 抛异常，继续清理框架身份 reason={reason}");
                 Debug.LogException(ex);
+            }
+            finally
+            {
+                // 此时 SaveManager 仍指向旧账号目录：先异步触发已看版本落盘，再清运行态；
+                // AppFlow 随后才调用 ClearLoggedInIdentity 切回 guest。
+                Framework.RedDot.RedDotAccountSession.End(RedDots);
             }
         }
 

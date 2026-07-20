@@ -49,8 +49,8 @@ namespace Editor.ExcelTool
             // 1. 校验表结构
             ValidateStructure(sheetData, result);
 
-            // 2. 校验主键，general 单例表不依赖主键索引。
-            if (sheetData.SheetKind != ExcelReader.ExcelSheetKind.General)
+            // 2. 只有 Keyed Table 依赖首列唯一主键；General 与 List 均不做主键假设。
+            if (sheetData.SheetKind == ExcelReader.ExcelSheetKind.Table)
             {
                 ValidatePrimaryKey(sheetData, result);
             }

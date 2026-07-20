@@ -3,7 +3,9 @@ using Cysharp.Threading.Tasks;
 using Framework.Analytics;
 using Framework.Core;
 using Framework.Core.Auth;
+using Framework.Foundation;
 using Framework.Save;
+using HotUpdate.RedDot;
 using UnityEngine;
 
 namespace HotUpdate.Clicker
@@ -24,13 +26,21 @@ namespace HotUpdate.Clicker
         private static bool _installed;
         private static ClickerModel _model;
         private static ClickerMainView _mainView;
+        private static RedDotCoordinator _redDotCoordinator;
+        private static IDisposable _redDotStateSub;
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
-        private static void AutoInstallForOfflineDev() => Install();
+        private static void AutoInstallForOfflineDev()
+        {
+            Install();
+        }
 
         /// <summary>注册登录后业务入口 + 业务埋点事件字典。幂等。</summary>
         public static void Install()
         {
+            // 离线整包在首次登录前安装 ConfigData 红点目录；HybridCLR 路径在 HotfixEntry 已提前安装。
+            RedDotBootstrap.RegisterPreEntryHook();
+
             if (!_installed)
             {
                 _installed = true;
@@ -66,6 +76,21 @@ namespace HotUpdate.Clicker
 
             _model = new ClickerModel();
             await _model.InitAsync();
+
+            if (GameEntry.RedDots != null && GameEntry.RedDots.IsInitialized)
+            {
+                _redDotCoordinator = new RedDotCoordinator(GameEntry.RedDots);
+                _redDotCoordinator.Register(new ClickerRedDotProvider(_model));
+                _redDotCoordinator.RebuildAll();
+                _redDotStateSub = GameEntry.Event.Subscribe(
+                    ClickerEvents.StateChanged,
+                    () => _redDotCoordinator?.Refresh("Clicker"));
+            }
+            else
+            {
+                Debug.LogError("[Clicker] 红点目录未初始化，ClickerRedDotProvider 未注册。");
+            }
+
             _mainView = ClickerMainView.Create(_model, loginResult.UserId);
             Debug.Log($"[Clicker] CLICKER_READY userId={loginResult.UserId} coins={_model.Coins} level={_model.Level} double={_model.DoubleGain}");
 
@@ -88,11 +113,15 @@ namespace HotUpdate.Clicker
         {
             ClickerModel model = _model;
             ClickerMainView mainView = _mainView;
+            IDisposable redDotStateSub = _redDotStateSub;
             _model = null;
             _mainView = null;
+            _redDotStateSub = null;
+            _redDotCoordinator = null;
 
             try
             {
+                redDotStateSub?.Dispose();
                 model?.Dispose();
             }
             finally

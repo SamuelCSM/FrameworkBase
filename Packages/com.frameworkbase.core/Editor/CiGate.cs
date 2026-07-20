@@ -91,6 +91,16 @@ namespace Framework.Editor
                 exitCode = 1;
             }
 
+            if (Framework.Editor.RedDot.RedDotBuildValidator.ValidateForBuild(out string redDotReport))
+            {
+                Debug.Log("[CiGate] 红点配置与 UI 引用校验通过。\n" + redDotReport);
+            }
+            else
+            {
+                Debug.LogError("[CiGate] 红点配置门禁未通过：\n" + redDotReport);
+                exitCode = 1;
+            }
+
             if (!FontCoverageChecker.CheckFontsForCi(out string fontReport, out int fontsWithMissing))
             {
                 Debug.Log("[CiGate] 字体覆盖检查跳过：" + fontReport);

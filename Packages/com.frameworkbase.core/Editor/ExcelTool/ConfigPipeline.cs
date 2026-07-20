@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using Editor.ExcelTool;
+using Framework.Editor.RedDot;
 using UnityEditor;
 using UnityEngine;
 
@@ -61,16 +62,25 @@ namespace Framework.Editor
             // ── 1. 代码生成（数据类 + 表加载类，默认输出到热更侧 HotUpdate.Config）──
             var reader = new ExcelReader();
             var generator = new CodeGenerator();
+            var exportRules = ConfigExportRuleResolver.LoadDefault();
             int generatedCount = 0;
             foreach (string file in excelFiles)
             {
                 foreach (ExcelReader.ExcelSheetData sheet in reader.ReadExcel(file))
                 {
+                    sheet.SheetKind = exportRules.ResolveSheetKind(sheet.SheetName, sheet.SheetKind);
+
                     // 框架 Bootstrap 表（如 language）只导数据不生成代码：
                     // 生成类已预置于包内 ConfigData/Bootstrap/，再生成会在热更侧长出重复类（ADR-006）。
                     if (ConfigShardCatalog.IsFrameworkBootstrapTable(sheet.SheetName))
                     {
                         Debug.Log($"[ConfigPipeline] 跳过代码生成（框架 Bootstrap 表，生成类预置于 ConfigData/Bootstrap）：{sheet.SheetName}");
+                        continue;
+                    }
+
+                    if (!exportRules.ShouldGenerateClientCode(sheet.SheetName))
+                    {
+                        Debug.Log($"[ConfigPipeline] 跳过通用客户端代码生成（专用/服务端表）：{sheet.SheetName}");
                         continue;
                     }
 
@@ -80,6 +90,16 @@ namespace Framework.Editor
                     generatedCount++;
                     Debug.Log($"[ConfigPipeline] 代码生成：{sheet.SheetName} → {result.DataClassPath}");
                 }
+            }
+
+            // 红点仍需要标准表生成之外的跨表 DAG 校验与稳定 ID 常量；把它纳入同一导出入口，
+            // 避免只更新 config.db 却遗漏 RedDotIds.g.cs。
+            if (File.Exists(RedDotConfigCompiler.WorkbookPath))
+            {
+                if (!RedDotConfigCompiler.TryCompile(out Framework.Foundation.RedDotCatalog redDotCatalog,
+                        out string redDotReport))
+                    throw new InvalidOperationException("[ConfigPipeline] 红点跨表校验失败：\n" + redDotReport);
+                RedDotConfigCompiler.WriteArtifacts(redDotCatalog);
             }
 
             // ── 2. 数据导出（校验开启；首包 + 热更双目标；孤儿表清理保持库与 Excel 目录一致）──

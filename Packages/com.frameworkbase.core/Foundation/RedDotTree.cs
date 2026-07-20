@@ -41,9 +41,9 @@ namespace Framework.Foundation
     /// 无需关心「先订阅还是先写数」的时序。订阅者异常被隔离，可经 <see cref="ObserverErrorSink"/> 上报。
     /// </para>
     /// <para>
-    /// 纯 C# 零 Unity 依赖，可自由实例化（业务可为独立玩法建局部树）；框架共享默认树经
-    /// 组合根 <c>GameEntry.RedDots</c> 暴露。线程约定：仅主线程访问（红点是 UI 语义，
-    /// 不为不存在的并发场景付锁的代价）。
+    /// 纯 C# 零 Unity 依赖，可自由实例化，适合独立玩法内的局部严格树。全局生产红点已经改用
+    /// 配置驱动、多父节点的 <see cref="RedDotService"/>（<c>GameEntry.RedDots</c>）；本类作为轻量
+    /// 局部能力和旧项目兼容保留。线程约定：仅主线程访问。
     /// </para>
     /// </summary>
     public sealed class RedDotTree

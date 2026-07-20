@@ -71,8 +71,13 @@
   父节点值 = 子树叶子之和，增量聚合 O(深度) 更新；对非叶子写计数、对持数叶子挂子节点均属结构性错误直接抛
   （fail-loud，杜绝双重计数歧义）。叶子变化沿祖先链传播，路径上值变化的节点通知订阅者（值未变不通知）；订阅默认立即
   回调当前值，UI 绑定无需关心「先订阅还是先写数」。`ClearSubtree` 一键已读，`Snapshot` 稳定序调试快照。纯 C# 零
-  Unity 依赖可自由实例化（独立玩法建局部树），共享默认树经 `GameEntry.RedDots` 暴露。`RedDotBadge` 组件把路径绑定到
-  徽标显隐与计数文本（OnEnable 订阅 / OnDisable 退订，徽标须为独立子对象否则隐藏即退订）。EditMode 测试若干例。
+  Unity 依赖可自由实例化（独立玩法建局部树）。该旧树不再占用全局入口；`GameEntry.RedDots` 已迁移为下述配置驱动服务。
+- **配置驱动全局红点 DAG `Foundation/RedDotService`**：稳定整数 ID、模块号段、Node/Edge 分表、多父节点、
+  `Any`/`SumChildren`/`MaxChildren`/`SumUniqueSignals` 聚合、Provider 完整快照与增量刷新、Session/账号本地已看版本；
+  `RedDotBadge` 改为 ID 绑定并带搜索/回显/旧路径迁移；五张源表进入标准客户端 ConfigData，运行时从
+  `config.db.bytes` 组装目录，专用编译器只负责跨表校验和确定性 ID 常量。节点只填写模块内 `CodeName`，完整名称自动派生；
+  工作簿枚举列使用真实枚举类型。`red_dot_edge_ref` 使用新增的无主键 `ConfigListBase<T>` 关系表能力，
+  无需人工 EdgeKey 且允许多父节点。Prefab/Scene/CI 共用配置门禁，`reddot explain` 可追踪最终来源；旧 `RedDotTree` 保留。
 - **日志回捞最短路径 `Diagnostics/LogDump`**（冲刷 → 打包 → 可选上报）：`LogArchiver` 把日志目录压成单个 zip 落独立
   产物目录（共享读打开正被写线程持有的当前日志文件，产物目录自带保留上限最旧先删，纯文件系统逻辑 EditMode 可测）；
   `LogDump.DumpAsync` 编排冲刷 / 打包 / 上报，上报通道由业务注入 `UploadHandler`（未注入只留存本地，回捞包本身即具备

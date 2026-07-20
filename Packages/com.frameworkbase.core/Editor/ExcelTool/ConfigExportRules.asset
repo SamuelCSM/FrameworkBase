@@ -16,7 +16,25 @@ MonoBehaviour:
   Overrides:
   - TableName: language
     Target: 1
+    Shape: 0
   - TableName: loading_tips
     Target: 1
+    Shape: 0
   - TableName: ui_wnd_res
     Target: 1
+    Shape: 0
+  - TableName: red_dot_module_ref
+    Target: 1
+    Shape: 0
+  - TableName: red_dot_node_ref
+    Target: 1
+    Shape: 0
+  - TableName: red_dot_edge_ref
+    Target: 1
+    Shape: 2
+  - TableName: red_dot_seen_policy_ref
+    Target: 1
+    Shape: 0
+  - TableName: red_dot_retired_ref
+    Target: 1
+    Shape: 0
