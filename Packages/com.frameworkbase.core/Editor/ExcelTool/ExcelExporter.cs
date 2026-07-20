@@ -159,6 +159,8 @@ namespace Editor.ExcelTool
             if (targetSheet == null)
                 return FailResult($"未找到工作表: {sheetName}");
 
+            ApplyConfiguredSheetKind(targetSheet);
+
             if (!_exportRules.ShouldExportToClient(targetSheet.SheetName))
                 return SkipResult(targetSheet, "服务端专用表，已跳过客户端 SQLite 导出");
 
@@ -184,6 +186,7 @@ namespace Editor.ExcelTool
             var results = new List<ExportResult>(sheets.Count);
             foreach (var sheet in sheets)
             {
+                ApplyConfiguredSheetKind(sheet);
                 if (!_exportRules.ShouldExportToClient(sheet.SheetName))
                     results.Add(SkipResult(sheet, "服务端专用表，已跳过客户端 SQLite 导出"));
                 else
@@ -191,6 +194,13 @@ namespace Editor.ExcelTool
             }
 
             return results;
+        }
+
+        /// <summary>应用规则资产中的 Keyed/List/General 表形态覆盖。</summary>
+        private void ApplyConfiguredSheetKind(ExcelReader.ExcelSheetData sheet)
+        {
+            if (sheet == null) return;
+            sheet.SheetKind = _exportRules.ResolveSheetKind(sheet.SheetName, sheet.SheetKind);
         }
 
         /// <summary>
@@ -587,8 +597,8 @@ namespace Editor.ExcelTool
 
                 sb.Append($"{QuoteSqlIdentifier(fieldName)} {sqlType}");
 
-                // 普通表第一个字段作为主键。
-                if (i == 0)
+                // Keyed Table 的首列作为主键；List 表保留重复首列，不创建主键约束。
+                if (i == 0 && sheetData.SheetKind == ExcelReader.ExcelSheetKind.Table)
                 {
                     sb.Append(" PRIMARY KEY");
                 }

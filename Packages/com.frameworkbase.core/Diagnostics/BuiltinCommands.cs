@@ -87,7 +87,7 @@ namespace Framework.Diagnostics
                 _ =>
                 {
                     long before = GC.GetTotalMemory(false) / (1024 * 1024);
-                    GC.Collect();
+                    GC.Collect(); // banned-api-allow: gc-collect 调试命令显式触发
                     Resources.UnloadUnusedAssets();
                     long after = GC.GetTotalMemory(true) / (1024 * 1024);
                     return CommandResult.Ok($"托管内存 {before}MB → {after}MB（未引用资产卸载已异步发起）。");
@@ -113,29 +113,77 @@ namespace Framework.Diagnostics
                 _ => LogDump.DumpAsync());
 
             registry.Register(
-                new CommandInfo("reddot", "查询共享红点树：无参列出全部非零节点，带路径查单点",
-                    usage: "reddot [路径]",
+                new CommandInfo("reddot", "查询共享红点 DAG：无参列非零节点，支持 ID/Key 与 explain 来源链",
+                    usage: "reddot [ID|Key] | reddot explain <ID|Key>",
                     requiredAccess: CommandAccessLevel.Privileged),
                 args =>
                 {
-                    var tree = Core.GameEntry.RedDots;
-                    if (tree == null)
-                        return CommandResult.Ok("红点树未初始化。");
+                    var service = Core.GameEntry.RedDots;
+                    if (service == null || !service.IsInitialized)
+                        return CommandResult.Ok("红点目录未初始化。");
 
-                    string path = args.GetStringOrDefault(0);
-                    if (!string.IsNullOrEmpty(path))
-                        return CommandResult.Ok($"{path} = {tree.GetCount(path)}");
+                    bool explain = string.Equals(args.GetStringOrDefault(0), "explain", StringComparison.OrdinalIgnoreCase);
+                    string target = args.GetStringOrDefault(explain ? 1 : 0);
+                    if (!string.IsNullOrEmpty(target))
+                    {
+                        int id;
+                        if (!int.TryParse(target, out id) && !service.TryResolveId(target, out id))
+                            return CommandResult.Fail($"红点 ID/Key 不存在：{target}");
+
+                        Framework.Foundation.RedDotNodeSnapshot info = default;
+                        bool found = false;
+                        foreach (Framework.Foundation.RedDotNodeSnapshot item in service.Snapshot())
+                        {
+                            if (item.Id != id) continue;
+                            info = item;
+                            found = true;
+                            break;
+                        }
+                        if (!found) return CommandResult.Fail($"红点 ID 不存在：{id}");
+
+                        var detail = new StringBuilder(256);
+                        detail.Append(info.Id).Append(" [").Append(info.Key).Append("] = ").Append(info.FinalCount)
+                            .Append(" kind=").Append(info.Kind)
+                            .Append(" aggregation=").Append(info.Aggregation);
+                        if (info.Kind == Framework.Foundation.RedDotNodeKind.Signal)
+                        {
+                            detail.Append(" raw=").Append(info.RawCount)
+                                .Append(" effective=").Append(info.EffectiveCount)
+                                .Append(" provider=").Append(info.Provider ?? "(direct)")
+                                .Append(" ready=").Append(info.Provider == null || info.ProviderReady);
+                            if (info.SeenPolicy != null)
+                            {
+                                detail.Append(" seen=").Append(info.LastSeenVersion).Append('/')
+                                    .Append(info.SeenPolicy.Version)
+                                    .Append(" trigger=").Append(info.SeenPolicy.Trigger)
+                                    .Append(" save=").Append(info.SeenPolicy.SaveMode);
+                            }
+                        }
+
+                        if (explain)
+                        {
+                            foreach (Framework.Foundation.RedDotNodeSnapshot source in service.GetActiveSignalSources(id))
+                            {
+                                detail.AppendLine().Append("  <- ").Append(source.Id).Append(" [")
+                                    .Append(source.Key).Append("] raw=").Append(source.RawCount)
+                                    .Append(" effective=").Append(source.EffectiveCount)
+                                    .Append(" provider=").Append(source.Provider ?? "(direct)")
+                                    .Append(" ready=").Append(source.Provider == null || source.ProviderReady);
+                            }
+                        }
+                        return CommandResult.Ok(detail.ToString());
+                    }
 
                     var sb = new StringBuilder(256);
-                    sb.Append("红点树（非零节点，总计 ").Append(tree.TotalCount).Append("）：");
+                    sb.Append("红点 DAG（非零节点；DAG 无隐式 TotalCount）：");
                     int shown = 0;
-                    foreach (Framework.Foundation.RedDotNodeInfo info in tree.Snapshot())
+                    foreach (Framework.Foundation.RedDotNodeSnapshot info in service.Snapshot())
                     {
-                        if (info.TotalCount == 0)
+                        if (info.FinalCount == 0)
                             continue;
-                        sb.AppendLine().Append("  ").Append(info.Path).Append(" = ").Append(info.TotalCount);
-                        if (info.HasChildren)
-                            sb.Append("（聚合）");
+                        sb.AppendLine().Append("  ").Append(info.Id).Append(" [").Append(info.Key)
+                            .Append("] = ").Append(info.FinalCount);
+                        if (info.Kind == Framework.Foundation.RedDotNodeKind.Aggregate) sb.Append("（聚合）");
                         shown++;
                     }
                     if (shown == 0)

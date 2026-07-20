@@ -3,6 +3,7 @@
     "rootNamespace": "",
     "references": [
         "Framework",
+        "Framework.Foundation",
         "Framework.Kernel",
         "Framework.Protocol.Abstractions",
         "GameProtocol",

@@ -63,5 +63,23 @@ namespace Framework.Tests
             Assert.IsFalse(result.IsValid, "主键为空的工作表必须被校验拒绝");
             StringAssert.Contains("主键", string.Join("; ", result.Errors));
         }
+
+        [Test]
+        public void ListSheet_AllowsDuplicateFirstColumn_AndGeneratesListLoader()
+        {
+            ExcelReader.ExcelSheetData sheet = BuildValidSheet();
+            sheet.SheetName = "sample_relation";
+            sheet.SheetKind = ExcelReader.ExcelSheetKind.List;
+            sheet.DataRows[1]["Id"] = 1;
+
+            var validation = new ExcelDataValidator().ValidateSheet(sheet);
+            Assert.IsTrue(validation.IsValid,
+                "List 表不应把首列当主键：" + string.Join("; ", validation.Errors));
+
+            CodeGenerator.GenerateResult generated = new CodeGenerator().GenerateConfigClass(sheet);
+            StringAssert.Contains("ConfigListBase<SampleRelation>", generated.TableClassCode);
+            StringAssert.DoesNotContain("[PrimaryKey]", generated.DataClassCode);
+            StringAssert.DoesNotContain("GetKey(", generated.TableClassCode);
+        }
     }
 }

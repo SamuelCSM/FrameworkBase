@@ -7,7 +7,7 @@ using UnityEngine;
 namespace Framework.Editor
 {
     /// <summary>
-    /// 命令行资源质量门禁，统一执行工程可复现性、Addressables 规则和字体覆盖检查。
+    /// 命令行资源质量门禁，统一执行工程可复现性、Addressables 规则、纹理审计和字体覆盖检查。
     /// <para>
     /// <see cref="RunAssetGate"/> 供直接 Unity batchmode 调用并自行退出；
     /// <see cref="RunAssetGateForBuilder"/> 供 GameCI unity-builder 等外部构建器调用，失败时抛异常但不抢占宿主退出流程。
@@ -78,6 +78,26 @@ namespace Framework.Editor
             else
             {
                 Debug.LogError("[CiGate] Addressables 门禁未通过：\n" + addressablesSummary);
+                exitCode = 1;
+            }
+
+            if (TextureAuditCollector.ValidateForCi(out string textureReport, out int textureErrors))
+            {
+                Debug.Log("[CiGate] 纹理审计通过。\n" + textureReport);
+            }
+            else
+            {
+                Debug.LogError($"[CiGate] 纹理审计未通过（{textureErrors} 条 Error）：\n" + textureReport);
+                exitCode = 1;
+            }
+
+            if (Framework.Editor.RedDot.RedDotBuildValidator.ValidateForBuild(out string redDotReport))
+            {
+                Debug.Log("[CiGate] 红点配置与 UI 引用校验通过。\n" + redDotReport);
+            }
+            else
+            {
+                Debug.LogError("[CiGate] 红点配置门禁未通过：\n" + redDotReport);
                 exitCode = 1;
             }
 

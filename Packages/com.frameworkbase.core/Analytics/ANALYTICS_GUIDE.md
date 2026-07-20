@@ -43,7 +43,7 @@ await GameEntry.Analytics.FlushAsync();
 | 场景 | 做法 |
 |---|---|
 | 开发期 | 什么都不配——默认日志后端，Console 直接看事件 JSON |
-| 自建采集 | `AppConfig.AnalyticsUrl` 填端点，走内置 HTTP JSON 后端（POST 事件数组） |
+| 自建采集 | `AppConfig.AnalyticsUrl` 填端点，走内置 HTTP JSON 后端（POST 事件数组；已登录时附 `X-Telemetry-Ts/Uid/Sign` 签名头，key=会话令牌 HMAC-SHA256，采集端验签契约见 `Docs/ServerBaseTargetDesign.md` §3.3） |
 | 三方平台 | 扩展包实现 `IAnalyticsBackend`，组合根 `GameEntry.Analytics.SetBackend(...)` |
 
 ## 管道参数（内置约定）

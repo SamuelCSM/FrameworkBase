@@ -13,3 +13,21 @@ message GS2GC_001_001_HeartbeatResponse {
   int64 ServerTime = 1;   // 服务端时间戳（毫秒）
   int32 SequenceId = 2;   // 回填请求序列号
 }
+
+// 会话绑定/重绑握手（GC2GS_001_002 ↔ GS2GC_001_002）
+// 传输层连接（首连或重连）建立后、发送任何业务请求前，客户端必须先以 Auth 端点签发的
+// 会话令牌完成绑定；服务端在绑定成功前应拒绝或丢弃该连接上的业务请求。
+// 断线重连的重鉴权即重放本握手（令牌重绑到新连接，不重放明文密码）。
+// ProtocolVersion 用于协议版本协商：服务端支持 N 与 N-1，更低版本回明确错误码拒绝
+// （契约冻结点见 Docs/ServerBaseTargetDesign.md §5）。
+message GC2GS_001_002_SessionBindRequest {
+  string SessionToken = 1;    // Auth 端点签发的会话令牌（必填）
+  string DeviceId = 2;        // 设备标识，与 Auth 请求同源（审计/风控维度）
+  int32 ProtocolVersion = 3;  // 客户端协议版本（版本协商用）
+  string AppVersion = 4;      // 客户端应用版本（观测/兼容策略维度）
+}
+
+message GS2GC_001_002_SessionBindResponse {
+  int32 ResultCode = 1;       // 0=绑定成功；非零错误码域见错误码注册表（令牌失效/版本过低等）
+  string UserId = 2;          // 绑定成功后的用户标识（与 Auth 响应 userId 一致）
+}

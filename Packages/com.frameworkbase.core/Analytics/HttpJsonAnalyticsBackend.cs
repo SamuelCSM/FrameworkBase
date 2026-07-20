@@ -9,6 +9,8 @@ namespace Framework.Analytics
     /// <summary>
     /// 通用 HTTP JSON 埋点后端：把一批事件按 JSON 数组 POST 到自建采集端点。
     /// 2xx 视为成功；任何网络错误/非 2xx 折算为失败（由管理器退避重试），不抛异常。
+    /// 已登录时经 <see cref="TelemetryRequestSigner"/> 附加签名头（凭据由组合根注入）；
+    /// 未登录/签名失败按未签名请求照常发送，服务端归入更严限流通道。
     /// </summary>
     public class HttpJsonAnalyticsBackend : IAnalyticsBackend
     {
@@ -42,11 +44,11 @@ namespace Framework.Analytics
             }
             body.Append(']');
 
-            HttpResponse response = await HttpClients.Shared.PostTextAsync(
-                _endpointUrl,
-                body.ToString(),
-                "application/json",
-                _timeoutSeconds);
+            HttpRequest request = HttpRequest
+                .Post(_endpointUrl, Encoding.UTF8.GetBytes(body.ToString()), "application/json")
+                .WithTimeout(_timeoutSeconds);
+            TelemetryRequestSigner.TrySign(request);
+            HttpResponse response = await HttpClients.Shared.SendAsync(request);
 
             if (!response.Succeeded)
                 GameLog.Warning($"[HttpJsonAnalyticsBackend] 上报失败 code={response.StatusCode} err={response.Error}");

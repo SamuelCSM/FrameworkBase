@@ -57,7 +57,7 @@ jobs:
         run: ./Tools/ci/check-reproducibility.ps1
 
   asmdef-gate:
-    name: asmdef 依赖门禁（分层/热更拓扑）
+    name: 静态门禁（asmdef 拓扑 / banned-API）
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -65,6 +65,10 @@ jobs:
       - name: 静态校验 asmdef 依赖方向（无需 Unity）
         shell: pwsh
         run: ./Tools/ci/check-asmdef-deps.ps1
+
+      - name: 运行时代码 banned-API 扫描（无需 Unity）
+        shell: pwsh
+        run: ./Tools/ci/check-banned-apis.ps1
 
   # 变更影响分析：PR 上判断是否触及构建关键路径，决定重型移动端构建是否执行。
   # 非 PR 事件（master push / 手动）恒为全量，保证发布基线始终经过移动端验证。

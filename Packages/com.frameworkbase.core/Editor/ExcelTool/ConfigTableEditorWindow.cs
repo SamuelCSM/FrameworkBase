@@ -65,7 +65,8 @@ namespace Editor.ExcelTool
         private enum ConfigTableKind
         {
             Table,
-            General
+            General,
+            List
         }
 
         private EditorMode _mode = EditorMode.LoadAndGenerate;
@@ -215,6 +216,10 @@ namespace Editor.ExcelTool
             {
                 EditorGUILayout.HelpBox("General 表会导出为 Key / ValueType / Value / Comment 纵向模板，工作表名必须以 _general 结尾。", MessageType.Info);
             }
+            else if (IsListConfigKind())
+            {
+                EditorGUILayout.HelpBox("List 表不要求主键，适合关系表/多对多表；重复首列会完整保留。请在 ConfigExportRules 中同步把 Shape 设为 List。", MessageType.Info);
+            }
 
             EditorGUILayout.Space(10);
 
@@ -251,7 +256,7 @@ namespace Editor.ExcelTool
 
             // 表头
             EditorGUILayout.BeginHorizontal();
-            if (!IsGeneralConfigKind())
+            if (IsKeyedConfigKind())
             {
                 EditorGUILayout.LabelField("主键", GUILayout.Width(PrimaryKeyColumnWidth));
             }
@@ -324,8 +329,8 @@ namespace Editor.ExcelTool
 
             EditorGUILayout.BeginHorizontal();
 
-            // 普通表通过主键列构建 ConfigBase 索引，general 表不显示该控制项。
-            if (!IsGeneralConfigKind())
+            // 只有 Keyed Table 通过主键列构建 ConfigBase 索引。
+            if (IsKeyedConfigKind())
             {
                 field.IsPrimaryKey = EditorGUILayout.Toggle(field.IsPrimaryKey, GUILayout.Width(PrimaryKeyColumnWidth));
             }
@@ -455,10 +460,14 @@ namespace Editor.ExcelTool
                     return;
                 }
 
-                Debug.Log($"[ConfigTableEditorWindow] 工作表信息 - 名称: {targetSheet.SheetName}, 字段数: {targetSheet.FieldNames.Count}, 数据行数: {targetSheet.DataRows.Count}");
+                targetSheet.SheetKind = ConfigExportRuleResolver.LoadDefault()
+                    .ResolveSheetKind(targetSheet.SheetName, targetSheet.SheetKind);
+                Debug.Log($"[ConfigTableEditorWindow] 工作表信息 - 名称: {targetSheet.SheetName}, 类型: {targetSheet.SheetKind}, 字段数: {targetSheet.FieldNames.Count}, 数据行数: {targetSheet.DataRows.Count}");
                 _tableKind = targetSheet.SheetKind == ExcelReader.ExcelSheetKind.General
                     ? ConfigTableKind.General
-                    : ConfigTableKind.Table;
+                    : targetSheet.SheetKind == ExcelReader.ExcelSheetKind.List
+                        ? ConfigTableKind.List
+                        : ConfigTableKind.Table;
 
                 // 加载字段定义
                 _fields.Clear();
@@ -469,7 +478,7 @@ namespace Editor.ExcelTool
                         FieldName = targetSheet.FieldNames[i],
                         TypeName = i < targetSheet.TypeDefinitions.Count ? targetSheet.TypeDefinitions[i] : "string",
                         Comment = i < targetSheet.Comments.Count ? targetSheet.Comments[i] : "",
-                        IsPrimaryKey = i == 0  // 默认第一个字段为主键
+                        IsPrimaryKey = targetSheet.SheetKind == ExcelReader.ExcelSheetKind.Table && i == 0
                     };
                     _fields.Add(field);
                     Debug.Log($"[ConfigTableEditorWindow] 字段 {i}: {field.FieldName} ({field.TypeName}) - {field.Comment}");
@@ -969,7 +978,9 @@ namespace Editor.ExcelTool
                     SheetName = _tableName,
                     SheetKind = IsGeneralConfigKind()
                         ? ExcelReader.ExcelSheetKind.General
-                        : ExcelReader.ExcelSheetKind.Table
+                        : IsListConfigKind()
+                            ? ExcelReader.ExcelSheetKind.List
+                            : ExcelReader.ExcelSheetKind.Table
                 };
 
                 foreach (var field in _fields)
@@ -1111,7 +1122,7 @@ namespace Editor.ExcelTool
                 return false;
             }
 
-            if (!IsGeneralConfigKind() && !_fields.Any(f => f.IsPrimaryKey))
+            if (IsKeyedConfigKind() && !_fields.Any(f => f.IsPrimaryKey))
             {
                 EditorUtility.DisplayDialog("错误", "请至少指定一个主键字段", "确定");
                 return false;
@@ -1126,6 +1137,18 @@ namespace Editor.ExcelTool
         private bool IsGeneralConfigKind()
         {
             return _tableKind == ConfigTableKind.General;
+        }
+
+        /// <summary>判断当前编辑目标是否为无主键列表表。</summary>
+        private bool IsListConfigKind()
+        {
+            return _tableKind == ConfigTableKind.List;
+        }
+
+        /// <summary>判断当前编辑目标是否要求首列主键。</summary>
+        private bool IsKeyedConfigKind()
+        {
+            return _tableKind == ConfigTableKind.Table;
         }
     }
 }

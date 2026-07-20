@@ -85,7 +85,7 @@ namespace Framework
 
                 Directory.CreateDirectory(outputDirectory);
                 string archivePath = Path.Combine(
-                    outputDirectory, $"{ArchivePrefix}{DateTime.Now:yyyyMMdd_HHmmss_fff}.zip");
+                    outputDirectory, $"{ArchivePrefix}{DateTime.Now:yyyyMMdd_HHmmss_fff}.zip"); // banned-api-allow: local-time 归档文件名按本地时间
 
                 using (var zipStream = new FileStream(archivePath, FileMode.CreateNew))
                 using (var zip = new ZipArchive(zipStream, ZipArchiveMode.Create))

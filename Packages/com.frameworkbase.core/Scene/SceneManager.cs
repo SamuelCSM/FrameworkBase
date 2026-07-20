@@ -355,7 +355,7 @@ namespace Framework
 
                 // 异步释放未使用资源，避免阻塞主线程
                 await Resources.UnloadUnusedAssets();
-                GC.Collect();
+                GC.Collect(); // banned-api-allow: gc-collect 场景切换加载屏内集中回收
             }
             catch (Exception ex)
             {

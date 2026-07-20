@@ -17,8 +17,9 @@ namespace Framework.Core.Auth
     /// </para>
     /// <para>
     /// 请求体：<c>{ "mode":"guest|account", "account", "password", "sessionToken", "deviceId" }</c>；
-    /// 响应体：<c>{ "success":bool, "userId", "sessionToken", "errorCode", "errorMessage" }</c>。
-    /// 令牌重绑（断线重连 / 冷启动恢复）时 <c>password</c> 为空、仅携带 <c>sessionToken</c>。
+    /// 响应体：<c>{ "success":bool, "userId", "sessionToken", "expiresAt", "errorCode", "errorMessage" }</c>。
+    /// <c>expiresAt</c> 为令牌过期时刻（Unix 毫秒），可选：0/缺省表示服务端未提供，客户端不做过期预判
+    /// （老服务端兼容）。令牌重绑（断线重连 / 冷启动恢复）时 <c>password</c> 为空、仅携带 <c>sessionToken</c>。
     /// </para>
     /// <para>
     /// 契约与真实服务端不一致时，业务应实现自有 <see cref="IAuthBackend"/> 并经
@@ -43,6 +44,7 @@ namespace Framework.Core.Auth
             public bool success;
             public string userId;
             public string sessionToken;
+            public long expiresAt;
             public string errorCode;
             public string errorMessage;
         }
@@ -123,7 +125,7 @@ namespace Framework.Core.Auth
             if (string.IsNullOrEmpty(parsed.userId))
                 return LoginResult.Fail(TelemetryErrorCodes.Auth.Unknown, "login response missing userId");
 
-            return LoginResult.Ok(parsed.userId, parsed.sessionToken ?? string.Empty);
+            return LoginResult.Ok(parsed.userId, parsed.sessionToken ?? string.Empty, parsed.expiresAt);
         }
     }
 }

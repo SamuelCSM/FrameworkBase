@@ -14,4 +14,16 @@ namespace Game.Protocol
         public byte GetSubId() => 1;
     }
 
+    public sealed partial class GC2GS_001_002_SessionBindRequest : Framework.Network.IRequest<GS2GC_001_002_SessionBindResponse>
+    {
+        public byte GetMainId() => 1;
+        public byte GetSubId() => 2;
+    }
+
+    public sealed partial class GS2GC_001_002_SessionBindResponse : Framework.Network.IResponse
+    {
+        public byte GetMainId() => 1;
+        public byte GetSubId() => 2;
+    }
+
 }

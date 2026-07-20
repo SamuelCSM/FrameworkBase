@@ -1,11 +1,12 @@
 using System;
 using Framework.Foundation;
 using UnityEngine;
+using UnityEngine.Serialization;
 
 namespace Framework
 {
     /// <summary>
-    /// 红点徽标绑定组件：挂在 UI 节点上，把 <c>GameEntry.RedDots</c> 共享红点树的某个路径
+    /// 红点徽标绑定组件：挂在 UI 节点上，把 <c>GameEntry.RedDots</c> 共享红点 DAG 的稳定 ID
     /// 绑定到徽标显隐（计数 &gt; 0 显示）与可选的计数文本。
     /// <para>
     /// OnEnable 订阅、OnDisable 退订——窗口关闭 / 对象池回收自然解绑，不漏订阅；
@@ -15,8 +16,18 @@ namespace Framework
     /// </summary>
     public class RedDotBadge : MonoBehaviour
     {
-        [Tooltip("红点树路径，如 Mail/System")]
-        [SerializeField] private string _path;
+        public enum DisplayMode
+        {
+            DotOnly,
+            Number,
+        }
+
+        [Tooltip("稳定红点 ID；可直接粘贴，Editor 会回显 Key/描述并提供搜索。0 表示未配置")]
+        [SerializeField] private int _redDotId;
+
+        // 兼容旧 Prefab 的 _path 序列化数据，Editor 可按 Key 一键迁移；运行时不再使用路径寻址。
+        [FormerlySerializedAs("_path")]
+        [SerializeField, HideInInspector] private string _legacyPath;
 
         [Tooltip("徽标根对象（计数 > 0 时激活）。必须是自身之外的子对象——本组件挂常驻节点（如按钮），" +
                  "徽标挂其下：若指向自身，隐藏徽标会连带 OnDisable 退订，计数再变也不会恢复显示")]
@@ -25,16 +36,22 @@ namespace Framework
         [Tooltip("可选：计数文本。为空则只做显隐")]
         [SerializeField] private TMPro.TMP_Text _countText;
 
+        [Tooltip("只显示红点，或显示节点最终计数。展示方式属于 UI，不进入红点逻辑配置")]
+        [SerializeField] private DisplayMode _displayMode = DisplayMode.DotOnly;
+
         [Tooltip("计数显示封顶：超过显示为「上限+」，0 或负值表示不封顶")]
         [SerializeField] private int _maxDisplayCount = 99;
 
         private IDisposable _subscription;
 
+        public int RedDotId => _redDotId;
+        public string LegacyPath => _legacyPath;
+
         private void OnEnable()
         {
-            if (string.IsNullOrEmpty(_path))
+            if (_redDotId <= 0)
             {
-                Debug.LogError($"[RedDotBadge] {name} 未配置红点路径", this);
+                Debug.LogError($"[RedDotBadge] {name} 未配置有效红点 ID", this);
                 return;
             }
             if (_badgeRoot == null || _badgeRoot == gameObject)
@@ -52,7 +69,16 @@ namespace Framework
                 return;
             }
 
-            _subscription = tree.Subscribe(_path, Apply);
+            try
+            {
+                // RedDotService 允许目录初始化前订阅，初始化完成后仍会保持绑定。
+                _subscription = tree.Subscribe(_redDotId, Apply);
+            }
+            catch (Exception ex)
+            {
+                Apply(0);
+                Debug.LogError($"[RedDotBadge] {name} 绑定红点 ID {_redDotId} 失败：{ex.Message}", this);
+            }
         }
 
         private void OnDisable()
@@ -70,10 +96,30 @@ namespace Framework
 
             if (_countText != null && visible)
             {
-                _countText.text = _maxDisplayCount > 0 && count > _maxDisplayCount
-                    ? $"{_maxDisplayCount}+"
-                    : count.ToString();
+                _countText.text = _displayMode == DisplayMode.DotOnly
+                    ? string.Empty
+                    : _maxDisplayCount > 0 && count > _maxDisplayCount
+                        ? $"{_maxDisplayCount}+"
+                        : count.ToString();
             }
+        }
+
+        /// <summary>代码构建 UI 时配置绑定；激活状态下会立即重订阅。</summary>
+        public void Configure(
+            int redDotId,
+            GameObject badgeRoot,
+            TMPro.TMP_Text countText = null,
+            DisplayMode displayMode = DisplayMode.DotOnly,
+            int maxDisplayCount = 99)
+        {
+            _subscription?.Dispose();
+            _subscription = null;
+            _redDotId = redDotId;
+            _badgeRoot = badgeRoot;
+            _countText = countText;
+            _displayMode = displayMode;
+            _maxDisplayCount = maxDisplayCount;
+            if (isActiveAndEnabled) OnEnable();
         }
     }
 }

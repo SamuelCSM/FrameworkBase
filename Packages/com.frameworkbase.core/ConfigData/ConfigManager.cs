@@ -1370,7 +1370,9 @@ namespace Framework
             Type baseType = configType.BaseType;
             if (baseType != null && baseType.IsGenericType)
             {
-                Type valueType = baseType.GetGenericArguments()[1];
+                Type[] genericArguments = baseType.GetGenericArguments();
+                // ConfigBase<TKey,TValue> 的行类型位于最后一项；ConfigListBase<TValue> 只有一项。
+                Type valueType = genericArguments[genericArguments.Length - 1];
                 return GetTableName(valueType);
             }
 

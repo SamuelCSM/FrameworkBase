@@ -61,6 +61,20 @@ var lastItem = itemConfig.GetLast();
 var lastWeapon = itemConfig.GetLast(item => item.Type == 1);
 ```
 
+## 无主键关系表
+
+关系表、多对多表等不应为了适配字典索引而人工增加 `EdgeKey`。在 `ConfigExportRules.asset` 中把工作表
+`Shape` 设为 `List`，导出器不会为首列创建主键，代码生成器会生成：
+
+```csharp
+public class ItemTagRelationTable : ConfigListBase<ItemTagRelation>
+{
+}
+```
+
+通过 `Items`、`GetAll()`、`GetList(predicate)` 或 `GetFirst(predicate)` 读取；重复的首列值和重复关联方
+都会完整保留。关系组合是否重复由对应业务的跨表校验器决定。
+
 ## 特性说明
 
 ### SQLite-net 提供的 ORM 特性
@@ -92,7 +106,8 @@ var lastWeapon = itemConfig.GetLast(item => item.Type == 1);
 
 ## 文件说明
 
-- `ConfigBase.cs` - 配置表基类
+- `ConfigBase.cs` - 有主键配置表基类
+- `ConfigListBase.cs` - 无主键关系/多对多配置列表基类
 - `ConfigValidationAttributes.cs` - 校验特性定义
 - `ConfigExample.cs` - 示例配置表
 - `ConfigBase使用指南.md` - 详细使用文档

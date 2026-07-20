@@ -108,7 +108,7 @@ namespace Framework
             while (Volatile.Read(ref _pendingCount) > 0 && Environment.TickCount - deadline < 0)
             {
                 _writeSignal.Set();
-                Thread.Sleep(10);
+                Thread.Sleep(10); // banned-api-allow: thread-sleep 专用日志后台线程的写盘节流
             }
 
             lock (_fileLock)
@@ -184,7 +184,7 @@ namespace Framework
                     _enableFileLog = true;
 
                     UnityEngine.Debug.Log($"[GameLog] 文件日志已启用（异步写入），路径: {_logFilePath}");
-                    WriteToFile($"========== 日志开始 {DateTime.Now:yyyy-MM-dd HH:mm:ss} ==========");
+                    WriteToFile($"========== 日志开始 {DateTime.Now:yyyy-MM-dd HH:mm:ss} =========="); // banned-api-allow: local-time 日志时间戳按本地时间人类可读
                 }
                 catch (Exception ex)
                 {
@@ -289,7 +289,7 @@ namespace Framework
         /// <summary>打开新日志文件（调用方持有 _fileLock）。文件名含毫秒避免快速轮转时撞名。</summary>
         private static void OpenNewLogFile()
         {
-            string fileName = $"Log_{DateTime.Now:yyyy-MM-dd_HH-mm-ss-fff}.txt";
+            string fileName = $"Log_{DateTime.Now:yyyy-MM-dd_HH-mm-ss-fff}.txt"; // banned-api-allow: local-time 日志文件名按本地时间
             _logFilePath = Path.Combine(_logDirectory, fileName);
             _logWriter = new StreamWriter(_logFilePath, true, Encoding.UTF8) { AutoFlush = false };
             _currentFileBytes = 0;
@@ -341,7 +341,7 @@ namespace Framework
 
                 try
                 {
-                    _logWriter.WriteLine($"========== 日志结束 {DateTime.Now:yyyy-MM-dd HH:mm:ss} ==========");
+                    _logWriter.WriteLine($"========== 日志结束 {DateTime.Now:yyyy-MM-dd HH:mm:ss} =========="); // banned-api-allow: local-time 日志时间戳按本地时间人类可读
                     _logWriter.Flush();
                     _logWriter.Close();
                     _logWriter.Dispose();
@@ -387,7 +387,7 @@ namespace Framework
         private static string FormatMessage(LogLevel level, string message)
         {
             // 格式：[时间戳] [级别] 消息
-            return $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] [{level}] {message}";
+            return $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] [{level}] {message}"; // banned-api-allow: local-time 日志时间戳按本地时间人类可读
         }
 
         /// <summary>

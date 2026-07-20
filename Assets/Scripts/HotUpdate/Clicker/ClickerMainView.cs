@@ -2,6 +2,7 @@ using System;
 using Framework;
 using Framework.Core;
 using Framework.UI;
+using HotUpdate.RedDot.Generated;
 using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
@@ -58,10 +59,12 @@ namespace HotUpdate.Clicker
                 new Vector2(0.5f, 0.5f), new Vector2(0, -170), new Vector2(560, 100));
             _upgradeLabel = UpgradeButton.GetComponentInChildren<TextMeshProUGUI>();
             UpgradeButton.onClick.AddListener(OnUpgrade);
+            AttachRedDot(UpgradeButton, RedDotIds.Clicker.UpgradeAvailable);
 
             ShopButton = ClickerUiKit.Button(transform, "ShopButton", "商店", 28,
                 new Vector2(0.5f, 0f), new Vector2(0, 90), new Vector2(300, 90));
             ShopButton.onClick.AddListener(OnShop);
+            AttachRedDot(ShopButton, RedDotIds.Clicker.NewShop);
 
             _stateSub = GameEntry.Event.Subscribe(ClickerEvents.StateChanged, Refresh);
             Refresh();
@@ -71,7 +74,39 @@ namespace HotUpdate.Clicker
 
         private void OnUpgrade() => _model.TryUpgrade();
 
-        private void OnShop() => ClickerShopView.Open(_model);
+        private void OnShop()
+        {
+            ClickerShopView.Open(_model);
+            if (GameEntry.RedDots != null && GameEntry.RedDots.IsInitialized)
+            {
+                GameEntry.RedDots.Acknowledge(
+                    RedDotIds.Clicker.NewShop,
+                    Framework.Foundation.RedDotAcknowledgeTrigger.Expose);
+            }
+        }
+
+        private static void AttachRedDot(Button button, int redDotId)
+        {
+            var root = new GameObject("BadgeRoot", typeof(RectTransform), typeof(Image));
+            root.layer = LayerMask.NameToLayer("UI");
+            root.transform.SetParent(button.transform, false);
+            var rect = (RectTransform)root.transform;
+            rect.anchorMin = Vector2.one;
+            rect.anchorMax = Vector2.one;
+            rect.pivot = new Vector2(0.5f, 0.5f);
+            rect.anchoredPosition = new Vector2(-4f, -4f);
+            rect.sizeDelta = new Vector2(26f, 26f);
+            Image image = root.GetComponent<Image>();
+            image.color = new Color(0.94f, 0.18f, 0.22f, 1f);
+            image.raycastTarget = false;
+            root.SetActive(false);
+
+            bool active = button.gameObject.activeSelf;
+            button.gameObject.SetActive(false); // 避免 AddComponent 后在字段尚未配置时先跑 OnEnable。
+            RedDotBadge badge = button.gameObject.AddComponent<RedDotBadge>();
+            badge.Configure(redDotId, root, displayMode: RedDotBadge.DisplayMode.DotOnly);
+            button.gameObject.SetActive(active);
+        }
 
         private void Refresh()
         {

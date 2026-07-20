@@ -350,6 +350,7 @@ namespace Editor.ExcelTool
 
             sb.AppendLine("using System;");
             sb.AppendLine("using Framework.Data;");
+            sb.AppendLine("using Framework.Foundation;");
             string dataNamespace = $"{_config.Namespace}.Data";
             if (dataNamespace != "Framework.Data")
             {
@@ -396,6 +397,8 @@ namespace Editor.ExcelTool
             }
             sb.AppendLine("using Framework;");
             sb.AppendLine("using Framework.Data;");
+            // 配置类型允许直接声明框架枚举/自定义值类型；Foundation 是热更侧的标准依赖。
+            sb.AppendLine("using Framework.Foundation;");
             sb.AppendLine();
         }
 
@@ -437,7 +440,7 @@ namespace Editor.ExcelTool
                 string fieldName = sheetData.FieldNames[i];
                 string typeName = i < sheetData.TypeDefinitions.Count ? sheetData.TypeDefinitions[i] : "string";
                 string comment = i < sheetData.Comments.Count ? sheetData.Comments[i] : string.Empty;
-                bool isPrimaryKey = sheetData.SheetKind != ExcelReader.ExcelSheetKind.General && i == 0;
+                bool isPrimaryKey = sheetData.SheetKind == ExcelReader.ExcelSheetKind.Table && i == 0;
                 GenerateProperty(sb, fieldName, typeName, comment, isPrimaryKey, indent + _config.Indent);
             }
 
@@ -479,8 +482,6 @@ namespace Editor.ExcelTool
         private void GenerateTableClassBody(StringBuilder sb, ExcelReader.ExcelSheetData sheetData, string className)
         {
             string indent = _config.Indent;
-            string primaryKeyType = sheetData.TypeDefinitions.Count > 0 ? sheetData.TypeDefinitions[0] : "int";
-            string firstPropertyName = sheetData.FieldNames.Count > 0 ? SanitizePropertyName(sheetData.FieldNames[0]) : "Id";
             string loaderClassName = $"{className}Table";
 
             if (_config.GenerateComments)
@@ -490,10 +491,20 @@ namespace Editor.ExcelTool
                 sb.AppendLine($"{indent}/// </summary>");
             }
 
-            sb.AppendLine($"{indent}public class {loaderClassName} : ConfigBase<{primaryKeyType}, {className}>");
+            if (sheetData.SheetKind == ExcelReader.ExcelSheetKind.List)
+            {
+                sb.AppendLine($"{indent}public class {loaderClassName} : ConfigListBase<{className}>");
+            }
+            else
+            {
+                string primaryKeyType = sheetData.TypeDefinitions.Count > 0
+                    ? sheetData.TypeDefinitions[0]
+                    : "int";
+                sb.AppendLine($"{indent}public class {loaderClassName} : ConfigBase<{primaryKeyType}, {className}>");
+            }
             sb.AppendLine($"{indent}{{");
 
-            if (_config.GenerateComments)
+            if (sheetData.SheetKind != ExcelReader.ExcelSheetKind.List && _config.GenerateComments)
             {
                 sb.AppendLine($"{indent}{_config.Indent}/// <summary>");
                 sb.AppendLine($"{indent}{_config.Indent}/// 构造函数。");
@@ -506,17 +517,26 @@ namespace Editor.ExcelTool
             sb.AppendLine($"{indent}{_config.Indent}}}");
             sb.AppendLine();
 
-            if (_config.GenerateComments)
+            if (sheetData.SheetKind != ExcelReader.ExcelSheetKind.List && _config.GenerateComments)
             {
                 sb.AppendLine($"{indent}{_config.Indent}/// <summary>");
                 sb.AppendLine($"{indent}{_config.Indent}/// 返回单行配置数据的主键。");
                 sb.AppendLine($"{indent}{_config.Indent}/// </summary>");
             }
 
-            sb.AppendLine($"{indent}{_config.Indent}protected override {primaryKeyType} GetKey({className} item)");
-            sb.AppendLine($"{indent}{_config.Indent}{{");
-            sb.AppendLine($"{indent}{_config.Indent}{_config.Indent}return item.{firstPropertyName};");
-            sb.AppendLine($"{indent}{_config.Indent}}}");
+            if (sheetData.SheetKind != ExcelReader.ExcelSheetKind.List)
+            {
+                string primaryKeyType = sheetData.TypeDefinitions.Count > 0
+                    ? sheetData.TypeDefinitions[0]
+                    : "int";
+                string firstPropertyName = sheetData.FieldNames.Count > 0
+                    ? SanitizePropertyName(sheetData.FieldNames[0])
+                    : "Id";
+                sb.AppendLine($"{indent}{_config.Indent}protected override {primaryKeyType} GetKey({className} item)");
+                sb.AppendLine($"{indent}{_config.Indent}{{");
+                sb.AppendLine($"{indent}{_config.Indent}{_config.Indent}return item.{firstPropertyName};");
+                sb.AppendLine($"{indent}{_config.Indent}}}");
+            }
             sb.AppendLine($"{indent}}}");
         }
 

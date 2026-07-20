@@ -7,6 +7,51 @@
 
 ### 新增
 
+- **banned-API 静态门禁 `Tools/ci/check-banned-apis.ps1`**（运行时代码的 API 红线焊进 CI）：纯文本
+  扫描（无需 Unity，Windows/ubuntu 双平台），只管跑在玩家设备上的代码（Editor/Tests 不扫）。三条规则：
+  `local-time`（DateTime.Now 可被玩家改表、跨设备不可比→用 UtcNow/ServerTime）、`thread-sleep`
+  （阻塞卡帧）、`gc-collect`（全量 GC 集中卡顿，只允许加载屏/调试命令等遮蔽时机）。豁免须行内
+  `banned-api-allow: <规则id> <理由>`（当前行或上一行），随代码进评审——存量 9 处合法使用已逐处
+  写明理由。接入 run-ci（静态先行，先于 Unity）与 ci.yml 静态门禁 job；有牙验证：注入违规 exit 1。
+- **本地通知排程 `Notifications/`**（体力满/签到/活动提醒的策略收口）：`LocalNotificationPlanner`
+  （纯逻辑）注册表与结算分离——业务游玩期间随时 `Register`（同 id 覆盖）/`Unregister`/`Clear`，
+  切后台时结算成系统排程清单：过期过滤、免打扰时段平移（落在窗口内推迟到窗口结束，支持跨午夜
+  22→8，宁可晚提醒不可吵醒）、升序裁剪到条数上限（iOS 64 上限留余量默认 50，保留最近的——
+  越近对拉回越有效）。生命周期框架接管（`LocalNotificationRelay` 由 GameEntry 挂载）：切后台/
+  退出先清旧排程再按最新注册表重排，回前台全部取消（玩家在游戏里通知栏还挂"回来玩"是低级错误），
+  后端异常隔离。`ILocalNotificationBackend` 平台抽象走 ICrashBackend 同款注入模式，主干日志兜底，
+  原生实现（Unity Mobile Notifications/厂商通道）进扩展包；与 `ISdkPushService`（远程推送权限/token）
+  分工明确。EditMode 测试 10 例。见 `Notifications/NOTIFICATIONS_GUIDE.md`。
+- **纹理审计门禁 `Editor/TextureAudit`**（资源门禁第四项，问题纹理带病入包当场拦）：与 Addressables
+  校验器同款「采集（Unity API）/ 规则（纯逻辑可单测）」分层。四条规则：Read/Write Enabled 判 Error
+  （CPU 侧常驻拷贝内存翻倍，确需 CPU 采样走 `ReadWriteAllowlistPrefixes` 显式豁免、随代码进评审）；
+  导入尺寸单边 >4096 Error / >2048 Warning（以实际入包尺寸计，被 maxTextureSize 压下来的不算）；
+  未压缩 Warning（RGBA32 是压缩格式 4~8 倍）；Sprite 开 Mipmap Warning（UI 用不到 mip 链白吃 1/3
+  显存）。只扫 Assets/（Packages 不可变不归本工程管）。接入 `CiGate` 资源门禁与菜单
+  Framework → Audit Textures。EditMode 测试 8 例。
+- **反作弊值类型 `Security/AntiCheatValue`**（对抗内存搜索改值的基线防护）：`AntiCheatInt` /
+  `AntiCheatLong` / `AntiCheatFloat` 把真值异或实例密钥存储（内存搜不到明文），另存双输入校验和
+  （值+密钥），直改混淆字段或校验和均在下次读取时失配并触发 `AntiCheat.TamperDetected`（业务在此
+  埋点/处置，无订阅静默）。与原生类型隐式互转、算术照写；实例密钥无锁生成，同值不同实例混淆结果
+  不同；`default` 态读 0 不误报。边界明确：提高门槛非不可破（注入级 hook 挡不住，强对抗接厂商
+  SDK），权威数据以服务端为准，持久化取 `Value` 明文走 AES 存档、混淆态不落盘。
+  EditMode 测试 8 例。见 `Security/ANTICHEAT_GUIDE.md`。
+- **设备分级 / 画质自适应 `Performance/DeviceTier*`**（低端机保命、高端机吃满）：`DeviceTierClassifier`
+  （纯逻辑）按内存/显存/核数把设备粗分低/中/高三档，规则刻意保守——任一已知维度踩低端线即判低端
+  （误判低只是画质保守，误判高是 OOM 与卡顿投诉，代价不对称）；判高端要求内存已知且全部已知维度达标，
+  内存未知封顶中端；阈值经 `DeviceTierThresholds` 按目标市场调整。`DeviceTierService` 启动早期
+  （任何重资产加载前）分级并映射 Quality Level（低→0 / 中→中间档 / 高→最高档，Inspector 可关映射只留分级），
+  玩家手动选档 `SetOverride` 持久化、传 null 回自动档，`AutoTier` 供设置界面展示推荐档。
+  `perf_window` 事件新增 `tier` 字段——大盘按档位分组看实测卡顿率，用数据回调分级阈值。
+  EditMode 测试 8 例。见 `Performance/DEVICE_TIER_GUIDE.md`。
+- **线上性能采样（APM）`Performance/`**（正式包运行时性能从零采集到有大盘口径）：`PerfWindowAggregator`
+  （纯逻辑）按分钟级窗口聚合平均 FPS / 最差帧 / 卡顿帧数（≥100ms）/ 严重卡顿帧数（≥500ms）/
+  托管与 Native 内存峰值——阈值取绝对值而非相对目标帧率，大盘口径跨设备可比；`PerfSampler`
+  组件接线（GameEntry 自动挂载，Inspector 可关），每窗口经 `AnalyticsManager` 上报一条 `perf_window`
+  事件（约 1 条/分钟/玩家，复用既有批量与隐私合规管道），附 GC 增量与活动场景。切后台的半截窗口
+  丢弃、恢复首帧巨额 deltaTime 跳过，不污染卡顿计数；`PerfSampler.Enabled` 静态开关供业务按
+  RemoteConfig 灰度采样人群。与 `PerfHud`（开发期屏显）分工：HUD 看瞬时值，本模块喂线上大盘。
+  EditMode 测试 7 例。见 `Performance/PERFORMANCE_GUIDE.md`。
 - **薄引导框架 `Guide/`**（步骤流 / 断点 / 遮罩挖孔 / 触发接线四原语，纯逻辑与表现分离）：`GuideScript`
   构造即校验、构造后不可变的有序步骤序列；`GuideFlow` 驱动步骤推进——业务在 `StepEntered` 回调按步骤 id
   编排表现、步骤达成调 `CompleteStep(id)` 推进，乱序 / 迟到完成属接线错误直接抛（fail-loud）。**每步推进即写档
@@ -26,8 +71,13 @@
   父节点值 = 子树叶子之和，增量聚合 O(深度) 更新；对非叶子写计数、对持数叶子挂子节点均属结构性错误直接抛
   （fail-loud，杜绝双重计数歧义）。叶子变化沿祖先链传播，路径上值变化的节点通知订阅者（值未变不通知）；订阅默认立即
   回调当前值，UI 绑定无需关心「先订阅还是先写数」。`ClearSubtree` 一键已读，`Snapshot` 稳定序调试快照。纯 C# 零
-  Unity 依赖可自由实例化（独立玩法建局部树），共享默认树经 `GameEntry.RedDots` 暴露。`RedDotBadge` 组件把路径绑定到
-  徽标显隐与计数文本（OnEnable 订阅 / OnDisable 退订，徽标须为独立子对象否则隐藏即退订）。EditMode 测试若干例。
+  Unity 依赖可自由实例化（独立玩法建局部树）。该旧树不再占用全局入口；`GameEntry.RedDots` 已迁移为下述配置驱动服务。
+- **配置驱动全局红点 DAG `Foundation/RedDotService`**：稳定整数 ID、模块号段、Node/Edge 分表、多父节点、
+  `Any`/`SumChildren`/`MaxChildren`/`SumUniqueSignals` 聚合、Provider 完整快照与增量刷新、Session/账号本地已看版本；
+  `RedDotBadge` 改为 ID 绑定并带搜索/回显/旧路径迁移；五张源表进入标准客户端 ConfigData，运行时从
+  `config.db.bytes` 组装目录，专用编译器只负责跨表校验和确定性 ID 常量。节点只填写模块内 `CodeName`，完整名称自动派生；
+  工作簿枚举列使用真实枚举类型。`red_dot_edge_ref` 使用新增的无主键 `ConfigListBase<T>` 关系表能力，
+  无需人工 EdgeKey 且允许多父节点。Prefab/Scene/CI 共用配置门禁，`reddot explain` 可追踪最终来源；旧 `RedDotTree` 保留。
 - **日志回捞最短路径 `Diagnostics/LogDump`**（冲刷 → 打包 → 可选上报）：`LogArchiver` 把日志目录压成单个 zip 落独立
   产物目录（共享读打开正被写线程持有的当前日志文件，产物目录自带保留上限最旧先删，纯文件系统逻辑 EditMode 可测）；
   `LogDump.DumpAsync` 编排冲刷 / 打包 / 上报，上报通道由业务注入 `UploadHandler`（未注入只留存本地，回捞包本身即具备
