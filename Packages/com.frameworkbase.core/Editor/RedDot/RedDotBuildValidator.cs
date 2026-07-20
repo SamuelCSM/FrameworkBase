@@ -131,7 +131,18 @@ namespace Framework.Editor.RedDot
             }
             finally
             {
-                EditorSceneManager.RestoreSceneManagerSetup(original);
+                // batchmode 启动时无任何场景打开，setup 为空；此时还原会抛 "No loaded scene found"。
+                if (original != null && original.Length > 0)
+                {
+                    try
+                    {
+                        EditorSceneManager.RestoreSceneManagerSetup(original);
+                    }
+                    catch (Exception ex)
+                    {
+                        warnings.Add("还原场景现场失败：" + ex.Message);
+                    }
+                }
             }
         }
 
