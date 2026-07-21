@@ -1,5 +1,6 @@
 using System;
 using Cysharp.Threading.Tasks;
+using Framework;
 using Framework.Analytics;
 using Framework.Core;
 using Framework.Core.Auth;
@@ -24,7 +25,6 @@ namespace HotUpdate.Clicker
     public static class ClickerBootstrap
     {
         private static bool _installed;
-        private static ClickerModel _model;
         private static ClickerMainView _mainView;
         private static RedDotCoordinator _redDotCoordinator;
 
@@ -47,9 +47,24 @@ namespace HotUpdate.Clicker
             }
 
             // 即使 Editor 关闭了 Domain Reload，也重新挂接当前 GameEntry 的业务钩子。
+            RegisterUIs();
             GameEntry.OnBusinessEntryAsync = EnterGameAsync;
             GameEntry.OnBusinessExit = ExitGame;
             Debug.Log("[Clicker] 业务会话钩子已注册（Enter + Exit）");
+        }
+
+        /// <summary>把纯代码商店接入 UIManager；同一 GameEntry 生命周期内幂等。</summary>
+        private static void RegisterUIs()
+        {
+            if (GameEntry.UI == null || GameEntry.UI.IsUIRegistered<ClickerShopWindow>())
+                return;
+
+            GameEntry.UI.RegisterCodeUI<ClickerShopWindow>(
+                ClickerShopViewFactory.Create,
+                UILayer.Popup,
+                allowMultiple: false,
+                stackBehavior: UIStackBehavior.NoStack,
+                blockerMode: UIBlockerMode.DimBlack);
         }
 
         /// <summary>
@@ -73,13 +88,14 @@ namespace HotUpdate.Clicker
             // 防御重复登录/切号：旧会话必须先在旧身份仍有效时保存并释放。
             ExitGame("replace_session");
 
-            _model = new ClickerModel();
-            await _model.InitAsync();
+            RegisterUIs();
+            await ClickerGameDataManager.InitializeAsync(loginResult.UserId);
+            ClickerModel model = ClickerGameDataManager.Model;
 
             if (GameEntry.RedDots != null && GameEntry.RedDots.IsInitialized)
             {
                 _redDotCoordinator = new RedDotCoordinator(GameEntry.RedDots);
-                _redDotCoordinator.Register(new ClickerRedDotProvider(_model));
+                _redDotCoordinator.Register(new ClickerRedDotProvider());
                 _redDotCoordinator.RebuildAll();
             }
             else
@@ -87,16 +103,16 @@ namespace HotUpdate.Clicker
                 Debug.LogError("[Clicker] 红点目录未初始化，ClickerRedDotProvider 未注册。");
             }
 
-            _mainView = ClickerMainView.Create(_model, loginResult.UserId);
-            Debug.Log($"[Clicker] CLICKER_READY userId={loginResult.UserId} coins={_model.Coins} level={_model.Level} double={_model.DoubleGain}");
+            _mainView = ClickerMainView.Create();
+            Debug.Log($"[Clicker] CLICKER_READY userId={loginResult.UserId} coins={model.Coins} level={model.Level} double={model.DoubleGain}");
 
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
             // 自检：仅当外部（CI / ClickerPlayCheck）置环境变量时运行，避免污染日常手动 Play。
             // 直接在带类型访问的热更侧验玩法数值与账号级存档，落 ASCII 哨兵供 CI 判定。
             if (Environment.GetEnvironmentVariable("CLICKER_SELFCHECK") == "1")
             {
-                RunGameplaySelfCheck(_model);
-                await RunSaveRoundtripSelfCheck(_model);
+                RunGameplaySelfCheck(model);
+                await RunSaveRoundtripSelfCheck(model);
             }
 #endif
         }
@@ -107,10 +123,9 @@ namespace HotUpdate.Clicker
         /// </summary>
         private static void ExitGame(string reason)
         {
-            ClickerModel model = _model;
             ClickerMainView mainView = _mainView;
             RedDotCoordinator redDotCoordinator = _redDotCoordinator;
-            _model = null;
+            bool hadData = ClickerGameDataManager.IsInitialized;
             _mainView = null;
             _redDotCoordinator = null;
 
@@ -123,17 +138,17 @@ namespace HotUpdate.Clicker
                 finally
                 {
                     // 红点解绑异常也不能阻止玩法 Timer 和账号存档释放。
-                    model?.Dispose();
+                    ClickerGameDataManager.Shutdown();
                 }
             }
             finally
             {
-                ClickerShopView.CloseAll();
+                GameEntry.UI?.CloseAllUI<ClickerShopWindow>(destroy: true);
                 if (mainView != null)
                     UnityEngine.Object.Destroy(mainView.gameObject);
             }
 
-            if (model != null || mainView != null)
+            if (mainView != null || redDotCoordinator != null || hadData)
                 Debug.Log($"[Clicker] 业务会话已退出 reason={reason}");
         }
 

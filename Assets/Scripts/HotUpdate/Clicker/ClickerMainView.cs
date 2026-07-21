@@ -1,4 +1,5 @@
 using System;
+using Cysharp.Threading.Tasks;
 using Framework;
 using Framework.Core;
 using Framework.UI;
@@ -25,25 +26,25 @@ namespace HotUpdate.Clicker
         public Button UpgradeButton { get; private set; }
         public Button ShopButton { get; private set; }
 
-        public static ClickerMainView Create(ClickerModel model, string userId)
+        public static ClickerMainView Create()
         {
             Transform parent = GameEntry.UI.GetLayerRoot(UILayer.Normal);
             var go = new GameObject("ClickerMainView", typeof(RectTransform));
             go.layer = LayerMask.NameToLayer("UI");
             go.transform.SetParent(parent, false);
             var view = go.AddComponent<ClickerMainView>();
-            view.Build(model, userId);
+            view.Build();
             return view;
         }
 
-        private void Build(ClickerModel model, string userId)
+        private void Build()
         {
-            _model = model;
+            _model = ClickerGameDataManager.Model;
             ClickerUiKit.Stretch(gameObject);
             ClickerUiKit.Image(transform, "BG", new Color(0.10f, 0.11f, 0.15f, 1f), stretch: true);
 
             // 玩家 ID 常驻显示：验证组合根身份贯通（存档按 uid 隔离）的可视锚点，切号后应随之变化。
-            ClickerUiKit.Text(transform, "UserLabel", $"UID {userId}", 24,
+            ClickerUiKit.Text(transform, "UserLabel", $"UID {ClickerGameDataManager.UserId}", 24,
                 TextAlignmentOptions.Center, new Vector2(0.5f, 1f), new Vector2(0, -60), new Vector2(1200, 40));
 
             _coinLabel = ClickerUiKit.Text(transform, "CoinLabel", "", 52,
@@ -74,10 +75,12 @@ namespace HotUpdate.Clicker
 
         private void OnUpgrade() => _model.TryUpgrade();
 
-        private void OnShop()
+        private void OnShop() => OpenShopAsync().Forget();
+
+        private async UniTask OpenShopAsync()
         {
-            ClickerShopView.Open(_model);
-            if (GameEntry.RedDots != null && GameEntry.RedDots.IsInitialized)
+            ClickerShopWindow window = await GameEntry.UI.OpenUIAsync<ClickerShopWindow>();
+            if (window != null && GameEntry.RedDots != null && GameEntry.RedDots.IsInitialized)
             {
                 GameEntry.RedDots.Acknowledge(
                     RedDotIds.Clicker.NewShop,

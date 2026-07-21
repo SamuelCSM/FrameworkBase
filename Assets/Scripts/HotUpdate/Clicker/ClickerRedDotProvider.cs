@@ -17,9 +17,9 @@ namespace HotUpdate.Clicker
 
         private readonly ClickerModel _model;
 
-        public ClickerRedDotProvider(ClickerModel model)
+        public ClickerRedDotProvider()
         {
-            _model = model;
+            _model = ClickerGameDataManager.Model;
         }
 
         public string Owner => "Clicker";

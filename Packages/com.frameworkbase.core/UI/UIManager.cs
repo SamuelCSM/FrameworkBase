@@ -16,6 +16,12 @@ namespace Framework
         /// <summary>Addressables 地址，用于加载 Prefab</summary>
         public string  Address       { get; set; }
 
+        /// <summary>
+        /// 纯代码 UI 的根节点工厂。与 <see cref="Address"/> 二选一；
+        /// 由 UIManager 传入目标层节点，工厂返回已挂载对应 UIView 的窗口根节点。
+        /// </summary>
+        public Func<Transform, GameObject> Factory { get; set; }
+
         /// <summary>窗口所在层级（决定 Canvas SortingOrder）</summary>
         public UILayer Layer         { get; set; }
 
@@ -163,6 +169,49 @@ namespace Framework
         }
 
         /// <summary>
+        /// 注册纯代码构建的 UI。窗口仍完整走 UIManager 的生命周期、导航栈、遮罩和动画，
+        /// 只是根节点由工厂创建而非从 Addressables 实例化。
+        /// </summary>
+        /// <typeparam name="T">窗口逻辑类型，必须继承 UIBaseCore。</typeparam>
+        /// <param name="factory">接收目标层父节点并返回窗口根节点的工厂。</param>
+        /// <param name="layer">窗口所在 UI 层级。</param>
+        /// <param name="allowMultiple">是否允许同类型多实例并存。</param>
+        /// <param name="stackBehavior">窗口在导航栈中的行为。</param>
+        /// <param name="blockerMode">窗口弹出时的遮罩模式。</param>
+        public void RegisterCodeUI<T>(
+            Func<Transform, GameObject> factory,
+            UILayer layer,
+            bool allowMultiple = false,
+            UIStackBehavior stackBehavior = UIStackBehavior.PushToStack,
+            UIBlockerMode blockerMode = UIBlockerMode.None)
+            where T : UIBaseCore
+        {
+            Type type = typeof(T);
+            if (factory == null)
+            {
+                GameLog.Error($"[UIManager] RegisterCodeUI: {type.Name} 的 Factory 为空");
+                return;
+            }
+
+            if (_registerInfos.ContainsKey(type))
+            {
+                GameLog.Warning($"[UIManager] 重复注册: {type.Name}");
+                return;
+            }
+
+            _registerInfos[type] = new UIRegisterInfo
+            {
+                UIType = type,
+                Factory = factory,
+                Layer = layer,
+                AllowMultiple = allowMultiple,
+                StackBehavior = stackBehavior,
+                BlockerMode = blockerMode,
+            };
+            GameLog.Log($"[UIManager] 注册代码 UI: {type.Name} Layer={layer}");
+        }
+
+        /// <summary>
         /// 以运行时类型注册 UI 窗口，用于配置表或代码生成清单驱动的窗口注册。
         /// </summary>
         /// <param name="uiType">窗口逻辑类型，必须继承 UIBaseCore。</param>
@@ -240,10 +289,30 @@ namespace Framework
                 return existing[0] as TWindow;
             }
 
-            var uiObj = usePool
-                ? await GetUIFromPool(type, info.Address, info.Layer)
-                : await Core.GameEntry.Resource.InstantiateAsync(
-                    info.Address, GetLayerCanvas(info.Layer).transform);
+            GameObject uiObj;
+            if (info.Factory != null)
+            {
+                Transform parent = GetLayerRoot(info.Layer);
+                if (parent == null)
+                    return null;
+
+                try
+                {
+                    uiObj = info.Factory(parent);
+                }
+                catch (Exception ex)
+                {
+                    GameLog.Error($"[UIManager] 代码 UI 构建失败: {type.Name} - {ex.Message}");
+                    return null;
+                }
+            }
+            else
+            {
+                uiObj = usePool
+                    ? await GetUIFromPool(type, info.Address, info.Layer)
+                    : await Core.GameEntry.Resource.InstantiateAsync(
+                        info.Address, GetLayerCanvas(info.Layer).transform);
+            }
 
             if (uiObj == null)
             {
@@ -481,6 +550,9 @@ namespace Framework
 
         /// <summary>获取指定类型当前打开的实例数量</summary>
         public int  GetUICount<T>()    where T : UIBaseCore => _openedUIs.TryGetValue(typeof(T), out var l) ? l.Count : 0;
+
+        /// <summary>指定窗口类型是否已经注册。</summary>
+        public bool IsUIRegistered<T>() where T : UIBaseCore => _registerInfos.ContainsKey(typeof(T));
 
         /// <summary>导航栈深度（主要用于判断是否还有历史页面可返回）</summary>
         public int  GetStackDepth()    => _uiStack.Count;
