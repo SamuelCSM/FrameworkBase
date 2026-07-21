@@ -7,6 +7,15 @@
 
 ### 新增
 
+- **ServerAccount 已看同步 `IRedDotSeenSyncBackend` + `RedDotServerSeenSync`**（多端红点一致性的框架级闭环）：
+  抽象出业务实现的拉取/上报后端，框架负责"取 max 版本"冲突合并与拉取/回推编排——登录拉取并合并、
+  本地领先时回推、会话内 `Acknowledge` 触发去抖上报、登出前捕获快照最终回推。协议、鉴权、重试仍由
+  后端实现。`RedDotService` 新增非破坏性 `MergeSeen`（逐 Signal 取 max）与 `ServerSeenChanged` 事件；
+  `RedDotAccountSession.ConfigureServerSync` 注册后端后，每次账号会话自动完成同步。EditMode 用例 5 个。
+- **红点徽标展示样式扩展（New / Exclamation）**：`RedDotBadge.DisplayMode` 在 DotOnly/Number 之外新增
+  `New`（显示 NEW）与 `Exclamation`（显示感叹号），展示解析收口到纯函数 `RedDotBadgePresentation` 便于
+  单测。样式属于 UI 表现、不进入逻辑配置——同一红点 ID 可被不同入口按不同样式呈现。枚举序号保持稳定，
+  兼容既有 Prefab 序列化。EditMode 用例 5 个。
 - **红点亮起路径导航 `RedDotService.GetActivePath(id)`**（点击红点跳转到具体来源的数据支撑）：从入口
   节点沿"有值"的子边逐层深入，返回一条到最深亮起 Signal 的确定性路径（每层在多个亮起子节点中按
   FinalCount 降序、ID 升序择一，同状态下可复现）。入口未点亮返回空列表。UI 可据此把玩家一路带到点亮

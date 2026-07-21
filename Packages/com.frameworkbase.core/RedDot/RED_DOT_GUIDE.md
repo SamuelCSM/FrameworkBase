@@ -74,7 +74,7 @@
 - `SaveMode`：Session / LocalAccount / ServerAccount；
 - `Version`：同版本看过后保持隐藏，希望内容重新提示时递增。
 
-当前框架已实现 Session 与 LocalAccount；ServerAccount 提供运行态导入/导出能力，具体后端同步由业务接入。
+当前框架已实现 Session 与 LocalAccount；ServerAccount 通过 `RedDotServerSeenSync` 提供多端同步闭环（见下文）。
 
 ### red_dot_retired_ref
 
@@ -177,6 +177,22 @@ GameEntry.RedDots.Acknowledge(
 
 账号登录后，GameEntry 会在业务入口前加载 LocalAccount 已看版本；登出时在 SaveManager 切回 guest 前保存，并统一清空 Signal、Session Seen 和 Provider Ready 状态。红点计数与 Aggregate 结果不会落盘。
 
+## ServerAccount 多端同步
+
+业务实现 `IRedDotSeenSyncBackend`（拉取/上报的协议、鉴权、重试自定），登录框架初始化后注册一次：
+
+```csharp
+RedDotAccountSession.ConfigureServerSync(new MyServerSeenBackend());
+```
+
+之后每次账号会话自动完成：登录拉取服务端已看版本并与本地按 **max 版本**合并；本地领先（历史迁移/离线
+确认）时把合并结果回推；会话内对 ServerAccount 弱提示 `Acknowledge` 触发去抖上报；登出前捕获快照最终
+回推。冲突策略固定"取 max"——已看进度只增不减，天然幂等，与服务端入库策略对齐。
+
+也可脱离账号会话直接使用 `RedDotServerSeenSync`：`BeginAsync` 登录同步、`FlushAsync` 手动回推、
+`PushSnapshotAsync` 回推外部捕获的快照、`Dispose` 解绑。`RedDotService.MergeSeen` 提供非破坏性 max 合并，
+`ServerSeenChanged` 事件在本地已看进度上升时触发供上报。
+
 ## UI
 
 `RedDotBadge` 挂常驻按钮/页签，`Badge Root` 必须是独立子对象，直接配置稳定 ID：
@@ -184,7 +200,8 @@ GameEntry.RedDots.Acknowledge(
 - Inspector 可手输/粘贴 ID；
 - “搜索”支持 ID、Key、描述和 ModuleId；
 - 自动回显 Key、说明、类型和聚合方式；
-- `DotOnly` 与 `Number` 是 UI 表现，不进入逻辑配置；
+- 展示样式 `DotOnly`/`Number`/`New`/`Exclamation` 是 UI 表现，不进入逻辑配置，同一 ID 可按不同样式呈现；
+  展示解析收口在纯函数 `RedDotBadgePresentation`；
 - 旧 `_path` 会保留在 `_legacyPath`，同 Key 时 Inspector 可一键迁移。
 
 代码构建 UI 可调用：
@@ -255,4 +272,5 @@ reddot path 100001
 - 新服务不提供 DAG 语义危险的 `ClearSubtree`；
 - 仅主线程访问，且不能在订阅回调内反向修改红点；
 - 不在配置表编写业务条件表达式，复杂条件归 Provider/Model；
-- `ServerAccount` 已看同步的协议、重试与冲突策略由业务服务端实现。
+- `ServerAccount` 同步的编排与"取 max"冲突合并由框架提供（`RedDotServerSeenSync`），但具体协议、鉴权与
+  重试策略仍由业务实现的 `IRedDotSeenSyncBackend` 负责。

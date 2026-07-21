@@ -34,6 +34,25 @@ namespace Framework.RedDot
         /// <summary>当前身份是否成功加载过红点账号存档；只有活跃会话退出时才写回。</summary>
         private static bool _active;
 
+        /// <summary>业务可选注册的 ServerAccount 已看同步后端；为空时仅走 Session/LocalAccount。</summary>
+        private static IRedDotSeenSyncBackend _serverBackend;
+
+        /// <summary>ServerAccount 同步的可选诊断出口。</summary>
+        private static Action<Exception> _serverErrorSink;
+
+        /// <summary>当前账号会话的服务端同步编排器；随身份切换重建。</summary>
+        private static RedDotServerSeenSync _serverSync;
+
+        /// <summary>
+        /// 注册（或清除）ServerAccount 已看同步后端。业务在登录框架初始化后调用一次即可；
+        /// 之后每次账号会话都会自动拉取合并与回推。传入 null 关闭服务端同步。
+        /// </summary>
+        public static void ConfigureServerSync(IRedDotSeenSyncBackend backend, Action<Exception> errorSink = null)
+        {
+            _serverBackend = backend;
+            _serverErrorSink = errorSink;
+        }
+
         /// <summary>重置旧运行态并加载当前 SaveManager 账号目录中的 LocalAccount 已看版本。</summary>
         public static async UniTask BeginAsync(RedDotService service)
         {
@@ -53,6 +72,13 @@ namespace Framework.RedDot
             }
             service.ImportSeen(RedDotSeenSaveMode.LocalAccount, records);
             _active = true;
+
+            // 注册了后端才做服务端同步：拉取→取 max 合并→本地领先回推→订阅会话内变更。
+            if (_serverBackend != null)
+            {
+                _serverSync = new RedDotServerSeenSync(service, _serverBackend, errorSink: _serverErrorSink);
+                await _serverSync.BeginAsync();
+            }
         }
 
         /// <summary>异步触发当前账号已看版本落盘，并同步清空运行态；SaveManager 会捕获当前账号路径。</summary>
@@ -79,8 +105,32 @@ namespace Framework.RedDot
                 SaveManager.Instance.Save(save);
             }
 
+            // 清账号态前捕获 ServerAccount 视图并最终回推：快照与运行态解耦，不受随后 ResetAccountState 影响。
+            if (_serverSync != null)
+            {
+                RedDotServerSeenSync sync = _serverSync;
+                _serverSync = null;
+                IReadOnlyList<RedDotSeenRecord> serverSeen = service.ExportSeen(RedDotSeenSaveMode.ServerAccount);
+                FinalizeServerSyncAsync(sync, serverSeen).Forget();
+            }
+
             service.ResetAccountState();
             _active = false;
+        }
+
+        /// <summary>登出收尾：最终回推捕获的 ServerAccount 快照，再释放会话订阅。</summary>
+        private static async UniTask FinalizeServerSyncAsync(
+            RedDotServerSeenSync sync, IReadOnlyList<RedDotSeenRecord> serverSeen)
+        {
+            try
+            {
+                if (serverSeen != null && serverSeen.Count > 0)
+                    await sync.PushSnapshotAsync(serverSeen);
+            }
+            finally
+            {
+                sync.Dispose();
+            }
         }
     }
 }

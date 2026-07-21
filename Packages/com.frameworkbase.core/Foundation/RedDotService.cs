@@ -241,6 +241,12 @@ namespace Framework.Foundation
         /// <summary>订阅者异常诊断出口；异常会被隔离，不影响其他订阅者。</summary>
         public Action<Exception> ObserverErrorSink { get; set; }
 
+        /// <summary>
+        /// ServerAccount 范围已看版本发生变化时触发（Acknowledge 或 MergeSeen 导致上升）。
+        /// 供服务端同步后端按需上报；去抖、重试与协议由订阅方实现，框架不在此处发起网络。
+        /// </summary>
+        public event Action ServerSeenChanged;
+
         /// <summary>当前是否启用帧末合并模式。</summary>
         public bool IsFrameCoalescingEnabled => _frameCoalescing;
 
@@ -472,6 +478,7 @@ namespace Framework.Foundation
             store[signalId] = policy.Version;
             _dirtySignals.Add(signalId);
             FlushIfNeeded();
+            if (policy.SaveMode == RedDotSeenSaveMode.ServerAccount) RaiseServerSeenChanged();
             return true;
         }
 
@@ -498,6 +505,40 @@ namespace Framework.Foundation
                 foreach (KeyValuePair<int, RedDotSeenPolicyDefinition> pair in _seenPolicies)
                     if (pair.Value.SaveMode == mode) _dirtySignals.Add(pair.Key);
             }
+        }
+
+        /// <summary>
+        /// 非破坏性合并已看记录：逐 Signal 取更高版本，不清空既有值。用于服务端拉取结果与本地已看
+        /// 状态的冲突合并（约定"取 max 版本"）。返回本次实际使某条记录上升的合并结果，供调用方判断
+        /// 是否需要回写。此方法不触发 <see cref="ServerSeenChanged"/>：合并多为服务端→本地方向，
+        /// 由同步编排显式比较后决定回推，避免把刚拉取的数据原样回推。
+        /// </summary>
+        public bool MergeSeen(RedDotSeenSaveMode mode, IEnumerable<RedDotSeenRecord> records)
+        {
+            EnsureMutable();
+            if (records == null) return false;
+            Dictionary<int, int> store = SeenStore(mode);
+            bool changed = false;
+            using (BeginBatch())
+            {
+                foreach (RedDotSeenRecord record in records)
+                {
+                    if (record == null || record.SignalId <= 0 || record.LastSeenVersion <= 0) continue;
+                    if (!_seenPolicies.TryGetValue(record.SignalId, out RedDotSeenPolicyDefinition policy) ||
+                        policy.SaveMode != mode) continue;
+                    if (store.TryGetValue(record.SignalId, out int old) && old >= record.LastSeenVersion) continue;
+                    store[record.SignalId] = record.LastSeenVersion;
+                    _dirtySignals.Add(record.SignalId);
+                    changed = true;
+                }
+            }
+            return changed;
+        }
+
+        private void RaiseServerSeenChanged()
+        {
+            try { ServerSeenChanged?.Invoke(); }
+            catch (Exception ex) { ReportObserverError(ex); }
         }
 
         public IReadOnlyList<RedDotSeenRecord> ExportSeen(RedDotSeenSaveMode mode)

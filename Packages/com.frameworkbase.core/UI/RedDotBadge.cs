@@ -17,8 +17,11 @@ namespace Framework
     {
         public enum DisplayMode
         {
-            DotOnly,
-            Number,
+            // 序号保持稳定：DotOnly=0、Number=1 为历史值，新增样式追加在后，兼容既有 Prefab 序列化。
+            DotOnly = 0,
+            Number = 1,
+            New = 2,
+            Exclamation = 3,
         }
 
         [Tooltip("稳定红点 ID；可直接粘贴，Editor 会回显 Key/描述并提供搜索。0 表示未配置")]
@@ -35,7 +38,8 @@ namespace Framework
         [Tooltip("可选：计数文本。为空则只做显隐")]
         [SerializeField] private TMPro.TMP_Text _countText;
 
-        [Tooltip("只显示红点，或显示节点最终计数。展示方式属于 UI，不进入红点逻辑配置")]
+        [Tooltip("展示样式：DotOnly 只显隐、Number 显示计数、New 显示 NEW、Exclamation 显示感叹号。" +
+                 "展示方式属于 UI，不进入红点逻辑配置——同一红点 ID 可被不同入口按不同样式呈现")]
         [SerializeField] private DisplayMode _displayMode = DisplayMode.DotOnly;
 
         [Tooltip("计数显示封顶：超过显示为「上限+」，0 或负值表示不封顶")]
@@ -86,21 +90,15 @@ namespace Framework
             _subscription = null;
         }
 
-        /// <summary>按聚合计数刷新显隐与文本。</summary>
+        /// <summary>按聚合计数刷新显隐与文本；展示逻辑收口在纯函数 <see cref="RedDotBadgePresentation"/>。</summary>
         private void Apply(int count)
         {
-            bool visible = count > 0;
-            if (_badgeRoot.activeSelf != visible)
-                _badgeRoot.SetActive(visible);
+            RedDotBadgeDisplay display = RedDotBadgePresentation.Resolve(count, _displayMode, _maxDisplayCount);
+            if (_badgeRoot.activeSelf != display.Visible)
+                _badgeRoot.SetActive(display.Visible);
 
-            if (_countText != null && visible)
-            {
-                _countText.text = _displayMode == DisplayMode.DotOnly
-                    ? string.Empty
-                    : _maxDisplayCount > 0 && count > _maxDisplayCount
-                        ? $"{_maxDisplayCount}+"
-                        : count.ToString();
-            }
+            if (_countText != null && display.Visible)
+                _countText.text = display.Text;
         }
 
         /// <summary>代码构建 UI 时配置绑定；激活状态下会立即重订阅。</summary>
