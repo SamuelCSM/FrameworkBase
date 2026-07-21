@@ -124,6 +124,12 @@ namespace Framework.Foundation
 
             /// <summary>订阅者、GetCount 与父节点聚合读取的最终可见值。</summary>
             public int FinalCount;
+
+            /// <summary>
+            /// 增量刷新的受影响标记；仅在单次 <see cref="FlushDirty"/> 内为 true，用于零分配去重，
+            /// 替代旧实现每次 Flush 都新建的 HashSet。刷新结束后必须复位为 false。
+            /// </summary>
+            public bool Affected;
         }
 
         /// <summary>单个订阅的可释放句柄；Dispose 会从服务索引中解除回调。</summary>
@@ -202,12 +208,30 @@ namespace Framework.Foundation
         /// <summary>从叶子到根稳定排序的全部节点，用于确定性增量求值。</summary>
         private readonly List<Node> _topologicalNodes = new List<Node>();
 
+        // ── 增量刷新复用缓冲：全部按 Clear() 复用，使稳定态 FlushDirty/Notify 零 GC 分配。 ──
+        /// <summary>本次 Flush 受影响的节点集合；按 TopologicalIndex 原地排序后确定性求值。</summary>
+        private readonly List<Node> _affectedScratch = new List<Node>();
+        /// <summary>脏节点向上传播用的复用队列；Clear() 保留内部数组，不重复分配。</summary>
+        private readonly Queue<Node> _propagationQueue = new Queue<Node>();
+        /// <summary>本次 Flush 中最终值发生变化、需要通知的节点。</summary>
+        private readonly List<Node> _changedScratch = new List<Node>();
+        /// <summary>通知前对单个 ID 订阅列表的复用快照，隔离回调内退订造成的列表变动。</summary>
+        private readonly List<Subscription> _notifyScratch = new List<Subscription>();
+        /// <summary>缓存的拓扑序比较委托，避免每次 Flush 的排序都新建闭包。</summary>
+        private readonly Comparison<Node> _topologicalComparison =
+            (a, b) => a.TopologicalIndex.CompareTo(b.TopologicalIndex);
+
         /// <summary>Initialize 安装的不可变目录引用。</summary>
         private RedDotCatalog _catalog;
         /// <summary>当前嵌套批处理深度；为 0 时写入会立即刷新。</summary>
         private int _batchDepth;
         /// <summary>是否正在同步通知订阅者；通知栈内禁止重入修改服务。</summary>
         private bool _isNotifying;
+        /// <summary>
+        /// 是否启用帧末合并：为 true 时写入只标脏，由帧驱动调用 <see cref="FlushPending"/> 统一刷新，
+        /// 避免一帧内多次聚合与 UI 刷新；读接口按需先行结算，保证读到自己的写入。
+        /// </summary>
+        private bool _frameCoalescing;
 
         /// <summary>目录是否已成功校验并构建运行时 DAG。</summary>
         public bool IsInitialized { get; private set; }
@@ -216,6 +240,37 @@ namespace Framework.Foundation
 
         /// <summary>订阅者异常诊断出口；异常会被隔离，不影响其他订阅者。</summary>
         public Action<Exception> ObserverErrorSink { get; set; }
+
+        /// <summary>当前是否启用帧末合并模式。</summary>
+        public bool IsFrameCoalescingEnabled => _frameCoalescing;
+
+        /// <summary>存在已标脏但尚未结算的红点；帧驱动据此决定是否需要调用 <see cref="FlushPending"/>。</summary>
+        public bool HasPendingUpdates => _dirtySignals.Count > 0;
+
+        /// <summary>
+        /// 启用/关闭帧末合并。启用后，批处理之外的写入不再逐笔立即刷新，而是攒到帧末由
+        /// <see cref="FlushPending"/> 统一结算一次；关闭时会立即把已累积的脏结算掉，避免残留。
+        /// 未启用时行为与历史一致（逐笔即时刷新）。
+        /// </summary>
+        public void SetFrameCoalescing(bool enabled)
+        {
+            EnsureInitialized();
+            if (_frameCoalescing == enabled) return;
+            _frameCoalescing = enabled;
+            if (!enabled) FlushPending();
+        }
+
+        /// <summary>
+        /// 由帧驱动（如 LateUpdate）调用：把本帧累积的脏红点统一结算并通知一次。
+        /// 批处理进行中或正在通知回调栈内均跳过；返回是否真的发生了结算。
+        /// </summary>
+        public bool FlushPending()
+        {
+            if (_batchDepth > 0 || _isNotifying) return false;
+            if (_dirtySignals.Count == 0) return false;
+            FlushDirty();
+            return true;
+        }
 
         /// <summary>使用完整、已校验的目录一次性构建 DAG；活跃会话中不支持替换拓扑。</summary>
         public void Initialize(RedDotCatalog catalog)
@@ -288,6 +343,7 @@ namespace Framework.Foundation
         public int GetCount(int id)
         {
             if (!IsInitialized) return 0;
+            EnsureUpToDate();
             return GetNode(id).FinalCount;
         }
 
@@ -498,6 +554,7 @@ namespace Framework.Foundation
         public IReadOnlyList<RedDotNodeSnapshot> Snapshot()
         {
             EnsureInitialized();
+            EnsureUpToDate();
             return _nodes.Values.OrderBy(node => node.Definition.Id).Select(CreateSnapshot).ToArray();
         }
 
@@ -505,6 +562,7 @@ namespace Framework.Foundation
         public IReadOnlyList<RedDotNodeSnapshot> GetActiveSignalSources(int id)
         {
             EnsureInitialized();
+            EnsureUpToDate();
             Node node = GetNode(id);
             var ids = new HashSet<int>();
             CollectSignalIds(node, ids, new HashSet<int>());
@@ -513,6 +571,41 @@ namespace Framework.Foundation
                 .OrderBy(signal => signal.Definition.Id)
                 .Select(CreateSnapshot)
                 .ToArray();
+        }
+
+        /// <summary>
+        /// 从入口节点沿"有值"的子边逐层深入，返回一条到最深亮起 Signal 的路径（含入口本身）。
+        /// 供"点击红点跳转到具体来源"使用：UI 可据此把玩家一路带到点亮红点的叶子功能。
+        /// 入口未点亮（FinalCount==0）时返回空列表。每层在多个亮起子节点中按
+        /// FinalCount 降序、ID 升序确定性择一，因此同一状态下路径稳定可复现。
+        /// </summary>
+        public IReadOnlyList<RedDotNodeSnapshot> GetActivePath(int id)
+        {
+            EnsureInitialized();
+            EnsureUpToDate();
+            Node node = GetNode(id);
+            var path = new List<RedDotNodeSnapshot>();
+            if (node.FinalCount <= 0) return path;
+
+            var visited = new HashSet<int>();
+            while (node != null && visited.Add(node.Definition.Id))
+            {
+                path.Add(CreateSnapshot(node));
+                if (node.Definition.Kind == RedDotNodeKind.Signal) break;
+
+                Node best = null;
+                for (int i = 0; i < node.Children.Count; i++)
+                {
+                    Node child = node.Children[i];
+                    if (child.FinalCount <= 0) continue;
+                    if (best == null ||
+                        child.FinalCount > best.FinalCount ||
+                        (child.FinalCount == best.FinalCount && child.Definition.Id < best.Definition.Id))
+                        best = child;
+                }
+                node = best;
+            }
+            return path;
         }
 
         private RedDotNodeSnapshot CreateSnapshot(Node node)
@@ -537,32 +630,67 @@ namespace Framework.Foundation
         {
             if (_batchDepth <= 0) throw new InvalidOperationException("红点 BatchScope 计数失衡。");
             _batchDepth--;
-            if (_batchDepth == 0) FlushDirty();
+            // 帧末合并模式下，批处理结束也只保留脏标记，交由 FlushPending 统一结算。
+            if (_batchDepth == 0 && !_frameCoalescing) FlushDirty();
         }
 
         private void FlushIfNeeded()
         {
-            if (_batchDepth == 0) FlushDirty();
+            // 批处理中或帧末合并模式下都不即时刷新；后者由帧驱动 FlushPending 统一结算。
+            if (_batchDepth == 0 && !_frameCoalescing) FlushDirty();
         }
 
+        /// <summary>
+        /// 读接口的"读到自己的写入"保障：仅在帧末合并模式、非批处理、非通知栈内且确有脏时提前结算一次。
+        /// 非合并模式下脏在写入时已即时清空，此方法为零成本判空快速返回。
+        /// </summary>
+        private void EnsureUpToDate()
+        {
+            if (_frameCoalescing && _batchDepth == 0 && !_isNotifying && _dirtySignals.Count > 0)
+                FlushDirty();
+        }
+
+        /// <summary>
+        /// 增量结算脏 Signal 及其全部受影响祖先。使用节点上的 <see cref="Node.Affected"/> 标记与复用缓冲，
+        /// 稳定态零 GC 分配；按拓扑序原地排序保证依赖先于父节点求值，结果确定。
+        /// </summary>
         private void FlushDirty()
         {
             if (_dirtySignals.Count == 0) return;
-            var affected = new HashSet<int>(_dirtySignals);
-            var queue = new Queue<int>(_dirtySignals);
-            while (queue.Count > 0)
+
+            // 1) 以脏 Signal 为种子，沿父边向上收集受影响节点；Affected 标记去重，替代旧 HashSet。
+            _affectedScratch.Clear();
+            _propagationQueue.Clear();
+            foreach (int id in _dirtySignals)
             {
-                Node child = _nodes[queue.Dequeue()];
+                Node seed = _nodes[id];
+                if (seed.Affected) continue;
+                seed.Affected = true;
+                _affectedScratch.Add(seed);
+                _propagationQueue.Enqueue(seed);
+            }
+            _dirtySignals.Clear();
+
+            while (_propagationQueue.Count > 0)
+            {
+                Node child = _propagationQueue.Dequeue();
                 for (int i = 0; i < child.Parents.Count; i++)
                 {
-                    int parentId = child.Parents[i].Definition.Id;
-                    if (affected.Add(parentId)) queue.Enqueue(parentId);
+                    Node parent = child.Parents[i];
+                    if (parent.Affected) continue;
+                    parent.Affected = true;
+                    _affectedScratch.Add(parent);
+                    _propagationQueue.Enqueue(parent);
                 }
             }
 
-            var changed = new List<Node>();
-            foreach (Node node in affected.Select(id => _nodes[id]).OrderBy(value => value.TopologicalIndex))
+            // 2) 按拓扑序原地排序（复用委托），依赖节点先算；顺带复位 Affected 标记。
+            _affectedScratch.Sort(_topologicalComparison);
+            _changedScratch.Clear();
+            for (int i = 0; i < _affectedScratch.Count; i++)
             {
+                Node node = _affectedScratch[i];
+                node.Affected = false;
                 int old = node.FinalCount;
                 if (node.Definition.Kind == RedDotNodeKind.Signal)
                 {
@@ -574,18 +702,20 @@ namespace Framework.Foundation
                     node.FinalCount = EvaluateAggregate(node);
                     node.EffectiveCount = node.FinalCount;
                 }
-                if (node.FinalCount != old) changed.Add(node);
+                if (node.FinalCount != old) _changedScratch.Add(node);
             }
-            _dirtySignals.Clear();
+            _affectedScratch.Clear();
 
+            // 3) 通知发生变化的节点；回调栈内禁止再改服务，故复用缓冲不会被重入。
             _isNotifying = true;
             try
             {
-                for (int i = 0; i < changed.Count; i++) Notify(changed[i]);
+                for (int i = 0; i < _changedScratch.Count; i++) Notify(_changedScratch[i]);
             }
             finally
             {
                 _isNotifying = false;
+                _changedScratch.Clear();
             }
         }
 
@@ -698,13 +828,20 @@ namespace Framework.Foundation
 
         private void Notify(Node node)
         {
-            if (!_subscriptions.TryGetValue(node.Definition.Id, out List<Subscription> list)) return;
-            Subscription[] snapshot = list.ToArray();
-            for (int i = 0; i < snapshot.Length; i++)
+            if (!_subscriptions.TryGetValue(node.Definition.Id, out List<Subscription> list) || list.Count == 0)
+                return;
+
+            // 复用缓冲拷贝一份当前订阅，隔离回调内退订对原列表的修改；Notify 不会被回调重入，
+            // 单个复用缓冲即安全，且稳定态零分配（回调禁止改服务，退订仅动 _subscriptions）。
+            _notifyScratch.Clear();
+            _notifyScratch.AddRange(list);
+            int count = node.FinalCount;
+            for (int i = 0; i < _notifyScratch.Count; i++)
             {
-                Action<int> handler = snapshot[i].Handler;
-                if (handler != null) InvokeIsolated(handler, node.FinalCount);
+                Action<int> handler = _notifyScratch[i].Handler;
+                if (handler != null) InvokeIsolated(handler, count);
             }
+            _notifyScratch.Clear();
         }
 
         private void InvokeIsolated(Action<int> handler, int count)

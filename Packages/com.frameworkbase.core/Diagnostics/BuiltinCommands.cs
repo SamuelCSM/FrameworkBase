@@ -113,8 +113,8 @@ namespace Framework.Diagnostics
                 _ => LogDump.DumpAsync());
 
             registry.Register(
-                new CommandInfo("reddot", "查询共享红点 DAG：无参列非零节点，支持 ID/Key 与 explain 来源链",
-                    usage: "reddot [ID|Key] | reddot explain <ID|Key>",
+                new CommandInfo("reddot", "查询共享红点 DAG：无参列非零节点，支持 ID/Key、explain 来源链与 path 亮起路径",
+                    usage: "reddot [ID|Key] | reddot explain <ID|Key> | reddot path <ID|Key>",
                     requiredAccess: CommandAccessLevel.Privileged),
                 args =>
                 {
@@ -122,8 +122,37 @@ namespace Framework.Diagnostics
                     if (service == null || !service.IsInitialized)
                         return CommandResult.Ok("红点目录未初始化。");
 
-                    bool explain = string.Equals(args.GetStringOrDefault(0), "explain", StringComparison.OrdinalIgnoreCase);
-                    string target = args.GetStringOrDefault(explain ? 1 : 0);
+                    string sub = args.GetStringOrDefault(0);
+                    bool explain = string.Equals(sub, "explain", StringComparison.OrdinalIgnoreCase);
+                    bool path = string.Equals(sub, "path", StringComparison.OrdinalIgnoreCase);
+                    string target = args.GetStringOrDefault(explain || path ? 1 : 0);
+
+                    if (path)
+                    {
+                        if (string.IsNullOrEmpty(target))
+                            return CommandResult.Fail("用法：reddot path <ID|Key>");
+                        int pathId;
+                        if (!int.TryParse(target, out pathId) && !service.TryResolveId(target, out pathId))
+                            return CommandResult.Fail($"红点 ID/Key 不存在：{target}");
+
+                        var pathNodes = service.GetActivePath(pathId);
+                        if (pathNodes.Count == 0)
+                            return CommandResult.Ok($"红点 {pathId} 未点亮，无亮起路径。");
+
+                        var pathText = new StringBuilder(256);
+                        pathText.Append("亮起路径（入口→最深来源）：");
+                        for (int i = 0; i < pathNodes.Count; i++)
+                        {
+                            Framework.Foundation.RedDotNodeSnapshot step = pathNodes[i];
+                            pathText.AppendLine().Append("  ");
+                            for (int indent = 0; indent < i; indent++) pathText.Append("  ");
+                            pathText.Append(i == 0 ? string.Empty : "└ ")
+                                .Append(step.Id).Append(" [").Append(step.Key).Append("] = ").Append(step.FinalCount);
+                            if (step.Kind == Framework.Foundation.RedDotNodeKind.Signal) pathText.Append("（Signal）");
+                        }
+                        return CommandResult.Ok(pathText.ToString());
+                    }
+
                     if (!string.IsNullOrEmpty(target))
                     {
                         int id;

@@ -7,6 +7,22 @@
 
 ### 新增
 
+- **红点亮起路径导航 `RedDotService.GetActivePath(id)`**（点击红点跳转到具体来源的数据支撑）：从入口
+  节点沿"有值"的子边逐层深入，返回一条到最深亮起 Signal 的确定性路径（每层在多个亮起子节点中按
+  FinalCount 降序、ID 升序择一，同状态下可复现）。入口未点亮返回空列表。UI 可据此把玩家一路带到点亮
+  红点的叶子功能。诊断命令新增 `reddot path <ID|Key>` 直观打印路径。
+
+### 优化
+
+- **红点增量结算/通知零 GC 分配**：`FlushDirty` 改用节点上的 `Affected` 标记 + 复用缓冲（受影响集合、
+  传播队列、变化集合、通知快照、拓扑序比较委托全部复用 `Clear()`），去掉旧实现每次 Flush 新建的
+  `HashSet`/`Queue`/`List` 与 LINQ `OrderBy`；`Notify` 用复用缓冲替代 `list.ToArray()`。登录批量写入
+  和高频事件驱动下不再产生临时分配。行为语义不变。
+- **红点帧末合并（可选）`SetFrameCoalescing` / `FlushPending`**：启用后批处理之外的写入只标脏，由帧驱动
+  （GameEntry 的 LateUpdate 自动接管）在帧末统一结算一次，避免一帧内多来源写同一子树造成的重复聚合与
+  多次 UI 刷新；读接口（`GetCount`/`Snapshot`/`GetActivePath` 等）按需先行结算，保证"读到自己的写入"。
+  未启用时行为与历史完全一致（逐笔即时刷新），单测默认走即时模式。
+
 - **banned-API 静态门禁 `Tools/ci/check-banned-apis.ps1`**（运行时代码的 API 红线焊进 CI）：纯文本
   扫描（无需 Unity，Windows/ubuntu 双平台），只管跑在玩家设备上的代码（Editor/Tests 不扫）。三条规则：
   `local-time`（DateTime.Now 可被玩家改表、跨设备不可比→用 UtcNow/ServerTime）、`thread-sleep`

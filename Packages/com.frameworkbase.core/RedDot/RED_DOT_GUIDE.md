@@ -193,6 +193,33 @@ GameEntry.RedDots.Acknowledge(
 badge.Configure(redDotId, badgeRoot, countText, RedDotBadge.DisplayMode.Number, 99);
 ```
 
+## 点击红点跳转到来源
+
+`GetActivePath(id)` 从入口节点沿"有值"的子边逐层深入，返回一条到最深亮起 Signal 的路径（含入口本身）。
+每层在多个亮起子节点中按 FinalCount 降序、ID 升序确定性择一，同一状态下路径稳定可复现；入口未点亮时返回
+空列表。UI 可据此把玩家从大入口一路带到真正点亮红点的叶子功能：
+
+```csharp
+var path = GameEntry.RedDots.GetActivePath(RedDotIds.Main.Root);
+// path[0] 是入口，path[^1] 是最深亮起 Signal；据此驱动逐级页面跳转
+```
+
+诊断命令：`reddot path <ID|Key>` 直接打印这条路径。
+
+## 帧末合并（性能）
+
+默认每次 `SetCount` 立即结算并通知（历史行为）。运行时由 `GameEntry` 在目录初始化后自动开启帧末合并：
+批处理之外的写入只标脏，`LateUpdate` 帧末统一 `FlushPending()` 一次，把一帧内多个来源对同一子树的写入
+合并为一次聚合与 UI 通知，避免重复计算与多次刷新。读接口（`GetCount`/`Snapshot`/`GetActivePath` 等）会
+按需先行结算，保证"读到自己的写入"，因此业务读值时机不受影响。
+
+- `SetFrameCoalescing(bool)`：手动开关（关闭时立即结算已累积的脏）；
+- `FlushPending()`：帧驱动调用，返回是否发生结算；
+- `HasPendingUpdates`：是否存在已标脏未结算的红点。
+
+需要显式合并一组写入时仍用 `BeginBatch()`；帧末合并是对"零散写入"的兜底，二者可叠加。增量结算与通知
+在稳定态零 GC 分配。
+
 ## 校验与排查
 
 导入、Player Build 和 `CiGate` 会校验：
@@ -214,9 +241,11 @@ reddot
 reddot 110001
 reddot Clicker.UpgradeAvailable
 reddot explain 100001
+reddot path 100001
 ```
 
-`explain` 会列出使 Aggregate 亮起的有效底层 Signal、Raw/Effective 值、Provider 和 Ready 状态。
+`explain` 会列出使 Aggregate 亮起的有效底层 Signal、Raw/Effective 值、Provider 和 Ready 状态；
+`path` 打印从入口深入到最深亮起 Signal 的一条路径，对应 `GetActivePath`。
 
 ## 明确限制
 

@@ -647,6 +647,15 @@ namespace Framework.Core
                 try { _components[i].OnLateUpdate(dt); }
                 catch (Exception ex) { LogComponentError("OnLateUpdate", _components[i], ex); }
             }
+
+            // 帧末统一结算红点：本帧内多个来源对同一子树的写入合并为一次聚合与 UI 通知，
+            // 避免一帧内重复计算和多次刷新。目录初始化后自动开启合并模式；读接口仍按需即时结算。
+            var redDots = RedDots;
+            if (redDots != null && redDots.IsInitialized)
+            {
+                if (!redDots.IsFrameCoalescingEnabled) redDots.SetFrameCoalescing(true);
+                redDots.FlushPending();
+            }
         }
 
         private void FixedUpdate()

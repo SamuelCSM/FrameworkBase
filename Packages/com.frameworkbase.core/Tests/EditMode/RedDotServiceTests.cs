@@ -189,6 +189,75 @@ namespace Framework.Tests
             Assert.AreEqual(0, service.GetCount(Other));
         }
 
+        [Test]
+        public void 帧末合并_多次写入只在FlushPending时通知一次()
+        {
+            RedDotService service = CreateService();
+            service.SetFrameCoalescing(true);
+            var notified = new List<int>();
+            service.Subscribe(EntryA, notified.Add, notifyImmediately: false);
+
+            service.SetCount(Shared, 1);
+            service.SetCount(Shared, 2);
+            service.SetCount(Other, 5);
+            CollectionAssert.IsEmpty(notified, "合并模式下写入不即时通知，攒到帧末");
+            Assert.IsTrue(service.HasPendingUpdates);
+
+            Assert.IsTrue(service.FlushPending());
+            CollectionAssert.AreEqual(new[] { 7 }, notified, "一帧多次写入只结算通知一次最终值");
+            Assert.IsFalse(service.HasPendingUpdates);
+            Assert.IsFalse(service.FlushPending(), "无脏时 FlushPending 返回 false");
+        }
+
+        [Test]
+        public void 帧末合并_读接口按需先行结算保证读到自己的写入()
+        {
+            RedDotService service = CreateService();
+            service.SetFrameCoalescing(true);
+            service.SetCount(Shared, 4);
+
+            // 尚未 FlushPending，但读接口应即时结算，读到刚写入的值。
+            Assert.AreEqual(4, service.GetCount(EntryA));
+            Assert.IsFalse(service.HasPendingUpdates, "读接口已把脏结算完毕");
+        }
+
+        [Test]
+        public void 关闭帧末合并立即结算残留脏()
+        {
+            RedDotService service = CreateService();
+            service.SetFrameCoalescing(true);
+            var notified = new List<int>();
+            service.Subscribe(EntryA, notified.Add, notifyImmediately: false);
+            service.SetCount(Shared, 3);
+            CollectionAssert.IsEmpty(notified);
+
+            service.SetFrameCoalescing(false);
+            CollectionAssert.AreEqual(new[] { 3 }, notified, "关闭合并模式应结算已累积的脏");
+            Assert.IsFalse(service.IsFrameCoalescingEnabled);
+        }
+
+        [Test]
+        public void 亮起路径从入口深入到最深来源Signal()
+        {
+            RedDotService service = CreateService();
+            service.SetCount(Shared, 3);
+            service.SetCount(Other, 5);
+
+            IReadOnlyList<RedDotNodeSnapshot> path = service.GetActivePath(Root);
+            Assert.Greater(path.Count, 0);
+            Assert.AreEqual(Root, path[0].Id, "路径首元素是查询入口");
+            Assert.AreEqual(RedDotNodeKind.Signal, path[path.Count - 1].Kind, "路径末端是叶子 Signal");
+            // Root→EntryA（Other=5 使 EntryA=8，最大）→Other（5 > Shared 3）。
+            CollectionAssert.AreEqual(new[] { Root, EntryA, Other }, path.Select(step => step.Id).ToArray());
+        }
+
+        [Test]
+        public void 未点亮节点的亮起路径为空()
+        {
+            RedDotService service = CreateService();
+            CollectionAssert.IsEmpty(service.GetActivePath(Root));
+        }
+
         private static RedDotService CreateService(int seenVersion = 3)
         {
             var service = new RedDotService();
