@@ -38,6 +38,8 @@ namespace HotUpdate.Clicker
         public int IdleGainPerSec => (CurrentRow?.IdleGainPerSec ?? 0) * Multiplier;
         public int UpgradeCost => CurrentRow?.UpgradeCost ?? 0;
         public bool IsMaxLevel => CurrentRow == null || CurrentRow.UpgradeCost <= 0;
+        /// <summary>当前业务状态是否满足升级条件；UI 与红点投影共享同一事实判断。</summary>
+        public bool CanUpgrade => !IsMaxLevel && Coins >= UpgradeCost;
         public string LevelName => CurrentRow?.Name ?? "?";
 
         /// <summary>加载配表 + 远配开关 + 账号存档，并启动挂机/自动存档定时器。须在登录身份贯通后调用。</summary>
@@ -54,7 +56,7 @@ namespace HotUpdate.Clicker
 
             _idleTimerId = GameEntry.Timer.AddLoopTimer(OnIdleTick, 1f);
             _autosaveTimerId = GameEntry.Timer.AddLoopTimer(SaveNow, AutosaveIntervalSec);
-            Publish();
+            PublishStateChanged();
         }
 
         private int ComputeMaxLevelId()
@@ -68,12 +70,14 @@ namespace HotUpdate.Clicker
         /// <summary>点击一次：按当前等级配表收益加金币并埋点。</summary>
         public void Click()
         {
+            bool couldUpgrade = CanUpgrade;
             Coins += ClickGain;
             GameEntry.Analytics?.Track("clicker_click", new Dictionary<string, object>
             {
                 { "level", Level }, { "gain", ClickGain }, { "coins", Coins },
             });
-            Publish();
+            PublishUpgradeAvailabilityIfChanged(couldUpgrade);
+            PublishStateChanged();
         }
 
         /// <summary>尝试升级：满级或金币不足返回 false（调用方据此禁用按钮，不产生失败态）。</summary>
@@ -85,6 +89,7 @@ namespace HotUpdate.Clicker
             if (Coins < cost)
                 return false;
 
+            bool couldUpgrade = CanUpgrade;
             Coins -= cost;
             Level += 1;
             GameEntry.Analytics?.Track("clicker_upgrade", new Dictionary<string, object>
@@ -92,7 +97,8 @@ namespace HotUpdate.Clicker
                 { "new_level", Level }, { "cost", cost },
             });
             SaveNow();
-            Publish();
+            PublishUpgradeAvailabilityIfChanged(couldUpgrade);
+            PublishStateChanged();
             return true;
         }
 
@@ -101,8 +107,10 @@ namespace HotUpdate.Clicker
         {
             if (amount <= 0)
                 return;
+            bool couldUpgrade = CanUpgrade;
             Coins += amount;
-            Publish();
+            PublishUpgradeAvailabilityIfChanged(couldUpgrade);
+            PublishStateChanged();
         }
 
         private void OnIdleTick()
@@ -110,8 +118,10 @@ namespace HotUpdate.Clicker
             int gain = IdleGainPerSec;
             if (gain <= 0)
                 return;
+            bool couldUpgrade = CanUpgrade;
             Coins += gain;
-            Publish();
+            PublishUpgradeAvailabilityIfChanged(couldUpgrade);
+            PublishStateChanged();
         }
 
         /// <summary>立即落盘（账号级）。定时器与升级/退出各处复用。</summary>
@@ -129,6 +139,12 @@ namespace HotUpdate.Clicker
             SaveNow();
         }
 
-        private void Publish() => GameEntry.Event?.Publish(ClickerEvents.StateChanged);
+        private void PublishUpgradeAvailabilityIfChanged(bool oldValue)
+        {
+            if (oldValue != CanUpgrade)
+                GameEntry.Event?.Publish(ClickerEvents.UpgradeAvailabilityChanged);
+        }
+
+        private void PublishStateChanged() => GameEntry.Event?.Publish(ClickerEvents.StateChanged);
     }
 }

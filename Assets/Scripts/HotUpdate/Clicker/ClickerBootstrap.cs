@@ -27,7 +27,6 @@ namespace HotUpdate.Clicker
         private static ClickerModel _model;
         private static ClickerMainView _mainView;
         private static RedDotCoordinator _redDotCoordinator;
-        private static IDisposable _redDotStateSub;
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         private static void AutoInstallForOfflineDev()
@@ -82,9 +81,6 @@ namespace HotUpdate.Clicker
                 _redDotCoordinator = new RedDotCoordinator(GameEntry.RedDots);
                 _redDotCoordinator.Register(new ClickerRedDotProvider(_model));
                 _redDotCoordinator.RebuildAll();
-                _redDotStateSub = GameEntry.Event.Subscribe(
-                    ClickerEvents.StateChanged,
-                    () => _redDotCoordinator?.Refresh("Clicker"));
             }
             else
             {
@@ -113,16 +109,22 @@ namespace HotUpdate.Clicker
         {
             ClickerModel model = _model;
             ClickerMainView mainView = _mainView;
-            IDisposable redDotStateSub = _redDotStateSub;
+            RedDotCoordinator redDotCoordinator = _redDotCoordinator;
             _model = null;
             _mainView = null;
-            _redDotStateSub = null;
             _redDotCoordinator = null;
 
             try
             {
-                redDotStateSub?.Dispose();
-                model?.Dispose();
+                try
+                {
+                    redDotCoordinator?.Dispose();
+                }
+                finally
+                {
+                    // 红点解绑异常也不能阻止玩法 Timer 和账号存档释放。
+                    model?.Dispose();
+                }
             }
             finally
             {
