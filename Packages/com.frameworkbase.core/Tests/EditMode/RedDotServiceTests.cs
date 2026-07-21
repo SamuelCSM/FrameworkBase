@@ -55,6 +55,43 @@ namespace Framework.Tests
         }
 
         [Test]
+        public void 响应式Provider支持多订阅精确更新并在Coordinator释放时统一解绑()
+        {
+            RedDotService service = CreateService();
+            var provider = new ReactiveProvider();
+            var coordinator = new RedDotCoordinator(service);
+            coordinator.Register(provider);
+            coordinator.RebuildAll();
+
+            Assert.AreEqual(1, service.GetCount(Shared));
+            Assert.AreEqual(2, service.GetCount(Other));
+
+            provider.ChangeShared(5);
+            Assert.AreEqual(5, service.GetCount(Shared));
+            Assert.AreEqual(2, service.GetCount(Other), "更新 Shared 不应重建或改写 Other");
+
+            provider.ChangeOther(4);
+            Assert.AreEqual(5, service.GetCount(Shared));
+            Assert.AreEqual(4, service.GetCount(Other));
+
+            provider.ReplaceFullSnapshot(7, 8);
+            Assert.AreEqual(7, service.GetCount(Shared));
+            Assert.AreEqual(8, service.GetCount(Other));
+            Assert.Throws<InvalidOperationException>(() => provider.WriteUndeclared(Seen));
+
+            coordinator.Dispose();
+            Assert.IsFalse(service.IsProviderReady("Mail"));
+            Assert.AreEqual(0, service.GetCount(Shared));
+            Assert.AreEqual(0, service.GetCount(Other));
+
+            provider.ChangeShared(9);
+            provider.ChangeOther(9);
+            Assert.AreEqual(0, service.GetCount(Shared), "Coordinator 释放后所有响应式监听都应解绑");
+            Assert.Throws<ObjectDisposedException>(() => provider.WriteDeclared(Shared));
+            Assert.Throws<ObjectDisposedException>(() => coordinator.Refresh("Mail"));
+        }
+
+        [Test]
         public void Batch只通知最终值()
         {
             RedDotService service = CreateService();
@@ -204,5 +241,76 @@ namespace Framework.Tests
 
         private static RedDotEdgeDefinition Edge(int parentId, int childId)
             => new RedDotEdgeDefinition { ParentId = parentId, ChildId = childId };
+
+        private sealed class ReactiveProvider : IRedDotProvider, IReactiveRedDotProvider
+        {
+            private Action _sharedChanged;
+            private Action _otherChanged;
+            private IRedDotWriter _writer;
+
+            public string Owner => "Mail";
+            public IReadOnlyCollection<int> OwnedSignalIds => new[] { Shared, Other };
+            public bool IsReady => true;
+            public int SharedValue { get; private set; } = 1;
+            public int OtherValue { get; private set; } = 2;
+
+            public void Collect(RedDotUpdateBuffer buffer)
+            {
+                buffer.Set(Shared, SharedValue);
+                buffer.Set(Other, OtherValue);
+            }
+
+            public IDisposable Bind(IRedDotWriter writer)
+            {
+                _writer = writer;
+                _sharedChanged = () => writer.SetCount(Shared, SharedValue);
+                _otherChanged = () => writer.SetCount(Other, OtherValue);
+
+                var bindings = new RedDotBindingGroup();
+                bindings.Add(new CallbackDisposable(() => _sharedChanged = null));
+                bindings.Add(new CallbackDisposable(() => _otherChanged = null));
+                return bindings;
+            }
+
+            public void ChangeShared(int value)
+            {
+                SharedValue = value;
+                _sharedChanged?.Invoke();
+            }
+
+            public void ChangeOther(int value)
+            {
+                OtherValue = value;
+                _otherChanged?.Invoke();
+            }
+
+            public void WriteUndeclared(int signalId) => _writer.SetCount(signalId, 1);
+
+            public void WriteDeclared(int signalId) => _writer.SetCount(signalId, 1);
+
+            public void ReplaceFullSnapshot(int shared, int other)
+            {
+                SharedValue = shared;
+                OtherValue = other;
+                _writer.RefreshSnapshot();
+            }
+        }
+
+        private sealed class CallbackDisposable : IDisposable
+        {
+            private Action _dispose;
+
+            public CallbackDisposable(Action dispose)
+            {
+                _dispose = dispose;
+            }
+
+            public void Dispose()
+            {
+                Action dispose = _dispose;
+                _dispose = null;
+                dispose?.Invoke();
+            }
+        }
     }
 }

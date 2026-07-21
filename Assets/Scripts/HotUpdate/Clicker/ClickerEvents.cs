@@ -8,5 +8,8 @@ namespace HotUpdate.Clicker
     {
         /// <summary>玩法状态（金币/等级/收益）变化，UI 订阅后刷新。</summary>
         internal const int StateChanged = 20001;
+
+        /// <summary>“当前是否可升级”这一业务语义发生变化，红点投影层据此精确更新对应 Signal。</summary>
+        internal const int UpgradeAvailabilityChanged = 20002;
     }
 }

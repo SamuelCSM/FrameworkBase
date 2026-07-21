@@ -77,7 +77,9 @@
   `RedDotBadge` 改为 ID 绑定并带搜索/回显/旧路径迁移；五张源表进入标准客户端 ConfigData，运行时从
   `config.db.bytes` 组装目录，专用编译器只负责跨表校验和确定性 ID 常量。节点只填写模块内 `CodeName`，完整名称自动派生；
   工作簿枚举列使用真实枚举类型。`red_dot_edge_ref` 使用新增的无主键 `ConfigListBase<T>` 关系表能力，
-  无需人工 EdgeKey 且允许多父节点。Prefab/Scene/CI 共用配置门禁，`reddot explain` 可追踪最终来源；旧 `RedDotTree` 保留。
+  无需人工 EdgeKey 且允许多父节点。Provider 同时支持登录/重连完整快照与可选的响应式领域事件监听；
+  `IRedDotWriter` 把增量写入限制在 Provider 声明的 Signal 内，多条监听由 Coordinator 在账号会话退出时统一释放。
+  Prefab/Scene/CI 共用配置门禁，`reddot explain` 可追踪最终来源；旧 `RedDotTree` 保留。
 - **日志回捞最短路径 `Diagnostics/LogDump`**（冲刷 → 打包 → 可选上报）：`LogArchiver` 把日志目录压成单个 zip 落独立
   产物目录（共享读打开正被写线程持有的当前日志文件，产物目录自带保留上限最旧先删，纯文件系统逻辑 EditMode 可测）；
   `LogDump.DumpAsync` 编排冲刷 / 打包 / 上报，上报通道由业务注入 `UploadHandler`（未注入只留存本地，回捞包本身即具备

@@ -82,7 +82,8 @@
 
 ## Provider 用法
 
-业务模块实现 `IRedDotProvider`，拥有固定 Signal 集合：
+业务模块实现 `IRedDotProvider`，拥有固定 Signal 集合。它首先是一份可随时重建的完整快照，保证登录、
+切号、重连或整包数据覆盖后可以校准所有 Signal：
 
 ```csharp
 public sealed class MailRedDotProvider : IRedDotProvider
@@ -104,24 +105,63 @@ public sealed class MailRedDotProvider : IRedDotProvider
 }
 ```
 
-登录/重连时提交完整模块快照：
+登录/重连时提交完整模块快照；Coordinator 是账号会话对象，退出时必须 Dispose：
 
 ```csharp
-var coordinator = new RedDotCoordinator(GameEntry.RedDots);
-coordinator.Register(new MailRedDotProvider(model));
-coordinator.Register(new TaskRedDotProvider(taskModel));
-coordinator.RebuildAll();
+_coordinator = new RedDotCoordinator(GameEntry.RedDots);
+_coordinator.Register(new MailRedDotProvider(model));
+_coordinator.Register(new TaskRedDotProvider(taskModel));
+_coordinator.RebuildAll();
+
+// 业务会话退出
+_coordinator.Dispose();
 ```
 
 完整快照中，Provider 拥有但没有写入的 Signal 自动归零，避免旧账号/旧快照红点残留。
 
-正常运行由业务事件增量校准绝对值：
+### 响应式精确更新
+
+正常运行不应让高频通用事件反复 `Refresh(owner)` 完整快照。需要精确监听 Model 领域事件的 Provider 可额外实现
+`IReactiveRedDotProvider`。一次 `Bind` 可以注册任意数量的监听，返回的 `IDisposable` 是整组监听的统一释放句柄：
+
+```csharp
+public sealed class MailRedDotProvider : IRedDotProvider, IReactiveRedDotProvider
+{
+    // Owner / OwnedSignalIds / IsReady / Collect 与上文相同
+
+    public IDisposable Bind(IRedDotWriter writer)
+    {
+        var bindings = new RedDotBindingGroup();
+        bindings.Add(GameEntry.Event.Subscribe(
+            MailEvents.SystemUnreadChanged,
+            () => writer.SetCount(
+                RedDotIds.Mail.SystemUnread,
+                _model.UnreadSystemCount)));
+        bindings.Add(GameEntry.Event.Subscribe(
+            MailEvents.FriendUnreadChanged,
+            () => writer.SetCount(
+                RedDotIds.Mail.FriendUnread,
+                _model.UnreadFriendCount)));
+        return bindings;
+    }
+}
+```
+
+Coordinator 会自动调用 `Bind`，并提供只允许写 `OwnedSignalIds` 的模块作用域 `IRedDotWriter`；越权写其他模块
+Signal 会立即抛错。Dispose Coordinator 时会先统一解绑，再把该会话 Provider 标记为 NotReady 并清零其 Signal。
+
+一个事件影响多个已知 Signal 时使用 `writer.BeginBatch()`；模块完整数据被替换、不确定具体变化项时，在 Provider
+监听中调用 `writer.RefreshSnapshot()` 重新收集自身完整快照。不需要事件监听的低频模块只实现
+`IRedDotProvider`，由组合根按需调用 `coordinator.Refresh(owner)` 即可。
+
+简单接线也可以由模块投影层直接增量校准绝对值：
 
 ```csharp
 GameEntry.RedDots.SetCount(RedDotIds.Mail.SystemUnread, model.UnreadSystemCount);
 ```
 
-完整业务数据优先使用 `SetCount`；只有事件绝对可靠时才使用 `AddCount`。
+但直接 `GameEntry.RedDots.SetCount` 不带 Provider 所有权校验，大型模块优先使用响应式 Provider 获得作用域写权限。
+完整业务数据优先使用绝对值；只有事件绝对可靠时才使用 `AddCount`。
 
 ## 弱提示确认
 
