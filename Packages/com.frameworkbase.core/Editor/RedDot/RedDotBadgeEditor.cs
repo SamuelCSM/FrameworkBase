@@ -14,6 +14,7 @@ namespace Framework.Editor.RedDot
         private SerializedProperty _countText;
         private SerializedProperty _displayMode;
         private SerializedProperty _maxDisplayCount;
+        private SerializedProperty _styleVariants;
 
         private void OnEnable()
         {
@@ -23,6 +24,7 @@ namespace Framework.Editor.RedDot
             _countText = serializedObject.FindProperty("_countText");
             _displayMode = serializedObject.FindProperty("_displayMode");
             _maxDisplayCount = serializedObject.FindProperty("_maxDisplayCount");
+            _styleVariants = serializedObject.FindProperty("_styleVariants");
         }
 
         public override void OnInspectorGUI()
@@ -91,6 +93,7 @@ namespace Framework.Editor.RedDot
             EditorGUILayout.PropertyField(_countText);
             EditorGUILayout.PropertyField(_displayMode);
             EditorGUILayout.PropertyField(_maxDisplayCount);
+            EditorGUILayout.PropertyField(_styleVariants, new GUIContent("Style Variants (图标变体)"), true);
             if (_badgeRoot.objectReferenceValue == (target as RedDotBadge)?.gameObject)
                 EditorGUILayout.HelpBox("Badge Root 不能指向组件自身；隐藏自身会触发 OnDisable 并退订。", MessageType.Error);
             serializedObject.ApplyModifiedProperties();

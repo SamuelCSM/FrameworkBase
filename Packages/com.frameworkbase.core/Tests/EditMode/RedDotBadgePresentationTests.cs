@@ -43,5 +43,18 @@ namespace Framework.Tests
                 RedDotBadgePresentation.ExclamationText,
                 RedDotBadgePresentation.Resolve(3, RedDotBadge.DisplayMode.Exclamation, 99).Text);
         }
+
+        [Test]
+        public void 样式变体仅在可见且样式匹配时激活()
+        {
+            Assert.IsTrue(RedDotBadgePresentation.ShouldShowVariant(
+                true, RedDotBadge.DisplayMode.New, RedDotBadge.DisplayMode.New));
+            Assert.IsFalse(RedDotBadgePresentation.ShouldShowVariant(
+                true, RedDotBadge.DisplayMode.New, RedDotBadge.DisplayMode.Exclamation),
+                "样式不匹配的变体应关闭");
+            Assert.IsFalse(RedDotBadgePresentation.ShouldShowVariant(
+                false, RedDotBadge.DisplayMode.New, RedDotBadge.DisplayMode.New),
+                "不可见时所有变体都关闭");
+        }
     }
 }

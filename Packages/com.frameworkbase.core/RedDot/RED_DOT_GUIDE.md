@@ -202,6 +202,8 @@ RedDotAccountSession.ConfigureServerSync(new MyServerSeenBackend());
 - 自动回显 Key、说明、类型和聚合方式；
 - 展示样式 `DotOnly`/`Number`/`New`/`Exclamation` 是 UI 表现，不进入逻辑配置，同一 ID 可按不同样式呈现；
   展示解析收口在纯函数 `RedDotBadgePresentation`；
+- 可选 `Style Variants` 配置一组"样式→美术根"，可见时只激活与当前样式匹配的根、其余关闭，用于小红点 /
+  NEW 角标 / 感叹号图标等美术变体切换；留空则仅用 Badge Root + 文本表现；
 - 旧 `_path` 会保留在 `_legacyPath`，同 Key 时 Inspector 可一键迁移。
 
 代码构建 UI 可调用：
@@ -222,6 +224,20 @@ var path = GameEntry.RedDots.GetActivePath(RedDotIds.Main.Root);
 ```
 
 诊断命令：`reddot path <ID|Key>` 直接打印这条路径。
+
+更进一步，用 `RedDotNavigator` 把路径接到实际跳转：按节点注册处理器，一次 `Navigate` 沿路径逐级触发。
+
+```csharp
+var navigator = new RedDotNavigator(GameEntry.RedDots);
+navigator.Register(RedDotIds.Main.Mail, () => GameEntry.UI.OpenUI<MailWindow>().Forget());
+navigator.Register(RedDotIds.Mail.SystemUnread, () => mailWindow.SelectTab(MailTab.System));
+
+// 点击主界面邮件入口红点：先打开邮件页，再切到未读页签
+navigator.Navigate(RedDotIds.Main.MailEntry);
+```
+
+处理器只负责"打开对应页面/切到对应页签"，路径解析交给服务；不在路径上的节点不会被触发，单个处理器
+异常隔离上报、不阻断其余跳转。
 
 ## 帧末合并（性能）
 

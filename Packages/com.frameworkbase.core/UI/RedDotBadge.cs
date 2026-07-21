@@ -24,6 +24,17 @@ namespace Framework
             Exclamation = 3,
         }
 
+        /// <summary>一个样式对应的美术根变体：当前样式匹配且徽标可见时激活，其余关闭。</summary>
+        [Serializable]
+        public struct StyleVariant
+        {
+            [Tooltip("此美术根对应的展示样式")]
+            public DisplayMode style;
+
+            [Tooltip("该样式下激活的美术根（图标变体）；应为 Badge Root 下的子对象")]
+            public GameObject root;
+        }
+
         [Tooltip("稳定红点 ID；可直接粘贴，Editor 会回显 Key/描述并提供搜索。0 表示未配置")]
         [SerializeField] private int _redDotId;
 
@@ -44,6 +55,10 @@ namespace Framework
 
         [Tooltip("计数显示封顶：超过显示为「上限+」，0 或负值表示不封顶")]
         [SerializeField] private int _maxDisplayCount = 99;
+
+        [Tooltip("可选：按样式切换的美术根变体（图标变体）。配置后可见时只激活与当前样式匹配的根、其余关闭；" +
+                 "留空则仅用 Badge Root + 文本表现。这些根应是 Badge Root 下的子对象")]
+        [SerializeField] private StyleVariant[] _styleVariants;
 
         private IDisposable _subscription;
 
@@ -97,8 +112,23 @@ namespace Framework
             if (_badgeRoot.activeSelf != display.Visible)
                 _badgeRoot.SetActive(display.Visible);
 
+            ApplyStyleVariants(display.Visible);
+
             if (_countText != null && display.Visible)
                 _countText.text = display.Text;
+        }
+
+        /// <summary>可见时只激活与当前样式匹配的美术根变体，其余关闭；未配置变体则跳过。</summary>
+        private void ApplyStyleVariants(bool visible)
+        {
+            if (_styleVariants == null) return;
+            for (int i = 0; i < _styleVariants.Length; i++)
+            {
+                GameObject root = _styleVariants[i].root;
+                if (root == null) continue;
+                bool active = RedDotBadgePresentation.ShouldShowVariant(visible, _styleVariants[i].style, _displayMode);
+                if (root.activeSelf != active) root.SetActive(active);
+            }
         }
 
         /// <summary>代码构建 UI 时配置绑定；激活状态下会立即重订阅。</summary>

@@ -55,5 +55,13 @@ namespace Framework
                     return new RedDotBadgeDisplay(true, string.Empty);
             }
         }
+
+        /// <summary>
+        /// 某美术根变体是否应激活：仅当徽标可见且该变体样式与当前展示样式一致。用于按样式在多个
+        /// 图标变体（如小红点 / NEW 角标 / 感叹号图标）之间切换，其余变体一律关闭。
+        /// </summary>
+        public static bool ShouldShowVariant(
+            bool visible, RedDotBadge.DisplayMode variantStyle, RedDotBadge.DisplayMode currentStyle)
+            => visible && variantStyle == currentStyle;
     }
 }

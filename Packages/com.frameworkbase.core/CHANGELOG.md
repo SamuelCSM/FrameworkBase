@@ -7,6 +7,13 @@
 
 ### 新增
 
+- **红点亮起路径导航器 `RedDotNavigator`**（把 `GetActivePath` 接成"点击入口红点→逐级跳转到点亮来源"）：
+  按节点注册跳转处理器（打开页面/切页签），`Navigate(entryId)` 沿亮起路径从入口到来源依次触发命中的
+  处理器；入口未点亮返回 0，单个处理器异常隔离上报不阻断其余跳转。纯逻辑无 Unity 依赖，EditMode 用例 5 个。
+- **红点徽标图标变体 `RedDotBadge.StyleVariant`**（按样式切换美术根）：可配置一组"样式→美术根"，徽标可见时
+  只激活与当前 `DisplayMode` 匹配的根、其余关闭，支持小红点 / NEW 角标 / 感叹号图标等美术变体切换。
+  切换判定收口到纯函数 `RedDotBadgePresentation.ShouldShowVariant`；未配置变体则保持原有 Badge Root + 文本
+  表现。Inspector 已暴露该字段。
 - **ServerAccount 已看同步 `IRedDotSeenSyncBackend` + `RedDotServerSeenSync`**（多端红点一致性的框架级闭环）：
   抽象出业务实现的拉取/上报后端，框架负责"取 max 版本"冲突合并与拉取/回推编排——登录拉取并合并、
   本地领先时回推、会话内 `Acknowledge` 触发去抖上报、登出前捕获快照最终回推。协议、鉴权、重试仍由
