@@ -24,7 +24,8 @@ namespace Framework
     /// 中间层红点模块（ADR-008）：持有全局红点 <see cref="RedDotService"/>，负责目录初始化、账号已看版本的
     /// 加载/回推与帧末合并结算。红点目录 <see cref="RedDotCatalog"/> 由 L3 从 ConfigData 构建后经构造注入；
     /// 账号会话委托静态 <see cref="RedDotAccountSession"/>。红点不依赖 Rule/Trigger/Action 编排，故无需参与
-    /// 编排冻结。构造即创建服务并发布 <see cref="RedDots.Service"/>，使 UI 徽标可在目录初始化前先行订阅。
+    /// 编排冻结。访问点 <see cref="RedDots.Service"/> 在 Phase 1 发布——早于任何业务，使 UI 徽标可在目录
+    /// 初始化前先行订阅，同时避免"构造对象即产生全局副作用"（两个实例静默互踩、测试间串状态）。
     /// </summary>
     public sealed class RedDotModule : FrameworkModuleBase
     {
@@ -36,8 +37,8 @@ namespace Framework
         private bool _frameCoalescingEnabled;
 
         /// <summary>
-        /// 构造即创建空的 <see cref="RedDotService"/> 并发布访问点，让 UI 能在目录初始化前先订阅
-        /// （RedDotService 允许未初始化订阅，初始化后保持绑定）。
+        /// 构造只创建空的 <see cref="RedDotService"/>，<b>不</b>发布访问点——发布是全局副作用，须发生在
+        /// 明确的生命周期阶段（见 <see cref="RegisterCapabilities"/>），否则 new 一个实例就会顶掉当前实例。
         /// </summary>
         /// <param name="catalogProvider">红点目录提供者（L3 从 ConfigData 构建；延迟到 StartAsync 求值）。</param>
         public RedDotModule(Func<RedDotCatalog> catalogProvider)
@@ -52,6 +53,14 @@ namespace Framework
                     if (ex != null) Debug.LogException(ex);
                 },
             };
+        }
+
+        /// <summary>
+        /// Phase 1：发布访问点。红点无编排能力要注册，此阶段只做发布——早于业务入口，
+        /// UI 徽标可在目录初始化前先订阅（RedDotService 允许未初始化订阅，初始化后保持绑定）。
+        /// </summary>
+        public override void RegisterCapabilities()
+        {
             RedDots.Service = _service;
         }
 

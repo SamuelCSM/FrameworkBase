@@ -108,9 +108,11 @@ namespace Framework
                 });
         }
 
+        /// <summary>释放引导运行器与挖孔表现，并清空访问点。</summary>
         public override void Dispose()
         {
-            Guides.Runner = null;
+            // 只在访问点仍指向本模块的运行器时才清空：另一实例已接管时不得把它的运行器抹掉。
+            if (ReferenceEquals(Guides.Runner, _runner)) Guides.Runner = null;
             _runner?.Dispose();
             _presentation?.Dispose();
             _runner = null;
