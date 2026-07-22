@@ -95,9 +95,11 @@ namespace HotUpdate.Clicker
             await ClickerGameDataManager.InitializeAsync(loginResult.UserId);
             ClickerModel model = ClickerGameDataManager.Model;
 
-            if (GameEntry.RedDots != null && GameEntry.RedDots.IsInitialized)
+            // 红点服务改由中间层 RedDotModule 发布（ADR-008），经 Framework.RedDots.Service 访问。
+            var redDots = Framework.RedDots.Service;
+            if (redDots != null && redDots.IsInitialized)
             {
-                _redDotCoordinator = new RedDotCoordinator(GameEntry.RedDots);
+                _redDotCoordinator = new RedDotCoordinator(redDots);
                 _redDotCoordinator.Register(new ClickerRedDotProvider());
                 _redDotCoordinator.RebuildAll();
             }

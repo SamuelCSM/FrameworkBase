@@ -118,7 +118,8 @@ namespace Framework.Diagnostics
                     requiredAccess: CommandAccessLevel.Privileged),
                 args =>
                 {
-                    var service = Core.GameEntry.RedDots;
+                    // 红点服务由中间层 RedDotModule 发布（ADR-008）；ADR-008 步骤3b 搬 asmdef 后本命令将随红点下沉到模块。
+                    var service = Framework.RedDots.Service;
                     if (service == null || !service.IsInitialized)
                         return CommandResult.Ok("红点目录未初始化。");
 

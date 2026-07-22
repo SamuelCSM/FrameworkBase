@@ -5,7 +5,7 @@ using UnityEngine.Serialization;
 namespace Framework
 {
     /// <summary>
-    /// 红点徽标绑定组件：挂在 UI 节点上，把 <c>GameEntry.RedDots</c> 共享红点 DAG 的稳定 ID
+    /// 红点徽标绑定组件：挂在 UI 节点上，把 <c>RedDots.Service</c> 共享红点 DAG 的稳定 ID
     /// 绑定到徽标显隐（计数 &gt; 0 显示）与可选的计数文本。
     /// <para>
     /// OnEnable 订阅、OnDisable 退订——窗口关闭 / 对象池回收自然解绑，不漏订阅；
@@ -79,10 +79,11 @@ namespace Framework
                 return;
             }
 
-            var tree = Core.GameEntry.RedDots;
+            // 红点服务由中间层 RedDotModule 持有并发布（ADR-008）；模块未安装/未创建时为 null。
+            var tree = RedDots.Service;
             if (tree == null)
             {
-                // 框架未初始化（如预制体单测场景）：保持隐藏，不订阅
+                // 红点模块尚未安装（如预制体单测场景、登录期尚未进入业务）：保持隐藏，不订阅。
                 Apply(0);
                 return;
             }

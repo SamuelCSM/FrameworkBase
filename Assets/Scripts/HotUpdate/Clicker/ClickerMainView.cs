@@ -80,9 +80,11 @@ namespace HotUpdate.Clicker
         private async UniTask OpenShopAsync()
         {
             ClickerShopWindow window = await GameEntry.UI.OpenUIAsync<ClickerShopWindow>();
-            if (window != null && GameEntry.RedDots != null && GameEntry.RedDots.IsInitialized)
+            // 红点服务改由中间层 RedDotModule 发布（ADR-008），经 Framework.RedDots.Service 访问。
+            var redDots = Framework.RedDots.Service;
+            if (window != null && redDots != null && redDots.IsInitialized)
             {
-                GameEntry.RedDots.Acknowledge(
+                redDots.Acknowledge(
                     RedDotIds.Clicker.NewShop,
                     Framework.Foundation.RedDotAcknowledgeTrigger.Expose);
             }

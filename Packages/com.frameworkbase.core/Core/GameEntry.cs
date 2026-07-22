@@ -133,13 +133,6 @@ namespace Framework.Core
         /// </summary>
         public static Framework.Diagnostics.CommandRegistry Commands { get; private set; }
 
-        /// <summary>
-        /// 配置驱动的共享红点 DAG — 业务只写稳定 ID 对应的 Signal，Aggregate 按目录关系自动聚合。
-        /// UI 挂 <see cref="RedDotBadge"/> 或代码 Subscribe 绑定 ID；账号切换时框架统一清运行态并加载
-        /// LocalAccount 已看版本。独立玩法仍可自建局部 <see cref="Framework.Foundation.RedDotTree"/>。
-        /// </summary>
-        public static Framework.Foundation.RedDotService RedDots { get; private set; }
-
         /// <summary>通用无副作用条件求值服务；业务模块只注册领域叶子 Evaluator。</summary>
         public static Framework.Foundation.RuleService Rules { get; private set; }
 
@@ -172,18 +165,9 @@ namespace Framework.Core
             Commands.SetGrantedAccess(Framework.Diagnostics.CommandAccessLevel.Development);
 #endif
 
-            // 框架只创建空服务，不持有业务拓扑。UI 可在目录安装前先订阅；热更业务侧在配置库就绪后
-            // 从标准 ConfigData 五张表组装目录，内容事务保证配置与引用它的代码处于同一发行版本。
-            // 订阅者异常送日志诊断，单个 UI 回调不会中断其它订阅者。
-            RedDots = new Framework.Foundation.RedDotService
-            {
-                ObserverErrorSink = ex =>
-                {
-                    Debug.LogError("[GameEntry] 红点订阅者异常（已隔离）");
-                    Debug.LogException(ex);
-                },
-            };
-
+            // 框架只创建空的通用编排服务，不持有业务拓扑；热更业务在配置库就绪后组装目录并冻结。
+            // 红点/引导等框架自带业务模块由中间层宿主（Modules）承接，不再挂在 GameEntry 上（ADR-008）。
+            // 订阅者/执行器异常统一送日志诊断，单个回调不会中断其它订阅者。
             Rules = new Framework.Foundation.RuleService
             {
                 ObserverErrorSink = ex => LogOrchestrationError("Rule", ex),
@@ -404,8 +388,6 @@ namespace Framework.Core
             // 账号进入（ADR-008）：宿主在业务入口前有序 await 各模块的账号级加载（如红点已看版本），
             // 避免先亮后灭。引导等模块此钩子为空实现。
             await Modules.OnAccountEnterAsync(cancellationToken);
-            // TODO(ADR-008 步骤3a)：下面这行红点账号加载将迁入 RedDotModule.OnAccountEnterAsync 后删除。
-            await Framework.RedDot.RedDotAccountSession.BeginAsync(RedDots);
             cancellationToken.ThrowIfCancellationRequested();
             if (OnBusinessEntryAsync != null)
                 await OnBusinessEntryAsync(loginResult);
@@ -489,12 +471,9 @@ namespace Framework.Core
             }
             finally
             {
-                // 账号退出（ADR-008）：身份清除前驱动各模块收尾。引导等模块此钩子为空实现。
+                // 账号退出（ADR-008）：身份清除前驱动各模块收尾——此时 SaveManager 仍指向旧账号目录，
+                // RedDotModule.OnAccountExit 在此落盘已看版本并回推；AppFlow 随后才 ClearLoggedInIdentity 切回 guest。
                 Modules?.OnAccountExit();
-                // 此时 SaveManager 仍指向旧账号目录：先异步触发已看版本落盘，再清运行态；
-                // AppFlow 随后才调用 ClearLoggedInIdentity 切回 guest。
-                // TODO(ADR-008 步骤3a)：下面这行红点收尾将迁入 RedDotModule.OnAccountExit 后删除。
-                Framework.RedDot.RedDotAccountSession.End(RedDots);
             }
         }
 
@@ -721,18 +700,9 @@ namespace Framework.Core
                 catch (Exception ex) { LogComponentError("OnLateUpdate", _components[i], ex); }
             }
 
-            // 中间层模块帧末回调（ADR-008）：如红点在此做帧末合并结算。引导等模块此钩子为空实现。
+            // 中间层模块帧末回调（ADR-008）：红点在此做帧末合并结算（本帧多来源写入合并为一次聚合与
+            // UI 通知），引导等模块为空实现。
             Modules?.BroadcastLateUpdate(dt);
-
-            // TODO(ADR-008 步骤3a)：下面这段红点帧末结算将迁入 RedDotModule.OnLateUpdate 后删除。
-            // 帧末统一结算红点：本帧内多个来源对同一子树的写入合并为一次聚合与 UI 通知，
-            // 避免一帧内重复计算和多次刷新。目录初始化后自动开启合并模式；读接口仍按需即时结算。
-            var redDots = RedDots;
-            if (redDots != null && redDots.IsInitialized)
-            {
-                if (!redDots.IsFrameCoalescingEnabled) redDots.SetFrameCoalescing(true);
-                redDots.FlushPending();
-            }
         }
 
         private void FixedUpdate()
