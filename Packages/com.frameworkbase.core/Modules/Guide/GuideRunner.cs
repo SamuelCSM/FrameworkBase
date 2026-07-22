@@ -98,6 +98,42 @@ namespace Framework
         public event Action<int, string> GuideCancelled;
         public event Action<int, string> GuideFailed;
 
+        /// <summary>读取某条引导的持久化进度（断点步骤 / 是否已完成），供 GM 命令与业务查询。</summary>
+        /// <exception cref="KeyNotFoundException">目录中不存在该 GuideId。</exception>
+        public GuideProgress GetProgress(int guideId)
+        {
+            EnsureInitialized();
+            if (!_guides.ContainsKey(guideId))
+                throw new KeyNotFoundException($"Guide ID 不存在：{guideId}。");
+            return _progress.Get(guideId);
+        }
+
+        /// <summary>把配置 Key 解析为 GuideId；GM 命令允许用可读 Key 代替数字 Id。</summary>
+        public bool TryResolveId(string key, out int guideId)
+        {
+            guideId = 0;
+            if (!IsInitialized || string.IsNullOrWhiteSpace(key)) return false;
+            foreach (GuideRuntimeGuide guide in _guides.Values)
+            {
+                if (!string.Equals(guide.Definition.Key, key, StringComparison.Ordinal)) continue;
+                guideId = guide.Definition.Id;
+                return true;
+            }
+            return false;
+        }
+
+        /// <summary>把某条引导标记为已完成（GM 跳过用）。运行中的该条引导须先取消。</summary>
+        /// <exception cref="InvalidOperationException">该引导正在运行。</exception>
+        public void MarkCompleted(int guideId)
+        {
+            EnsureInitialized();
+            if (!_guides.ContainsKey(guideId))
+                throw new KeyNotFoundException($"Guide ID 不存在：{guideId}。");
+            if (_active?.Guide.Definition.Id == guideId)
+                throw new InvalidOperationException("运行中的引导不能直接标记完成，请先 CancelAsync。");
+            _progress.MarkCompleted(guideId);
+        }
+
         public void Initialize(GuideCatalog catalog)
         {
             ThrowIfDisposed();

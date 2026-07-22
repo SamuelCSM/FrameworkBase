@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Text;
 using System.Threading;
 using Cysharp.Threading.Tasks;
 using Framework.Core;
@@ -74,39 +75,109 @@ namespace Framework
             return UniTask.CompletedTask;
         }
 
-        /// <summary>注册引导断点调试命令（操作旧 GuideFlow 设备级存档）。幂等：已注册则跳过。</summary>
-        private static void RegisterDebugCommands()
+        /// <summary>
+        /// 注册引导调试命令。幂等：已注册则跳过。
+        /// <para>
+        /// 命令直接操作本模块持有的 <see cref="GuideRunner"/>——即运行器实际读写的那份进度存档。
+        /// 早期版本这里操作的是另一套设备级存档，命令会报"已清"但运行器根本读不到，
+        /// 排障时比没有命令更误导；此后新增操作一律经运行器公开接口，不得再旁路直连存储。
+        /// </para>
+        /// </summary>
+        private void RegisterDebugCommands()
         {
             CommandRegistry registry = GameEntry.Commands;
             if (registry == null || registry.TryGet("guide", out _)) return;
             registry.Register(
-                new CommandInfo("guide", "引导断点调试：查看/重置/跳过某条引导的设备级进度",
-                    usage: "guide <status|reset|skip> <引导id>",
+                new CommandInfo("guide",
+                    "引导调试：list 列全部引导，status/reset/skip 查改进度，cancel 取消当前，start 立即触发",
+                    usage: "guide <list|status|reset|skip|start|cancel> [引导id|Key]",
                     requiredAccess: CommandAccessLevel.Privileged),
                 args =>
                 {
-                    string op = args.GetString(0);
-                    string guideId = args.GetString(1);
-                    IGuideProgressStore store = new PrefsGuideProgressStore();
-                    switch (op.ToLowerInvariant())
+                    GuideRunner runner = _runner;
+                    if (runner == null || !runner.IsInitialized)
+                        return CommandResult.Ok("引导目录未初始化。");
+
+                    string op = (args.GetStringOrDefault(0) ?? "list").ToLowerInvariant();
+                    if (op == "list") return ListGuides(runner);
+                    if (op == "cancel")
+                    {
+                        if (!runner.IsRunning) return CommandResult.Ok("当前没有引导在运行。");
+                        int running = runner.CurrentGuideId;
+                        runner.CancelAsync("gm_cancel").Forget();
+                        return CommandResult.Ok($"已请求取消运行中的引导 {running}。");
+                    }
+
+                    // 其余操作都要定位到具体引导：允许数字 Id，也允许配置 Key。
+                    string target = args.GetString(1);
+                    if (!int.TryParse(target, out int guideId) && !runner.TryResolveId(target, out guideId))
+                        return CommandResult.Fail($"引导 ID/Key 不存在：{target}");
+
+                    switch (op)
                     {
                         case "status":
-                            if (store.IsCompleted(guideId))
-                                return CommandResult.Ok($"引导 '{guideId}'：已完成");
-                            string stepId = store.GetStepId(guideId);
-                            return CommandResult.Ok(string.IsNullOrEmpty(stepId)
-                                ? $"引导 '{guideId}'：未开始"
-                                : $"引导 '{guideId}'：断点步骤 '{stepId}'（未完成）");
+                        {
+                            GuideProgress progress = runner.GetProgress(guideId);
+                            string state = progress.IsCompleted
+                                ? "已完成"
+                                : progress.CurrentStepId > 0
+                                    ? $"断点步骤 {progress.CurrentStepId}（未完成）"
+                                    : "未开始";
+                            string live = runner.CurrentGuideId == guideId
+                                ? $"；正在运行，当前步骤 {runner.CurrentStepId}"
+                                : string.Empty;
+                            return CommandResult.Ok($"引导 {guideId}：{state}{live}");
+                        }
                         case "reset":
-                            store.Clear(guideId);
-                            return CommandResult.Ok($"引导 '{guideId}' 进度已清（重进流程即从头重播）。");
+                            // 运行中的引导不能直接清档（会与会话状态打架），提示先 cancel。
+                            if (runner.CurrentGuideId == guideId)
+                                return CommandResult.Fail("该引导正在运行，请先 guide cancel。");
+                            runner.ResetProgress(guideId);
+                            return CommandResult.Ok($"引导 {guideId} 进度已清（重新满足条件即从头重播）。");
                         case "skip":
-                            store.MarkCompleted(guideId);
-                            return CommandResult.Ok($"引导 '{guideId}' 已标记完成（不再弹出；运行中的实例不受影响）。");
+                            if (runner.CurrentGuideId == guideId)
+                                return CommandResult.Fail("该引导正在运行，请先 guide cancel。");
+                            runner.MarkCompleted(guideId);
+                            return CommandResult.Ok($"引导 {guideId} 已标记完成（Once 类型不再触发）。");
+                        case "start":
+                            runner.TryStartAsync(guideId).Forget();
+                            return CommandResult.Ok($"已请求启动引导 {guideId}（结果见 GUIDE_* 日志）。");
                         default:
-                            throw new CommandArgumentException($"未知操作 '{op}'，应为 status/reset/skip。");
+                            throw new CommandArgumentException(
+                                $"未知操作 '{op}'，应为 list/status/reset/skip/start/cancel。");
                     }
                 });
+        }
+
+        /// <summary>列出全部引导及其进度，标出正在运行的那条。</summary>
+        private static CommandResult ListGuides(GuideRunner runner)
+        {
+            var text = new StringBuilder(256);
+            text.Append("引导清单（Id [Key] 步骤数 进度）：");
+            GuideDefinition[] guides = runner.Catalog.Guides;
+            for (int i = 0; i < guides.Length; i++)
+            {
+                GuideDefinition definition = guides[i];
+                GuideProgress progress = runner.GetProgress(definition.Id);
+                text.AppendLine().Append("  ").Append(definition.Id)
+                    .Append(" [").Append(definition.Key).Append("] ")
+                    .Append(CountSteps(runner.Catalog, definition.Id)).Append(" 步 ")
+                    .Append(progress.IsCompleted
+                        ? "已完成"
+                        : progress.CurrentStepId > 0 ? $"断点@{progress.CurrentStepId}" : "未开始");
+                if (runner.CurrentGuideId == definition.Id) text.Append("  ← 运行中");
+            }
+            if (guides.Length == 0) text.AppendLine().Append("  （空）");
+            return CommandResult.Ok(text.ToString());
+        }
+
+        /// <summary>统计某条引导的步骤数（目录是扁平表，此处按 GuideId 计数）。</summary>
+        private static int CountSteps(GuideCatalog catalog, int guideId)
+        {
+            int count = 0;
+            for (int i = 0; i < catalog.Steps.Length; i++)
+                if (catalog.Steps[i].GuideId == guideId) count++;
+            return count;
         }
 
         /// <summary>释放引导运行器与挖孔表现，并清空访问点。</summary>

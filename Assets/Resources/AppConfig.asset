@@ -29,8 +29,8 @@ MonoBehaviour:
   HotUpdateAssemblyFiles: []
   HotUpdateEntryAssembly: 
   HotUpdateEntryTypeFullName: 
-  UseNetworkLogin: 1
-  AutoGuestLogin: 0
+  UseNetworkLogin: 0
+  AutoGuestLogin: 1
   GameServerHost: 127.0.0.1
   GameServerPort: 9000
   NetworkTimeoutSeconds: 30
