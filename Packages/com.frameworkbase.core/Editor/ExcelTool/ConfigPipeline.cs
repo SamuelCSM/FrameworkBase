@@ -3,9 +3,6 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using Editor.ExcelTool;
-using Framework.Editor.Guide;
-using Framework.Editor.RedDot;
-using Framework.Editor.UI;
 using UnityEditor;
 using UnityEngine;
 
@@ -94,30 +91,15 @@ namespace Framework.Editor
                 }
             }
 
-            // 红点仍需要标准表生成之外的跨表 DAG 校验与稳定 ID 常量；把它纳入同一导出入口，
-            // 避免只更新 config.db 却遗漏 RedDotIds.g.cs。
-            if (File.Exists(RedDotConfigCompiler.WorkbookPath))
+            // 标准表生成之外，各模块/能力还需跨表校验与稳定 ID 常量生成（红点 DAG、窗口号段、引导拓扑）。
+            // 经 IConfigArtifactExporter 解耦：TypeCache 发现全部实现、按 Order 执行，管线不静态引用任何
+            // 具体编译器——新增带配置的模块只要实现该接口即自动纳入导出（ADR-008 形态 C）。
+            foreach (IConfigArtifactExporter artifactExporter in DiscoverExporters())
             {
-                if (!RedDotConfigCompiler.TryCompile(out Framework.Foundation.RedDotCatalog redDotCatalog,
-                        out string redDotReport))
-                    throw new InvalidOperationException("[ConfigPipeline] 红点跨表校验失败：\n" + redDotReport);
-                RedDotConfigCompiler.WriteArtifacts(redDotCatalog);
-            }
-
-            if (File.Exists(UIWindowConfigCompiler.WorkbookPath))
-            {
-                if (!UIWindowConfigCompiler.TryCompile(out Framework.UIWindowCatalog uiWindowCatalog,
-                        out string uiWindowReport))
-                    throw new InvalidOperationException("[ConfigPipeline] 窗口跨表校验失败：\n" + uiWindowReport);
-                UIWindowConfigCompiler.WriteArtifacts(uiWindowCatalog);
-            }
-
-            if (File.Exists(GuideConfigCompiler.WorkbookPath))
-            {
-                if (!GuideConfigCompiler.TryCompile(out GuideConfigCompilation guideCompilation,
-                        out string guideReport))
-                    throw new InvalidOperationException("[ConfigPipeline] 引导跨表校验失败：\n" + guideReport);
-                GuideConfigCompiler.WriteArtifacts(guideCompilation);
+                if (!artifactExporter.Export(out string exporterReport))
+                    throw new InvalidOperationException(
+                        $"[ConfigPipeline] {artifactExporter.DisplayName}跨表校验失败：\n{exporterReport}");
+                Debug.Log($"[ConfigPipeline] {artifactExporter.DisplayName}产物已导出。{exporterReport}");
             }
 
             // ── 2. 数据导出（校验开启；首包 + 热更双目标；孤儿表清理保持库与 Excel 目录一致）──
@@ -144,6 +126,22 @@ namespace Framework.Editor
                              string.Join("\n", results.Select(r => $"  {r.TableName}: {r.RowCount} 行"));
             Debug.Log($"[ConfigPipeline] {summary}");
             return summary;
+        }
+
+        /// <summary>
+        /// 用 TypeCache 发现所有 <see cref="IConfigArtifactExporter"/> 实现并按 Order 升序返回。
+        /// TypeCache 由 Unity 编译期建索引，无运行时反射开销；管线借此与具体编译器彻底解耦。
+        /// </summary>
+        private static List<IConfigArtifactExporter> DiscoverExporters()
+        {
+            var list = new List<IConfigArtifactExporter>();
+            foreach (Type type in TypeCache.GetTypesDerivedFrom<IConfigArtifactExporter>())
+            {
+                if (type.IsAbstract || type.IsInterface) continue;
+                list.Add((IConfigArtifactExporter)Activator.CreateInstance(type));
+            }
+            list.Sort((a, b) => a.Order.CompareTo(b.Order));
+            return list;
         }
 
         /// <summary>写生成代码到目标路径（general 表无 Table 类，路径可为空）。</summary>
