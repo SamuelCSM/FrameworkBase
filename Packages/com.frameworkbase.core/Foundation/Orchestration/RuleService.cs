@@ -357,30 +357,47 @@ namespace Framework.Foundation
             }
         }
 
+        /// <summary>
+        /// All：任一子节点 Failed/Error 即短路返回；否则若有 NotReady 则整体 NotReady。
+        /// NotReady 保留<b>首个</b>而非最后一个——子节点按 Order 稳定排序，取首个才能让诊断 reason
+        /// 确定地指向"最先未就绪的那个条件"，否则同样的配置每次报的原因可能不同。
+        /// </summary>
         private RuleResult EvaluateAll(Node node, RuleContext context)
         {
             RuleResult deferred = RuleResult.Passed();
+            bool hasDeferred = false;
             for (int i = 0; i < node.Children.Count; i++)
             {
                 RuleResult current = EvaluateNode(node.Children[i].Node, context);
                 if (current.Status == RuleStatus.Failed || current.Status == RuleStatus.Error)
                     return current;
-                if (current.Status == RuleStatus.NotReady)
+                if (current.Status == RuleStatus.NotReady && !hasDeferred)
+                {
                     deferred = current;
+                    hasDeferred = true;
+                }
             }
             return deferred;
         }
 
+        /// <summary>
+        /// Any：任一子节点 Passed 即短路返回，Error 同样短路（不确定的结果不应被其它分支掩盖）；
+        /// 全部不通过时，若存在 NotReady 则整体 NotReady，同样保留首个以保证诊断可复现。
+        /// </summary>
         private RuleResult EvaluateAny(Node node, RuleContext context)
         {
             RuleResult deferred = RuleResult.Failed();
+            bool hasDeferred = false;
             for (int i = 0; i < node.Children.Count; i++)
             {
                 RuleResult current = EvaluateNode(node.Children[i].Node, context);
                 if (current.Status == RuleStatus.Passed) return current;
                 if (current.Status == RuleStatus.Error) return current;
-                if (current.Status == RuleStatus.NotReady)
+                if (current.Status == RuleStatus.NotReady && !hasDeferred)
+                {
                     deferred = current;
+                    hasDeferred = true;
+                }
             }
             return deferred;
         }

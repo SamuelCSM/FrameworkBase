@@ -9,14 +9,21 @@ namespace Framework.Tests
 {
     public class OrchestrationServiceTests
     {
-        private sealed class BoolPayload { public bool Value; public bool NotReady; public bool Throw; }
+        private sealed class BoolPayload
+        {
+            public bool Value;
+            public bool NotReady;
+            public bool Throw;
+            /// <summary>写进 NotReady 的 reason，用来区分是哪个子节点未就绪。</summary>
+            public string Tag;
+        }
 
         private sealed class BoolRule : IRuleEvaluator<BoolPayload>
         {
             public RuleResult Evaluate(BoolPayload payload, RuleContext context)
             {
                 if (payload.Throw) throw new InvalidOperationException("rule boom");
-                if (payload.NotReady) return RuleResult.NotReady("loading");
+                if (payload.NotReady) return RuleResult.NotReady(payload.Tag ?? "loading");
                 return payload.Value ? RuleResult.Passed() : RuleResult.Failed("false");
             }
         }
@@ -123,6 +130,50 @@ namespace Framework.Tests
             Assert.AreEqual(RuleStatus.NotReady, rules.Evaluate(1).Status);
             Assert.AreEqual(RuleStatus.Error, rules.Evaluate(2).Status);
             Assert.AreEqual(1, errors.Count);
+        }
+
+        [Test]
+        public void 多个NotReady子节点时保留首个原因()
+        {
+            var rules = new RuleService();
+            rules.Register(1, new BoolRule());
+            rules.Initialize(new RuleCatalog
+            {
+                Rules = new[]
+                {
+                    new RuleDefinition { Id = 1, Key = "all", RootNodeId = 10 },
+                    new RuleDefinition { Id = 2, Key = "any", RootNodeId = 20 },
+                },
+                Nodes = new[]
+                {
+                    new RuleNodeDefinition { Id = 10, RuleId = 1, Kind = RuleNodeKind.All },
+                    new RuleNodeDefinition { Id = 11, RuleId = 1, Kind = RuleNodeKind.Predicate, TypeId = 1,
+                        Payload = new BoolPayload { NotReady = true, Tag = "first" } },
+                    new RuleNodeDefinition { Id = 12, RuleId = 1, Kind = RuleNodeKind.Predicate, TypeId = 1,
+                        Payload = new BoolPayload { NotReady = true, Tag = "second" } },
+                    new RuleNodeDefinition { Id = 20, RuleId = 2, Kind = RuleNodeKind.Any },
+                    new RuleNodeDefinition { Id = 21, RuleId = 2, Kind = RuleNodeKind.Predicate, TypeId = 1,
+                        Payload = new BoolPayload { NotReady = true, Tag = "first" } },
+                    new RuleNodeDefinition { Id = 22, RuleId = 2, Kind = RuleNodeKind.Predicate, TypeId = 1,
+                        Payload = new BoolPayload { NotReady = true, Tag = "second" } },
+                },
+                Edges = new[]
+                {
+                    new RuleEdgeDefinition { ParentNodeId = 10, ChildNodeId = 11, Order = 1 },
+                    new RuleEdgeDefinition { ParentNodeId = 10, ChildNodeId = 12, Order = 2 },
+                    new RuleEdgeDefinition { ParentNodeId = 20, ChildNodeId = 21, Order = 1 },
+                    new RuleEdgeDefinition { ParentNodeId = 20, ChildNodeId = 22, Order = 2 },
+                },
+            });
+
+            // 子节点按 Order 稳定排序，诊断 reason 须确定地指向最先未就绪的那个条件。
+            RuleResult all = rules.Evaluate(1);
+            Assert.AreEqual(RuleStatus.NotReady, all.Status);
+            Assert.AreEqual("first", all.Reason);
+
+            RuleResult any = rules.Evaluate(2);
+            Assert.AreEqual(RuleStatus.NotReady, any.Status);
+            Assert.AreEqual("first", any.Reason);
         }
 
         [Test]
