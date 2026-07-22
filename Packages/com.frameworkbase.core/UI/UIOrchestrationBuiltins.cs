@@ -5,7 +5,15 @@ using Framework.Foundation;
 
 namespace Framework
 {
-    /// <summary>框架内置编排能力的稳定 TypeId；具体配置实例仍使用各自 Rule/Trigger/Action Id。</summary>
+    /// <summary>
+    /// 框架内置（L1）编排能力的稳定 TypeId；具体配置实例仍使用各自 Rule/Trigger/Action Id。
+    /// <para>
+    /// 号段规约（与协议主号、广播消息枚举同构）：Rule 千位 1、Trigger 千位 2、Action 千位 3；
+    /// 每类内 <b>x001-x099 为 L1 框架段</b>（只放 UI/时间等中立能力，不得出现业务概念），
+    /// <b>x100-x199 为 L2 中间层模块段</b>（各模块在自己的程序集内定义，如
+    /// <see cref="GuideOrchestrationTypeIds"/>），<b>x200 起为 L3 项目业务段</b>。
+    /// </para>
+    /// </summary>
     public static class BuiltinOrchestrationTypeIds
     {
         public static class Rules
@@ -26,8 +34,7 @@ namespace Framework
             public const int UIOpenWindow = 3001;
             public const int UICloseWindow = 3002;
             public const int Delay = 3003;
-            public const int GuideFocusTarget = 3004;
-            public const int GuideClearFocus = 3005;
+            // 3004/3005 由引导模块占用（GuideOrchestrationTypeIds），号段规约建立前的历史占位，勿复用。
         }
     }
 
@@ -77,18 +84,8 @@ namespace Framework
         public bool Destroy;
     }
 
-    [Serializable]
-    public sealed class GuideFocusTargetActionPayload
-    {
-        public int TargetId;
-        public float Padding = 8f;
-        public float DimAlpha = 0.6f;
-    }
-
-    [Serializable]
-    public sealed class GuideClearFocusActionPayload
-    {
-    }
+    // 引导挖孔的 TypeId 与 Payload 已随其 Executor 一并下沉到 Framework.Modules 的
+    // GuideOrchestrationTypeIds（ADR-008：L1 号段表不承载业务概念）。
 
     /// <summary>把只依赖框架 UI/时间能力的内置积木注册到通用服务；必须早于 Catalog.Initialize。</summary>
     public static class UIOrchestrationBuiltins

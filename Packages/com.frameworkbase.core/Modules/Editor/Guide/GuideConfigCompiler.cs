@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
@@ -485,8 +485,8 @@ namespace Framework.Editor.Guide
                 BuiltinOrchestrationTypeIds.Actions.UIOpenWindow,
                 BuiltinOrchestrationTypeIds.Actions.UICloseWindow,
                 BuiltinOrchestrationTypeIds.Actions.Delay,
-                BuiltinOrchestrationTypeIds.Actions.GuideFocusTarget,
-                BuiltinOrchestrationTypeIds.Actions.GuideClearFocus,
+                GuideOrchestrationTypeIds.FocusTargetAction,
+                GuideOrchestrationTypeIds.ClearFocusAction,
             };
             return new ActionCatalog
             {
@@ -602,14 +602,14 @@ namespace Framework.Editor.Guide
             service.Register(BuiltinOrchestrationTypeIds.Actions.UIOpenWindow, new EmptyAction<UIOpenWindowActionPayload>());
             service.Register(BuiltinOrchestrationTypeIds.Actions.UICloseWindow, new EmptyAction<UICloseWindowActionPayload>());
             service.Register(BuiltinOrchestrationTypeIds.Actions.Delay, new EmptyAction<DelayPayload>());
-            service.Register(BuiltinOrchestrationTypeIds.Actions.GuideFocusTarget, new EmptyAction<GuideFocusTargetActionPayload>());
-            service.Register(BuiltinOrchestrationTypeIds.Actions.GuideClearFocus, new EmptyAction<GuideClearFocusActionPayload>());
+            service.Register(GuideOrchestrationTypeIds.FocusTargetAction, new EmptyAction<GuideFocusTargetActionPayload>());
+            service.Register(GuideOrchestrationTypeIds.ClearFocusAction, new EmptyAction<GuideClearFocusActionPayload>());
             foreach (int typeId in catalog.Actions.Select(value => value.TypeId).Distinct())
                 if (typeId != BuiltinOrchestrationTypeIds.Actions.UIOpenWindow
                     && typeId != BuiltinOrchestrationTypeIds.Actions.UICloseWindow
                     && typeId != BuiltinOrchestrationTypeIds.Actions.Delay
-                    && typeId != BuiltinOrchestrationTypeIds.Actions.GuideFocusTarget
-                    && typeId != BuiltinOrchestrationTypeIds.Actions.GuideClearFocus)
+                    && typeId != GuideOrchestrationTypeIds.FocusTargetAction
+                    && typeId != GuideOrchestrationTypeIds.ClearFocusAction)
                     service.Register(typeId, new EmptyAction<OrchestrationPayloadReference>());
         }
 

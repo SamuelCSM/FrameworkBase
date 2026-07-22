@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using Framework;
@@ -282,7 +282,7 @@ namespace HotUpdate.Guide
                     ActionDelayPayloadRef row = Require(delays, id, "Action Delay Payload");
                     return new DelayPayload { Milliseconds = row.Milliseconds, IgnoreTimeScale = row.IgnoreTimeScale };
                 },
-                [BuiltinOrchestrationTypeIds.Actions.GuideFocusTarget] = id =>
+                [GuideOrchestrationTypeIds.FocusTargetAction] = id =>
                 {
                     ActionGuideFocusPayloadRef row = Require(focuses, id, "Action GuideFocus Payload");
                     return new GuideFocusTargetActionPayload
@@ -290,7 +290,7 @@ namespace HotUpdate.Guide
                         TargetId = row.TargetId, Padding = row.Padding, DimAlpha = row.DimAlpha,
                     };
                 },
-                [BuiltinOrchestrationTypeIds.Actions.GuideClearFocus] = id =>
+                [GuideOrchestrationTypeIds.ClearFocusAction] = id =>
                 {
                     // 清除遮罩无参：仍要求存在对应 payload 行以校验 PayloadId 引用完整。
                     Require(clears, id, "Action GuideClearFocus Payload");

@@ -40,10 +40,10 @@ namespace Framework
         {
             _presentation = new GuidePresentationService(GameEntry.UI, GameEntry.UiTargets);
             GameEntry.Actions.Register(
-                BuiltinOrchestrationTypeIds.Actions.GuideFocusTarget,
+                GuideOrchestrationTypeIds.FocusTargetAction,
                 new GuideFocusTargetAction(_presentation));
             GameEntry.Actions.Register(
-                BuiltinOrchestrationTypeIds.Actions.GuideClearFocus,
+                GuideOrchestrationTypeIds.ClearFocusAction,
                 new GuideClearFocusAction(_presentation));
         }
 
