@@ -17,8 +17,9 @@ namespace Framework
 
     /// <summary>
     /// 中间层引导模块（ADR-008）：持有 <see cref="GuideRunner"/> 与挖孔表现，注册引导表现 Action，
-    /// 编排 Catalog 冻结后初始化引导目录并开始监听。全局 Rule/Trigger/Action 目录的构建与冻结由 L3 提供
-    /// （见 <see cref="GameEntry.OnFreezeOrchestration"/>）；本模块只消费已冻结的编排服务与自己的 GuideCatalog。
+    /// 编排 Catalog 冻结后初始化引导目录并开始监听。全局 Rule/Trigger/Action 目录的构建与冻结由 L3 的编排
+    /// 装配根负责（见 <see cref="GameEntry.OnFreezeOrchestration"/>），引导挖孔 Action 的 Payload 工厂也由
+    /// L3 的引导 Bootstrap 向它贡献；本模块只注册 Executor，并消费已冻结的编排服务与自己的 GuideCatalog。
     /// </summary>
     public sealed class GuideModule : FrameworkModuleBase
     {

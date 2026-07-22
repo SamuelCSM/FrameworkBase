@@ -368,6 +368,8 @@ namespace Framework.Core
         /// 编排 Catalog 冻结钩子（ADR-008）。L3 在此用配置构建并 Initialize 全局 Rule/Trigger/Action 目录；
         /// 由 <see cref="EnterBusinessSessionAsync"/> 在模块 RegisterCapabilities 之后、StartAsync 之前调用一次，
         /// 确保各模块的能力处理器（如引导表现 Action）已注册完毕再冻结校验。实现须幂等（重复登录会再次调用）。
+        /// <b>赋值语义而非多播</b>：L3 侧必须有且只有一个装配根持有它（参考壳工程的 OrchestrationBootstrap），
+        /// 各模块经该装配根贡献自己的 Payload 工厂，不要各自往这里挂。
         /// </summary>
         public static Action OnFreezeOrchestration { get; set; }
 
