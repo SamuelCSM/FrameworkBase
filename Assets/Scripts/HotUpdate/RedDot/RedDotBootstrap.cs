@@ -43,6 +43,10 @@ namespace HotUpdate.RedDot
             GameEntry.Modules.Use(_module);
         }
 
+        /// <summary>
+        /// 从 ConfigData 五张红点表（模块/节点/边/已看策略/退休）组装运行时 <see cref="RedDotCatalog"/>：
+        /// 节点完整 Key 由「模块 CodeName + 节点 CodeName」派生；各数组按 Id 稳定排序，保证校验与遍历顺序确定。
+        /// </summary>
         private static RedDotCatalog BuildCatalog()
         {
             List<RedDotModuleRef> moduleRows = GameEntry.RefData

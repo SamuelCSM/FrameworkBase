@@ -78,9 +78,13 @@ namespace Framework.Core
     /// </summary>
     public sealed class FrameworkModuleHost
     {
+        /// <summary>按登记顺序保存的模块；两阶段/账号/帧回调正序驱动，Dispose 逆序。</summary>
         private readonly List<IFrameworkModule> _modules = new List<IFrameworkModule>();
+        /// <summary>Phase 1 是否已执行；用于幂等，并禁止 RegisterCapabilities 之后再 Use 新模块。</summary>
         private bool _capabilitiesRegistered;
+        /// <summary>Phase 2 是否已执行；用于幂等（重复登录不重复启动）。</summary>
         private bool _started;
+        /// <summary>宿主是否已释放（DisposeAll 后拒绝再登记/驱动）。</summary>
         private bool _disposed;
 
         /// <summary>模块回调异常出口（默认落 Debug，可由组合根替换为诊断上报）。</summary>

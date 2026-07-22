@@ -22,8 +22,11 @@ namespace Framework
     /// </summary>
     public sealed class GuideModule : FrameworkModuleBase
     {
+        /// <summary>引导私有目录提供者（L3 从 ConfigData 构建，延迟到 StartAsync 求值）。</summary>
         private readonly Func<GuideCatalog> _guideCatalogProvider;
+        /// <summary>配置引导运行器；StartAsync 创建并初始化，Dispose 释放。</summary>
         private GuideRunner _runner;
+        /// <summary>挖孔遮罩表现服务；RegisterCapabilities 创建，供引导表现 Action 与遮罩兜底使用。</summary>
         private GuidePresentationService _presentation;
 
         public GuideModule(Func<GuideCatalog> guideCatalogProvider)

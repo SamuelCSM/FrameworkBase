@@ -28,7 +28,9 @@ namespace Framework
     /// </summary>
     public sealed class RedDotModule : FrameworkModuleBase
     {
+        /// <summary>红点目录提供者（L3 从 ConfigData 构建，延迟到 StartAsync 求值）。</summary>
         private readonly Func<RedDotCatalog> _catalogProvider;
+        /// <summary>全局红点 DAG 服务；构造即创建并发布访问点 RedDots.Service。</summary>
         private readonly RedDotService _service;
         // 帧末合并只需开启一次；目录就绪后的首个 LateUpdate 打开，之后每帧只 FlushPending。
         private bool _frameCoalescingEnabled;
