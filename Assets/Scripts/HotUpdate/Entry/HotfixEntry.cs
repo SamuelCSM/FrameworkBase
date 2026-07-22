@@ -1,5 +1,4 @@
 using HotUpdate.Clicker;
-using HotUpdate.RedDot;
 using UnityEngine;
 
 namespace HotUpdate.Entry
@@ -34,7 +33,7 @@ namespace HotUpdate.Entry
             // 故在此显式装配业务会话钩子（切片 D 接线）。Install 幂等，
             // 配置数据库在 Step 6 已就绪，因此可先从 ConfigData 安装红点目录，再注册业务会话钩子。
             // 离线整包不经过本入口，由 RuntimeInitializeOnLoad 只注册登录前装配钩子。
-            RedDotBootstrap.Install();
+            RuntimeCatalogBootstrap.Install();
             ClickerBootstrap.Install();
         }
     }

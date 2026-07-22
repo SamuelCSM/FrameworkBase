@@ -38,3 +38,78 @@ MonoBehaviour:
   - TableName: red_dot_retired_ref
     Target: 1
     Shape: 0
+  - TableName: ui_window_module_ref
+    Target: 1
+    Shape: 0
+  - TableName: ui_window_ref
+    Target: 1
+    Shape: 0
+  - TableName: ui_target_ref
+    Target: 1
+    Shape: 0
+  - TableName: ui_window_retired_ref
+    Target: 1
+    Shape: 0
+  - TableName: ui_target_retired_ref
+    Target: 1
+    Shape: 0
+  - TableName: rule_ref
+    Target: 1
+    Shape: 0
+  - TableName: rule_node_ref
+    Target: 1
+    Shape: 0
+  - TableName: rule_edge_ref
+    Target: 1
+    Shape: 2
+  - TableName: rule_ui_window_payload_ref
+    Target: 1
+    Shape: 0
+  - TableName: rule_ui_target_payload_ref
+    Target: 1
+    Shape: 0
+  - TableName: trigger_ref
+    Target: 1
+    Shape: 0
+  - TableName: trigger_ui_window_payload_ref
+    Target: 1
+    Shape: 0
+  - TableName: trigger_ui_target_click_payload_ref
+    Target: 1
+    Shape: 0
+  - TableName: trigger_delay_payload_ref
+    Target: 1
+    Shape: 0
+  - TableName: action_ref
+    Target: 1
+    Shape: 0
+  - TableName: action_ui_open_window_payload_ref
+    Target: 1
+    Shape: 0
+  - TableName: action_ui_close_window_payload_ref
+    Target: 1
+    Shape: 0
+  - TableName: action_delay_payload_ref
+    Target: 1
+    Shape: 0
+  - TableName: action_guide_focus_payload_ref
+    Target: 1
+    Shape: 0
+  - TableName: action_guide_clear_focus_payload_ref
+    Target: 1
+    Shape: 0
+  - TableName: guide_ref
+    Target: 1
+    Shape: 0
+  - TableName: guide_step_ref
+    Target: 1
+    Shape: 2
+  - TableName: guide_step_action_ref
+    Target: 1
+    Shape: 2
+  - TableName: guide_retired_ref
+    Target: 1
+    Shape: 0
+  - TableName: guide_step_retired_ref
+    Target: 1
+    Shape: 2

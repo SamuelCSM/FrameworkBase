@@ -140,6 +140,24 @@ namespace Framework.Core
         /// </summary>
         public static Framework.Foundation.RedDotService RedDots { get; private set; }
 
+        /// <summary>通用无副作用条件求值服务；业务模块只注册领域叶子 Evaluator。</summary>
+        public static Framework.Foundation.RuleService Rules { get; private set; }
+
+        /// <summary>通用作用域触发器服务；UI/计时器由框架内置，领域成功事件由业务注册。</summary>
+        public static Framework.Foundation.TriggerService Triggers { get; private set; }
+
+        /// <summary>通用异步动作执行服务；配置实例通过稳定 ActionId 寻址。</summary>
+        public static Framework.Foundation.ActionService Actions { get; private set; }
+
+        /// <summary>稳定 UI TargetId 到当前激活 Rect/Button 实例的运行时目录。</summary>
+        public static UITargetRegistry UiTargets { get; private set; }
+
+        /// <summary>配置引导的通用挖孔/高亮表现服务。</summary>
+        public static GuidePresentationService GuidePresentation { get; private set; }
+
+        /// <summary>配置驱动的全局引导运行器；热更 Bootstrap 在配置库就绪后安装 Catalog。</summary>
+        public static GuideRunner Guides { get; private set; }
+
         // ── 生命周期 ─────────────────────────────────────────────────────────
 
         protected override void Awake()
@@ -165,6 +183,23 @@ namespace Framework.Core
                 },
             };
 
+            Rules = new Framework.Foundation.RuleService
+            {
+                ObserverErrorSink = ex => LogOrchestrationError("Rule", ex),
+            };
+            Triggers = new Framework.Foundation.TriggerService
+            {
+                ObserverErrorSink = ex => LogOrchestrationError("Trigger", ex),
+            };
+            Actions = new Framework.Foundation.ActionService
+            {
+                ObserverErrorSink = ex => LogOrchestrationError("Action", ex),
+            };
+            UiTargets = new UITargetRegistry
+            {
+                ObserverErrorSink = ex => LogOrchestrationError("UITarget", ex),
+            };
+
 #if !UNITY_EDITOR && DEVELOPMENT_BUILD
             // 非 Editor 的 Development Build 自动挂载屏幕日志面板（接入命令总线后带命令输入行）
             if (GetComponent<RuntimeConsole>() == null)
@@ -183,6 +218,23 @@ namespace Framework.Core
             // 通用补间（PrimeTween）容量与默认缓动一次性引导：须早于任何 UI 过渡 / 场景动画。
             TweenBootstrap.Initialize();
             InitializeManagers();
+            // 内置 UI/计时器 Rule、Trigger、Action 只依赖框架服务，在业务 Catalog 安装前一次性注册。
+            GuidePresentation = new GuidePresentationService(UI, UiTargets);
+            UIOrchestrationBuiltins.Register(
+                Rules, Triggers, Actions, UI, UiTargets, GuidePresentation);
+            Guides = new GuideRunner(
+                Rules,
+                Triggers,
+                Actions,
+                new PrefsGuideRuntimeProgressStore())
+            {
+                ObserverErrorSink = ex => LogOrchestrationError("Guide", ex),
+            };
+            // 表现清理由配置的 GuideClearFocus Action 负责；此处叠加防御性兜底，
+            // 确保引导在任意结束路径（完成/取消/失败）都不会遗留全屏挖孔遮罩卡死操作。
+            Guides.GuideCompleted += _ => GuidePresentation?.Clear();
+            Guides.GuideCancelled += (_, __) => GuidePresentation?.Clear();
+            Guides.GuideFailed += (_, __) => GuidePresentation?.Clear();
 
             // 线上性能采样：全构建生效，窗口聚合后经 Analytics 低频上报（挂在 Manager 之后，
             // 上报时经静态访问点取 Analytics，未就绪则静默跳过）
@@ -216,6 +268,12 @@ namespace Framework.Core
             {
                 Screen.sleepTimeout = SleepTimeout.NeverSleep;
             }
+        }
+
+        private static void LogOrchestrationError(string source, Exception error)
+        {
+            Debug.LogError($"[GameEntry] {source} 编排回调/执行器异常（已隔离）");
+            if (error != null) Debug.LogException(error);
         }
 
         /// <summary>
@@ -726,6 +784,10 @@ namespace Framework.Core
             _playerLogoutSub?.Dispose();
             _forceLogoutSub = null;
             _playerLogoutSub = null;
+
+            Guides?.Dispose();
+            GuidePresentation?.Dispose();
+            UiTargets?.Clear();
 
             // 反向顺序关闭所有组件；逐个 try/catch 隔离，确保某组件清理异常不影响其余组件关闭
             for (int i = _components.Count - 1; i >= 0; i--)

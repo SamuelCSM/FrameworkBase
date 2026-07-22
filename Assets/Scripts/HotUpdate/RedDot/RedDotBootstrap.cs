@@ -4,6 +4,7 @@ using Framework.Core;
 using Framework.Foundation;
 using HotUpdate.Config.Data;
 using HotUpdate.Config.Table;
+using HotUpdate.Entry;
 using UnityEngine;
 
 namespace HotUpdate.RedDot
@@ -27,7 +28,7 @@ namespace HotUpdate.RedDot
         /// <summary>注册离线整包的登录前装配钩子；重复调用只会重挂当前静态入口。</summary>
         public static void RegisterPreEntryHook()
         {
-            GameEntry.OnBeforeBusinessEntry = Install;
+            RuntimeCatalogBootstrap.RegisterPreEntryHook();
         }
 
         /// <summary>从 ConfigData 读取五张红点表并初始化当前 GameEntry.RedDots；同一服务只执行一次。</summary>

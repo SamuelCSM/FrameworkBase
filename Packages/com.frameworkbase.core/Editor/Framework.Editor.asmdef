@@ -5,6 +5,7 @@
         "Framework",
         "Framework.Foundation",
         "Framework.Kernel",
+        "UniTask",
         "Unity.Addressables.Editor",
         "Unity.TextMeshPro",
         "HybridCLR.Editor"

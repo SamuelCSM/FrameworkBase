@@ -7,6 +7,8 @@ using Framework.Core.Auth;
 using Framework.Foundation;
 using Framework.Save;
 using HotUpdate.RedDot;
+using HotUpdate.Entry;
+using HotUpdate.UI.Generated;
 using UnityEngine;
 
 namespace HotUpdate.Clicker
@@ -38,7 +40,7 @@ namespace HotUpdate.Clicker
         public static void Install()
         {
             // 离线整包在首次登录前安装 ConfigData 红点目录；HybridCLR 路径在 HotfixEntry 已提前安装。
-            RedDotBootstrap.RegisterPreEntryHook();
+            RuntimeCatalogBootstrap.RegisterPreEntryHook();
 
             if (!_installed)
             {
@@ -60,6 +62,7 @@ namespace HotUpdate.Clicker
                 return;
 
             GameEntry.UI.RegisterCodeUI<ClickerShopWindow>(
+                UIWindowIds.Clicker.Shop,
                 ClickerShopViewFactory.Create,
                 UILayer.Popup,
                 allowMultiple: false,

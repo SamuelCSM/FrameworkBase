@@ -1,4 +1,5 @@
 using Framework;
+using HotUpdate.UI.Generated;
 using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
@@ -35,6 +36,14 @@ namespace HotUpdate.Clicker
                 new Vector2(0.5f, 0.5f), new Vector2(0, 20), new Vector2(440, 110));
             view.CloseButton = ClickerUiKit.Button(panel, "CloseButton", "关闭", 28,
                 new Vector2(0.5f, 0f), new Vector2(0, 60), new Vector2(260, 90));
+            view.BuyButton.gameObject.AddComponent<UITargetAnchor>().Configure(
+                UITargetIds.Clicker.ShopBuyButton,
+                view.BuyButton.transform as RectTransform,
+                view.BuyButton);
+            view.CloseButton.gameObject.AddComponent<UITargetAnchor>().Configure(
+                UITargetIds.Clicker.ShopCloseButton,
+                view.CloseButton.transform as RectTransform,
+                view.CloseButton);
             return root;
         }
     }

@@ -3,7 +3,9 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using Editor.ExcelTool;
+using Framework.Editor.Guide;
 using Framework.Editor.RedDot;
+using Framework.Editor.UI;
 using UnityEditor;
 using UnityEngine;
 
@@ -100,6 +102,22 @@ namespace Framework.Editor
                         out string redDotReport))
                     throw new InvalidOperationException("[ConfigPipeline] 红点跨表校验失败：\n" + redDotReport);
                 RedDotConfigCompiler.WriteArtifacts(redDotCatalog);
+            }
+
+            if (File.Exists(UIWindowConfigCompiler.WorkbookPath))
+            {
+                if (!UIWindowConfigCompiler.TryCompile(out Framework.UIWindowCatalog uiWindowCatalog,
+                        out string uiWindowReport))
+                    throw new InvalidOperationException("[ConfigPipeline] 窗口跨表校验失败：\n" + uiWindowReport);
+                UIWindowConfigCompiler.WriteArtifacts(uiWindowCatalog);
+            }
+
+            if (File.Exists(GuideConfigCompiler.WorkbookPath))
+            {
+                if (!GuideConfigCompiler.TryCompile(out GuideConfigCompilation guideCompilation,
+                        out string guideReport))
+                    throw new InvalidOperationException("[ConfigPipeline] 引导跨表校验失败：\n" + guideReport);
+                GuideConfigCompiler.WriteArtifacts(guideCompilation);
             }
 
             // ── 2. 数据导出（校验开启；首包 + 热更双目标；孤儿表清理保持库与 Excel 目录一致）──

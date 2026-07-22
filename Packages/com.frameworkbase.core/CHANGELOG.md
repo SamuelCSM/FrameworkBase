@@ -7,6 +7,16 @@
 
 ### 新增
 
+- **配置驱动全局引导框架**：新增稳定整数 `GuideId / StepId / WindowId / TargetId`、通用
+  `RuleService / TriggerService / ActionService`、事件驱动 `GuideRunner`、强类型断点存储以及 Target 挖孔表现。
+  `UIWindow.xlsx + Guide.xlsx` 沿用标准 `xxxRef / xxxTable / config.db` 管线，关系表使用 `ConfigListBase`；
+  专用编译器校验跨表引用、号段与退休 ID，并确定性生成 `UIWindowIds.g.cs / GuideIds.g.cs`。Clicker 商店提供
+  “窗口 Ready → 检查目标 → 挖孔 → 真实按钮点击完成 → 清遮罩”的完整配置样例。复杂业务可按 TypeId 注册
+  强类型 Payload Factory 与自定义 Evaluator/Binder/Executor。见 `Guide/CONFIG_DRIVEN_GUIDE.md`。
+  `GuideRunner.TryStartAsync` 返回 `GuideStartResult`（`Started/Rejected/Queued`），区分“拒绝启动 / 已排队 /
+  已启动”；步骤在进入时被自定义触发器同步完成时可正确链式推进而不会误判失败或吞掉信号；引导在完成/取消/
+  失败的任意路径都会兜底清理挖孔遮罩，避免遗留全屏遮罩卡死操作。
+
 - **红点亮起路径导航器 `RedDotNavigator`**（把 `GetActivePath` 接成"点击入口红点→逐级跳转到点亮来源"）：
   按节点注册跳转处理器（打开页面/切页签），`Navigate(entryId)` 沿亮起路径从入口到来源依次触发命中的
   处理器；入口未点亮返回 0，单个处理器异常隔离上报不阻断其余跳转。纯逻辑无 Unity 依赖，EditMode 用例 5 个。
