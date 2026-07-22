@@ -40,6 +40,11 @@ namespace Framework
         /// <summary>Phase 1：引导表现依赖 L1 UI 能力；表现 Action 的 executor 必须在编排 Catalog 冻结前注册。</summary>
         public override void RegisterCapabilities()
         {
+            // 动作级兜底时限：内置动作（开关窗口/挖孔/延迟）都应在秒级返回，
+            // 卡住多半是执行器等了一个不会到来的资源。引导步骤的动作是串行 await 的，不设限会拖住整条链。
+            if (GameEntry.Actions.DefaultTimeout <= TimeSpan.Zero)
+                GameEntry.Actions.DefaultTimeout = TimeSpan.FromSeconds(30);
+
             _presentation = new GuidePresentationService(GameEntry.UI, GameEntry.UI.Targets);
             GameEntry.Actions.Register(
                 GuideOrchestrationTypeIds.FocusTargetAction,
@@ -198,6 +203,10 @@ namespace Framework
                 Debug.LogWarning($"[Guide] GUIDE_CANCELLED id={guideId} reason={reason}");
             runner.GuideFailed += (guideId, reason) =>
                 Debug.LogError($"[Guide] GUIDE_FAILED id={guideId} reason={reason}");
+            // 超时单独打点：它几乎总是配置问题（CompleteTrigger 配错或目标被挡），
+            // 与运行期异常混在一起会被淹没。线上按此条报警即可定位到具体步骤。
+            runner.StepTimedOut += (guideId, stepId) =>
+                Debug.LogError($"[Guide] GUIDE_STEP_TIMEOUT id={guideId} step={stepId}");
         }
 
         private sealed class GuideFocusTargetAction : IActionExecutor<GuideFocusTargetActionPayload>

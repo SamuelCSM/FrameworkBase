@@ -115,6 +115,13 @@ namespace Framework.Foundation
         public ActionCatalog Catalog { get; private set; }
         public Action<Exception> ObserverErrorSink { get; set; }
 
+        /// <summary>
+        /// 单个动作的默认执行时限；<see cref="TimeSpan.Zero"/> 表示不设限。
+        /// 到期后取消传给执行器的令牌——配合执行器的协作式取消，避免一个迟迟不返回的动作
+        /// 卡死整条编排链（引导步骤的 Enter/Exit 动作是串行 await 的）。
+        /// </summary>
+        public TimeSpan DefaultTimeout { get; set; } = TimeSpan.Zero;
+
         public void Register<TPayload>(int typeId, IActionExecutor<TPayload> executor)
         {
             if (typeId <= 0) throw new ArgumentOutOfRangeException(nameof(typeId));
@@ -164,12 +171,34 @@ namespace Framework.Foundation
             if (cancellationToken.IsCancellationRequested)
                 return ActionExecutionResult.Cancelled();
 
+            // 设了时限就串一层带定时取消的链接令牌；执行器只看到一个统一的取消信号。
+            TimeSpan timeout = DefaultTimeout;
+            CancellationTokenSource timeoutSource = null;
+            CancellationToken effectiveToken = cancellationToken;
+            if (timeout > TimeSpan.Zero)
+            {
+                timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                timeoutSource.CancelAfter(timeout);
+                effectiveToken = timeoutSource.Token;
+            }
+
             try
             {
                 return await _executors[definition.TypeId]
-                    .ExecuteAsync(definition.Payload, context, cancellationToken);
+                    .ExecuteAsync(definition.Payload, context, effectiveToken);
             }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            catch (OperationCanceledException)
+                when (timeoutSource != null
+                      && timeoutSource.IsCancellationRequested
+                      && !cancellationToken.IsCancellationRequested)
+            {
+                // 只有本服务的定时器触发的取消才算超时；调用方主动取消仍报 Cancelled。
+                var error = new TimeoutException(
+                    $"Action {actionId} [{definition.Key}] 执行超过 {timeout.TotalSeconds:0.#}s。");
+                Report(error);
+                return ActionExecutionResult.Failed(error.Message, error);
+            }
+            catch (OperationCanceledException)
             {
                 return ActionExecutionResult.Cancelled();
             }
@@ -178,6 +207,10 @@ namespace Framework.Foundation
                 Report(ex);
                 return ActionExecutionResult.Failed(
                     $"Action {actionId} [{definition.Key}] 执行异常：{ex.Message}", ex);
+            }
+            finally
+            {
+                timeoutSource?.Dispose();
             }
         }
 

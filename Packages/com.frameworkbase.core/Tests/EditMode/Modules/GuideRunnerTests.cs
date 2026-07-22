@@ -348,6 +348,98 @@ namespace Framework.Tests
             runner.Dispose();
         }
 
+        /// <summary>可手动推进的假时钟：避免 EditMode 下依赖 PlayerLoop 驱动 UniTask.Delay。</summary>
+        private sealed class ManualDelay
+        {
+            private UniTaskCompletionSource _source;
+
+            public int Requests { get; private set; }
+            public TimeSpan LastTimeout { get; private set; }
+
+            public UniTask Delay(TimeSpan timeout, CancellationToken cancellationToken)
+            {
+                Requests++;
+                LastTimeout = timeout;
+                var source = new UniTaskCompletionSource();
+                _source = source;
+                // 步骤推进/会话结束会取消看门狗令牌，这里如实把等待也取消掉。
+                cancellationToken.Register(() => source.TrySetCanceled());
+                return source.Task;
+            }
+
+            /// <summary>让当前等待到期。</summary>
+            public void Elapse() => _source?.TrySetResult();
+        }
+
+        [Test]
+        public void 步骤等待完成信号超时_引导按失败收尾并打点()
+        {
+            CreateRuntime(true, out GuideRunner runner, out ManualBinder binder,
+                out RecordingAction action, out MemoryProgress progress);
+            var clock = new ManualDelay();
+            runner.StepTimeout = TimeSpan.FromSeconds(30);
+            runner.StepTimeoutDelay = clock.Delay;
+
+            var timedOut = new List<(int guideId, int stepId)>();
+            var failed = new List<int>();
+            runner.StepTimedOut += (guideId, stepId) => timedOut.Add((guideId, stepId));
+            runner.GuideFailed += (guideId, _) => failed.Add(guideId);
+
+            runner.StartListening();
+            binder.Fire(1);
+            Assert.IsTrue(runner.IsRunning, "引导应已启动并停在第一步等待完成信号");
+            Assert.AreEqual(1, clock.Requests, "进入步骤应挂上看门狗");
+            Assert.AreEqual(TimeSpan.FromSeconds(30), clock.LastTimeout);
+
+            // 完成信号永不到达（配错 TriggerId / 目标被挡）——看门狗到期即中止，避免玩家被遮罩锁死。
+            clock.Elapse();
+
+            CollectionAssert.AreEqual(new[] { (100, 10) }, timedOut);
+            CollectionAssert.AreEqual(new[] { 100 }, failed);
+            Assert.IsFalse(runner.IsRunning);
+            Assert.IsFalse(progress.Get(100).IsCompleted, "超时不应把引导记成已完成");
+            CollectionAssert.Contains(action.Calls, "cancel");
+        }
+
+        [Test]
+        public void 步骤正常完成后看门狗失效_不再误判超时()
+        {
+            CreateRuntime(true, out GuideRunner runner, out ManualBinder binder,
+                out _, out MemoryProgress progress);
+            var clock = new ManualDelay();
+            runner.StepTimeout = TimeSpan.FromSeconds(30);
+            runner.StepTimeoutDelay = clock.Delay;
+
+            var timedOut = new List<int>();
+            runner.StepTimedOut += (guideId, _) => timedOut.Add(guideId);
+
+            runner.StartListening();
+            binder.Fire(1);
+            binder.Fire(2);   // 完成信号如期到达
+
+            Assert.IsFalse(runner.IsRunning);
+            Assert.IsTrue(progress.Get(100).IsCompleted);
+
+            // 看门狗已随步骤订阅一起取消；此时再推进时钟不得触发任何超时。
+            clock.Elapse();
+            CollectionAssert.IsEmpty(timedOut);
+        }
+
+        [Test]
+        public void StepTimeout置零时不挂看门狗()
+        {
+            CreateRuntime(true, out GuideRunner runner, out ManualBinder binder, out _, out _);
+            var clock = new ManualDelay();
+            runner.StepTimeout = TimeSpan.Zero;
+            runner.StepTimeoutDelay = clock.Delay;
+
+            runner.StartListening();
+            binder.Fire(1);
+
+            Assert.IsTrue(runner.IsRunning);
+            Assert.AreEqual(0, clock.Requests, "置零表示不设限，不应产生任何等待");
+        }
+
         private static void CreateRuntime(
             bool startRule,
             out GuideRunner runner,

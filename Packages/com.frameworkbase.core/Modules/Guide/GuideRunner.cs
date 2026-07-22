@@ -66,6 +66,8 @@ namespace Framework
 
         private Session _active;
         private IDisposable _stepSubscription;
+        /// <summary>当前步骤的超时看门狗；随步骤订阅一起建立与释放。</summary>
+        private CancellationTokenSource _stepTimeoutCts;
         private PendingCompletion _pendingCompletion;
         private bool _starting;
         private bool _transitioning;
@@ -92,11 +94,32 @@ namespace Framework
         public GuideCatalog Catalog { get; private set; }
         public Action<Exception> ObserverErrorSink { get; set; }
 
+        /// <summary>
+        /// 单个步骤等待完成信号的最长时限；<see cref="TimeSpan.Zero"/> 表示不设限。
+        /// <para>
+        /// 为什么必须有：步骤靠 CompleteTrigger 推进，若该信号因配错 TriggerId、目标被弹窗遮挡、
+        /// 或 Target 被异步重建而<b>永远不到达</b>，引导会永久停在该步；而挖孔遮罩是全屏拦截 raycast 的，
+        /// 玩家除了杀进程无路可走。超时按"失败"收尾，触发 <see cref="GuideFailed"/> 并清掉遮罩——
+        /// 卡住的新手引导应当中止，而不是把玩家关在里面。
+        /// </para>
+        /// 需要长时等待的步骤（如"打完一场战斗"）应调高本值或置零，未来由配表按步覆盖。
+        /// </summary>
+        public TimeSpan StepTimeout { get; set; } = TimeSpan.FromSeconds(180);
+
+        /// <summary>
+        /// 看门狗计时实现，默认 <see cref="UniTask.Delay(TimeSpan, DelayType, PlayerLoopTiming, CancellationToken)"/>
+        /// 走非缩放时间（引导期间可能 timeScale=0）。EditMode 测试注入假时钟以免依赖 PlayerLoop。
+        /// </summary>
+        public Func<TimeSpan, CancellationToken, UniTask> StepTimeoutDelay { get; set; }
+
         public event Action<int> GuideStarted;
         public event Action<int, int> StepEntered;
         public event Action<int> GuideCompleted;
         public event Action<int, string> GuideCancelled;
         public event Action<int, string> GuideFailed;
+
+        /// <summary>步骤等待超时（GuideId, StepId）。接监控用：线上频繁触发即说明该步的完成条件配错或被挡。</summary>
+        public event Action<int, int> StepTimedOut;
 
         /// <summary>读取某条引导的持久化进度（断点步骤 / 是否已完成），供 GM 命令与业务查询。</summary>
         /// <exception cref="KeyNotFoundException">目录中不存在该 GuideId。</exception>
@@ -341,8 +364,65 @@ namespace Framework
                 return StepEnterOutcome.Superseded;
             }
             _stepSubscription = binding;
+            StartStepWatchdog(session, step.Definition.StepId);
             return StepEnterOutcome.Entered;
         }
+
+        /// <summary>
+        /// 为当前步骤启动超时看门狗。计时随步骤订阅同生共死：步骤被推进、被取代或会话结束时，
+        /// <see cref="DisposeStepSubscription"/> 会取消它，因此正常路径下永远不会触发。
+        /// </summary>
+        private void StartStepWatchdog(Session session, int stepId)
+        {
+            if (StepTimeout <= TimeSpan.Zero) return;
+            var cts = CancellationTokenSource.CreateLinkedTokenSource(session.Cancellation.Token);
+            _stepTimeoutCts = cts;
+            WatchStepAsync(session, stepId, StepTimeout, cts.Token).Forget();
+        }
+
+        private async UniTask WatchStepAsync(
+            Session session,
+            int stepId,
+            TimeSpan timeout,
+            CancellationToken cancellationToken)
+        {
+            try
+            {
+                Func<TimeSpan, CancellationToken, UniTask> delay = StepTimeoutDelay ?? DefaultStepTimeoutDelay;
+                await delay(timeout, cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+                return;   // 步骤已正常推进/取消，看门狗随之作废
+            }
+            catch (Exception ex)
+            {
+                Report(ex);
+                return;
+            }
+
+            // 再校验一次：等待期间可能已换会话或换步骤，此时这次超时不再属于当前状态。
+            if (cancellationToken.IsCancellationRequested) return;
+            if (!ReferenceEquals(_active, session)) return;
+            if (session.StepIndex >= session.Guide.Steps.Count) return;
+            if (session.Guide.Steps[session.StepIndex].Definition.StepId != stepId) return;
+
+            Notify(StepTimedOut, session.Guide.Definition.Id, stepId);
+            try
+            {
+                await FailSessionAsync(
+                    session, $"步骤 {stepId} 等待完成信号超过 {timeout.TotalSeconds:0.#}s（CompleteTrigger 未到达）。");
+            }
+            catch (Exception ex)
+            {
+                // 本方法是 Forget 驱动的，异常逃逸只会进 UniTask 全局兜底，丢失上下文；就地记账。
+                Report(ex);
+            }
+        }
+
+        /// <summary>默认计时：非缩放时间——引导过程常把 timeScale 置 0，用缩放时间会导致看门狗永不到期。</summary>
+        private static UniTask DefaultStepTimeoutDelay(TimeSpan timeout, CancellationToken cancellationToken)
+            => UniTask.Delay(timeout, DelayType.UnscaledDeltaTime, cancellationToken: cancellationToken);
 
         private async UniTask CompleteCurrentStepAsync(Session session, int expectedStepId, object signalData)
         {
@@ -528,8 +608,17 @@ namespace Framework
             return null;
         }
 
+        /// <summary>释放当前步骤的完成订阅，并连同取消其超时看门狗（两者必须同生共死）。</summary>
         private void DisposeStepSubscription()
         {
+            CancellationTokenSource timeout = _stepTimeoutCts;
+            _stepTimeoutCts = null;
+            if (timeout != null)
+            {
+                try { timeout.Cancel(); } catch (Exception ex) { Report(ex); }
+                timeout.Dispose();
+            }
+
             IDisposable subscription = _stepSubscription;
             _stepSubscription = null;
             try { subscription?.Dispose(); }

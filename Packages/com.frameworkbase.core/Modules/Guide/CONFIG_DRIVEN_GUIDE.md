@@ -107,6 +107,24 @@ GameEntry.UI.RegisterCodeUI<MyWindow>(
 
 Prefab UI 在目标节点挂 `UITargetAnchor`；代码 UI 创建 Button 后调用 `Configure(UITargetIds..., rect, button)`。同一 TargetId 可存在于多个窗口实例中，运行器通过窗口 Root Scope 精确解析；无 Scope 且多实例时会明确失败，不会随便选一个。
 
+## 卡死防护（步骤超时）
+
+步骤靠 `CompleteTriggerId` 推进。若该信号因**配错 TriggerId、目标被后开的弹窗遮挡、Target 被异步重建**等原因永不到达，引导会永久停在该步——而挖孔遮罩全屏拦截 raycast，玩家除了杀进程无路可走。
+
+因此运行器带一个步骤级看门狗：
+
+| 项 | 默认 | 说明 |
+|---|---|---|
+| `GuideRunner.StepTimeout` | 180s | 单步等待完成信号的时限，`TimeSpan.Zero` 表示不设限 |
+| `GuideRunner.StepTimeoutDelay` | 非缩放时间 | 计时实现。默认走 `UnscaledDeltaTime`（引导期间常 `timeScale=0`），测试可注入假时钟 |
+| `ActionService.DefaultTimeout` | 30s（由 `GuideModule` 设置） | 单个动作的执行时限，防止某个执行器久不返回拖住串行的动作链 |
+
+超时按**失败**收尾：触发 `StepTimedOut` 与 `GuideFailed`，走 Cancel 动作并清掉遮罩。取舍很明确——卡住的新手引导应当中止，而不是把玩家关在里面。日志打 `GUIDE_STEP_TIMEOUT id=<引导> step=<步骤>`，线上按此条报警即可直接定位到配错的那一步。
+
+需要长时等待的步骤（如"打完一场战斗"）应调高 `StepTimeout` 或置零。
+
+> 待办：目前超时是运行器级的统一值，按步覆盖需要 `guide_step_ref` 加 `TimeoutMs` 列并重导 `config.db`。
+
 ## 导出与验证
 
 菜单：`Framework/Config/Export All (Excel→代码+config.db)`。
