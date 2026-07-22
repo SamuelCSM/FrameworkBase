@@ -142,9 +142,6 @@ namespace Framework.Core
         /// <summary>通用异步动作执行服务；配置实例通过稳定 ActionId 寻址。</summary>
         public static Framework.Foundation.ActionService Actions { get; private set; }
 
-        /// <summary>稳定 UI TargetId 到当前激活 Rect/Button 实例的运行时目录。</summary>
-        public static UITargetRegistry UiTargets { get; private set; }
-
         /// <summary>
         /// 中间层「框架自带业务模块」宿主（ADR-008）。L3 在配置库就绪前经 <c>Use</c> 登记模块，
         /// GameEntry 在业务入口前驱动两阶段（RegisterCapabilities → 冻结编排 → StartAsync），退出时逆序 Dispose。
@@ -180,10 +177,6 @@ namespace Framework.Core
             {
                 ObserverErrorSink = ex => LogOrchestrationError("Action", ex),
             };
-            UiTargets = new UITargetRegistry
-            {
-                ObserverErrorSink = ex => LogOrchestrationError("UITarget", ex),
-            };
 
 #if !UNITY_EDITOR && DEVELOPMENT_BUILD
             // 非 Editor 的 Development Build 自动挂载屏幕日志面板（接入命令总线后带命令输入行）
@@ -203,9 +196,11 @@ namespace Framework.Core
             // 通用补间（PrimeTween）容量与默认缓动一次性引导：须早于任何 UI 过渡 / 场景动画。
             TweenBootstrap.Initialize();
             InitializeManagers();
+            // UI Target 目录归 UIManager 持有（纯 UI 概念），此处只接上诊断出口。
+            UI.Targets.ObserverErrorSink = ex => LogOrchestrationError("UITarget", ex);
             // 内置 UI/计时器 Rule、Trigger、Action 只依赖框架服务，在业务 Catalog 安装前一次性注册。
             // 引导表现（GuideFocus/Clear）等业务能力由对应模块在 RegisterCapabilities 阶段注册（ADR-008）。
-            UIOrchestrationBuiltins.Register(Rules, Triggers, Actions, UI, UiTargets);
+            UIOrchestrationBuiltins.Register(Rules, Triggers, Actions, UI);
 
             // 中间层模块宿主（ADR-008）：L3 经 Modules.Use 登记红点/引导等自带业务模块，
             // 由 EnterBusinessSessionAsync 在配置库就绪后驱动两阶段。此处仅创建空宿主。
@@ -780,7 +775,7 @@ namespace Framework.Core
 
             // 先逆序拆中间层模块（引导/红点运行器由各模块 Dispose 释放），再拆其依赖的 L1 Target 目录。
             Modules?.DisposeAll();
-            UiTargets?.Clear();
+            UI?.Targets?.Clear();
 
             // 反向顺序关闭所有组件；逐个 try/catch 隔离，确保某组件清理异常不影响其余组件关闭
             for (int i = _components.Count - 1; i >= 0; i--)

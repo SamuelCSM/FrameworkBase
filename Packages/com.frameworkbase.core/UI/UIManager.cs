@@ -89,6 +89,13 @@ namespace Framework
         /// </summary>
         private UIBootstrap _bootstrap;
 
+        /// <summary>
+        /// 稳定 UI TargetId → 当前激活 Rect/Button 实例的运行时目录（<see cref="UITargetAnchor"/> 挂载即注册）。
+        /// 引导等编排能力按 TargetId 寻址控件；归 UIManager 持有而非 GameEntry——它是纯 UI 概念，
+        /// 生命周期也与 UI 一致（框架关闭时随 UI 一起 Clear）。
+        /// </summary>
+        public UITargetRegistry Targets { get; } = new UITargetRegistry();
+
         /// <summary>窗口类型 → 注册信息（Addressables 地址、层级、是否允许多开）</summary>
         private readonly Dictionary<Type, UIRegisterInfo>   _registerInfos = new Dictionary<Type, UIRegisterInfo>();
 

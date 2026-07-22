@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using Framework.Core;
 using UnityEngine;
 using UnityEngine.UI;
@@ -48,7 +48,7 @@ namespace Framework
 
         private void TryRegister()
         {
-            if (_registration != null || _targetId <= 0 || GameEntry.UiTargets == null) return;
+            if (_registration != null || _targetId <= 0 || GameEntry.UI?.Targets == null) return;
             RectTransform target = _target != null ? _target : transform as RectTransform;
             if (target == null)
             {
@@ -62,7 +62,7 @@ namespace Framework
                 UIView view = GetComponentInParent<UIView>(includeInactive: true);
                 if (view != null) scope = view.gameObject;
             }
-            _registration = GameEntry.UiTargets.Register(_targetId, target, _button, scope);
+            _registration = GameEntry.UI?.Targets.Register(_targetId, target, _button, scope);
         }
     }
 }

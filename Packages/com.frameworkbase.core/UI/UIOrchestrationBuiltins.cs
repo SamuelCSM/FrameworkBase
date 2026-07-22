@@ -90,18 +90,18 @@ namespace Framework
     /// <summary>把只依赖框架 UI/时间能力的内置积木注册到通用服务；必须早于 Catalog.Initialize。</summary>
     public static class UIOrchestrationBuiltins
     {
+        /// <summary>注册内置 Rule/Trigger/Action；Target 目录取自 <paramref name="ui"/>（UIManager 持有）。</summary>
         public static void Register(
             RuleService rules,
             TriggerService triggers,
             ActionService actions,
-            UIManager ui,
-            UITargetRegistry targets)
+            UIManager ui)
         {
             if (rules == null) throw new ArgumentNullException(nameof(rules));
             if (triggers == null) throw new ArgumentNullException(nameof(triggers));
             if (actions == null) throw new ArgumentNullException(nameof(actions));
             if (ui == null) throw new ArgumentNullException(nameof(ui));
-            if (targets == null) throw new ArgumentNullException(nameof(targets));
+            UITargetRegistry targets = ui.Targets;
 
             rules.Register(BuiltinOrchestrationTypeIds.Rules.UIWindowIsOpen,
                 new UIWindowIsOpenRule(ui));

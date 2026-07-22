@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Threading;
 using Cysharp.Threading.Tasks;
 using Framework.Core;
@@ -39,7 +39,7 @@ namespace Framework
         /// <summary>Phase 1：引导表现依赖 L1 UI 能力；表现 Action 的 executor 必须在编排 Catalog 冻结前注册。</summary>
         public override void RegisterCapabilities()
         {
-            _presentation = new GuidePresentationService(GameEntry.UI, GameEntry.UiTargets);
+            _presentation = new GuidePresentationService(GameEntry.UI, GameEntry.UI.Targets);
             GameEntry.Actions.Register(
                 GuideOrchestrationTypeIds.FocusTargetAction,
                 new GuideFocusTargetAction(_presentation));
