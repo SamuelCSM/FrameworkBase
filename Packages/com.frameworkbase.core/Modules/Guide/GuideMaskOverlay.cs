@@ -7,11 +7,11 @@ namespace Framework
 {
     /// <summary>
     /// 引导遮罩：全屏半透明压暗层 + 目标控件上的矩形挖孔。
-    /// 孔内点击<b>穿透</b>给真实控件（真按钮真响应，业务在按钮回调里 <see cref="GuideFlow.CompleteStep"/>），
+    /// 孔内点击<b>穿透</b>给真实控件（真按钮真响应，步骤据此由配置的 CompleteTrigger 推进），
     /// 孔外点击被遮罩挡下并触发 <see cref="DimClicked"/>（做「请点击高亮处」抖动提示用）。
     /// <para>
-    /// 框架四原语之「挖孔 + 触发接线」。用法：全屏 UI 上挂本组件（引导层级），
-    /// <see cref="Focus"/> 对准目标、<see cref="ClearFocus"/> 全屏压暗（对话步骤）。
+    /// 由 <see cref="GuidePresentationService"/> 驱动，不直接被业务持有。用法：全屏 UI 上挂本组件
+    /// （引导层级），<see cref="Focus"/> 对准目标、<see cref="ClearFocus"/> 全屏压暗（对话步骤）。
     /// 目标随布局 / 滚动移动时孔每帧跟随。视觉主体是压暗色（Graphic.color），
     /// 高亮描边 / 手指指针等表现件由业务按需叠加，不进框架。
     /// </para>
