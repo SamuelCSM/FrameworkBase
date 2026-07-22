@@ -74,12 +74,20 @@ namespace Framework.Core
     /// <summary>
     /// 中间层模块宿主（ADR-008）。L3 经 <see cref="Use"/> 按启动顺序显式登记模块；<see cref="GameEntry"/>
     /// 在配置库就绪后驱动两阶段（<see cref="RegisterCapabilities"/> → 冻结编排 → <see cref="StartAsync"/>），
-    /// 关闭时逆序 <see cref="DisposeAll"/>。单个模块回调异常被隔离，不影响其它模块。
+    /// 关闭时逆序 <see cref="DisposeAll"/>。
+    /// <para>
+    /// 异常策略分两段（ADR-008 修订第 9 点）：<b>启动阶段 fail-fast</b>——Phase 1/2 抛异常即标记该模块
+    /// <see cref="IsFaulted"/> 并原样抛出，让根因直接暴露在登录链路上，避免被吞掉后在冻结校验处引发
+    /// "Executor 未注册" 这类误导性二级错误；<b>运行阶段隔离</b>——低内存/账号/帧回调单模块异常不影响其它模块。
+    /// 已标记 Faulted 的模块不再接收任何后续回调（Dispose 除外，它可能已持有待释放资源）。
+    /// </para>
     /// </summary>
     public sealed class FrameworkModuleHost
     {
         /// <summary>按登记顺序保存的模块；两阶段/账号/帧回调正序驱动，Dispose 逆序。</summary>
         private readonly List<IFrameworkModule> _modules = new List<IFrameworkModule>();
+        /// <summary>启动阶段失败的模块；后续回调一律跳过，避免驱动半死状态的模块（Dispose 除外）。</summary>
+        private readonly HashSet<IFrameworkModule> _faulted = new HashSet<IFrameworkModule>();
         /// <summary>Phase 1 是否已执行；用于幂等，并禁止 RegisterCapabilities 之后再 Use 新模块。</summary>
         private bool _capabilitiesRegistered;
         /// <summary>Phase 2 是否已执行；用于幂等（重复登录不重复启动）。</summary>
@@ -94,6 +102,12 @@ namespace Framework.Core
         public bool CapabilitiesRegistered => _capabilitiesRegistered;
         public bool Started => _started;
 
+        /// <summary>该模块是否已在启动阶段失败（失败后不再接收后续回调）。</summary>
+        public bool IsFaulted(IFrameworkModule module) => module != null && _faulted.Contains(module);
+
+        /// <summary>启动阶段失败的模块数；供诊断命令与自检展示。</summary>
+        public int FaultedCount => _faulted.Count;
+
         /// <summary>登记模块（顺序即启动顺序）。必须在 <see cref="RegisterCapabilities"/> 之前；同一实例重复登记被忽略。</summary>
         public FrameworkModuleHost Use(IFrameworkModule module)
         {
@@ -105,7 +119,11 @@ namespace Framework.Core
             return this;
         }
 
-        /// <summary>Phase 1：按登记顺序注册各模块能力。幂等。</summary>
+        /// <summary>
+        /// Phase 1：按登记顺序注册各模块能力。幂等。
+        /// 启动阶段 fail-fast：某模块抛异常即标记 Faulted 后原样抛出——能力注册失败若被吞掉，
+        /// 随后的编排冻结只会报 "TypeId 未注册 Executor"，把根因埋进日志。
+        /// </summary>
         public void RegisterCapabilities()
         {
             if (_disposed) throw new ObjectDisposedException(nameof(FrameworkModuleHost));
@@ -114,11 +132,18 @@ namespace Framework.Core
             for (int i = 0; i < _modules.Count; i++)
             {
                 try { _modules[i].RegisterCapabilities(); }
-                catch (Exception ex) { Report("RegisterCapabilities", _modules[i], ex); }
+                catch (Exception ex)
+                {
+                    MarkFaulted("RegisterCapabilities", _modules[i], ex);
+                    throw;
+                }
             }
         }
 
-        /// <summary>Phase 2：按登记顺序启动各模块。幂等；须在 <see cref="RegisterCapabilities"/> 与编排冻结之后。</summary>
+        /// <summary>
+        /// Phase 2：按登记顺序启动各模块。幂等；须在 <see cref="RegisterCapabilities"/> 与编排冻结之后。
+        /// 同样 fail-fast；已在 Phase 1 失败的模块被跳过（登录重试时 Phase 1 因幂等不会重跑）。
+        /// </summary>
         public async UniTask StartAsync()
         {
             if (_disposed) throw new ObjectDisposedException(nameof(FrameworkModuleHost));
@@ -128,16 +153,22 @@ namespace Framework.Core
             _started = true;
             for (int i = 0; i < _modules.Count; i++)
             {
+                if (_faulted.Contains(_modules[i])) continue;
                 try { await _modules[i].StartAsync(); }
-                catch (Exception ex) { Report("StartAsync", _modules[i], ex); }
+                catch (Exception ex)
+                {
+                    MarkFaulted("StartAsync", _modules[i], ex);
+                    throw;
+                }
             }
         }
 
-        /// <summary>广播低内存到各模块（异常隔离）。</summary>
+        /// <summary>广播低内存到各模块（运行阶段：异常隔离，跳过 Faulted 模块）。</summary>
         public void BroadcastLowMemory()
         {
             for (int i = 0; i < _modules.Count; i++)
             {
+                if (_faulted.Contains(_modules[i])) continue;
                 try { _modules[i].OnLowMemory(); }
                 catch (Exception ex) { Report("OnLowMemory", _modules[i], ex); }
             }
@@ -151,32 +182,41 @@ namespace Framework.Core
         {
             for (int i = 0; i < _modules.Count; i++)
             {
+                if (_faulted.Contains(_modules[i])) continue;
                 try { await _modules[i].OnAccountEnterAsync(cancellationToken); }
                 catch (Exception ex) { Report("OnAccountEnterAsync", _modules[i], ex); }
             }
         }
 
-        /// <summary>账号退出：按登记顺序驱动各模块收尾（异常隔离）。须在框架清除身份之前调用。</summary>
+        /// <summary>账号退出：按登记顺序驱动各模块收尾（异常隔离，跳过 Faulted）。须在框架清除身份之前调用。</summary>
         public void OnAccountExit()
         {
             for (int i = 0; i < _modules.Count; i++)
             {
+                if (_faulted.Contains(_modules[i])) continue;
                 try { _modules[i].OnAccountExit(); }
                 catch (Exception ex) { Report("OnAccountExit", _modules[i], ex); }
             }
         }
 
-        /// <summary>每帧把 LateUpdate 广播给各模块（异常隔离）。属逐帧热路径，模块清单为空时零开销。</summary>
+        /// <summary>
+        /// 每帧把 LateUpdate 广播给各模块（异常隔离，跳过 Faulted）。属逐帧热路径，模块清单为空时零开销；
+        /// Faulted 集合通常为空，HashSet 查询在此可忽略。
+        /// </summary>
         public void BroadcastLateUpdate(float deltaTime)
         {
             for (int i = 0; i < _modules.Count; i++)
             {
+                if (_faulted.Count > 0 && _faulted.Contains(_modules[i])) continue;
                 try { _modules[i].OnLateUpdate(deltaTime); }
                 catch (Exception ex) { Report("OnLateUpdate", _modules[i], ex); }
             }
         }
 
-        /// <summary>逆序 Dispose 所有模块（异常隔离）。幂等。</summary>
+        /// <summary>
+        /// 逆序 Dispose 所有模块（异常隔离）。幂等。
+        /// 与其它回调不同，<b>Faulted 模块也要 Dispose</b>——它可能在失败前已分配需释放的资源。
+        /// </summary>
         public void DisposeAll()
         {
             if (_disposed) return;
@@ -187,9 +227,21 @@ namespace Framework.Core
                 catch (Exception ex) { Report("Dispose", _modules[i], ex); }
             }
             _modules.Clear();
+            _faulted.Clear();
         }
 
-        private void Report(string phase, IFrameworkModule module, Exception ex)
+        /// <summary>记录启动阶段失败并摘除该模块的后续回调；调用方随后原样抛出保持 fail-fast。</summary>
+        private void MarkFaulted(string phase, IFrameworkModule module, Exception ex)
+        {
+            if (module != null) _faulted.Add(module);
+            Report(phase, module, ex, isolated: false);
+        }
+
+        /// <param name="isolated">
+        /// 该异常是否已被吞掉：运行阶段回调为 true；启动阶段为 false（调用方随后原样抛出），
+        /// 两者的日志措辞必须不同，否则排障时会误以为启动失败也被兜住了。
+        /// </param>
+        private void Report(string phase, IFrameworkModule module, Exception ex, bool isolated = true)
         {
             Action<string, IFrameworkModule, Exception> sink = ModuleErrorSink;
             if (sink != null)
@@ -197,7 +249,8 @@ namespace Framework.Core
                 try { sink(phase, module, ex); return; }
                 catch { /* 出口自身异常不得再抛 */ }
             }
-            Debug.LogError($"[FrameworkModuleHost] 模块 {module?.GetType().Name} 在 {phase} 抛异常（已隔离）");
+            Debug.LogError($"[FrameworkModuleHost] 模块 {module?.GetType().Name} 在 {phase} 抛异常"
+                + (isolated ? "（已隔离）" : "（启动阶段，模块已标记失败并向上抛出）"));
             Debug.LogException(ex);
         }
     }

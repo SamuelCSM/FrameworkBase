@@ -372,8 +372,9 @@ namespace Framework.Core
         public static Action OnFreezeOrchestration { get; set; }
 
         /// <summary>
-        /// 身份已经贯通后先加载当前账号的 LocalAccount 红点已看版本，再把会话交给业务层。
+        /// 身份已经贯通后先驱动中间层模块两阶段与账号级加载（如红点已看版本），再把会话交给业务层。
         /// 这样业务 Provider 首次提交快照时即可得到稳定的 EffectiveCount，不会先亮后灭。
+        /// 模块启动阶段为 fail-fast：异常直接冒泡使本次登录失败，根因不被掩盖（见 <see cref="FrameworkModuleHost"/>）。
         /// </summary>
         private static async UniTask EnterBusinessSessionAsync(
             LoginResult loginResult,
@@ -382,6 +383,7 @@ namespace Framework.Core
             OnBeforeBusinessEntry?.Invoke();
             // 中间层模块两阶段（ADR-008）：Phase 1 各模块注册能力 → 冻结全局编排 Catalog（L3 经
             // OnFreezeOrchestration 构建并 Initialize）→ Phase 2 各模块启动。模块清单为空时全为空跑。
+            // 此三步任一抛出都不拦截：能力注册/冻结校验失败属装配错误，进业务只会引发更难查的次生故障。
             Modules.RegisterCapabilities();
             OnFreezeOrchestration?.Invoke();
             await Modules.StartAsync();
