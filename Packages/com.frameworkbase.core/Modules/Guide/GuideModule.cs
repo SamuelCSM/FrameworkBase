@@ -2,6 +2,7 @@ using System;
 using System.Threading;
 using Cysharp.Threading.Tasks;
 using Framework.Core;
+using Framework.Diagnostics;
 using Framework.Foundation;
 using UnityEngine;
 
@@ -64,8 +65,44 @@ namespace Framework
             _runner.GuideFailed += (_, __) => _presentation?.Clear();
             _runner.StartListening();
             Guides.Runner = _runner;
+            RegisterDebugCommands();
             Debug.Log($"[Guide] 引导模块已启动，Guide={_runner.Catalog.Guides.Length}，Step={_runner.Catalog.Steps.Length}。");
             return UniTask.CompletedTask;
+        }
+
+        /// <summary>注册引导断点调试命令（操作旧 GuideFlow 设备级存档）。幂等：已注册则跳过。</summary>
+        private static void RegisterDebugCommands()
+        {
+            CommandRegistry registry = GameEntry.Commands;
+            if (registry == null || registry.TryGet("guide", out _)) return;
+            registry.Register(
+                new CommandInfo("guide", "引导断点调试：查看/重置/跳过某条引导的设备级进度",
+                    usage: "guide <status|reset|skip> <引导id>",
+                    requiredAccess: CommandAccessLevel.Privileged),
+                args =>
+                {
+                    string op = args.GetString(0);
+                    string guideId = args.GetString(1);
+                    IGuideProgressStore store = new PrefsGuideProgressStore();
+                    switch (op.ToLowerInvariant())
+                    {
+                        case "status":
+                            if (store.IsCompleted(guideId))
+                                return CommandResult.Ok($"引导 '{guideId}'：已完成");
+                            string stepId = store.GetStepId(guideId);
+                            return CommandResult.Ok(string.IsNullOrEmpty(stepId)
+                                ? $"引导 '{guideId}'：未开始"
+                                : $"引导 '{guideId}'：断点步骤 '{stepId}'（未完成）");
+                        case "reset":
+                            store.Clear(guideId);
+                            return CommandResult.Ok($"引导 '{guideId}' 进度已清（重进流程即从头重播）。");
+                        case "skip":
+                            store.MarkCompleted(guideId);
+                            return CommandResult.Ok($"引导 '{guideId}' 已标记完成（不再弹出；运行中的实例不受影响）。");
+                        default:
+                            throw new CommandArgumentException($"未知操作 '{op}'，应为 status/reset/skip。");
+                    }
+                });
         }
 
         public override void Dispose()

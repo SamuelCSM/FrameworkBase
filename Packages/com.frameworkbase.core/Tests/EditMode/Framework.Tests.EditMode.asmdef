@@ -3,6 +3,7 @@
     "rootNamespace": "Framework.Tests",
     "references": [
         "Framework",
+        "Framework.Modules",
         "Framework.Foundation",
         "Framework.Kernel",
         "Framework.Protocol.Abstractions",

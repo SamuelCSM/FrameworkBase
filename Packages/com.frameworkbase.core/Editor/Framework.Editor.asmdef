@@ -3,6 +3,7 @@
     "rootNamespace": "",
     "references": [
         "Framework",
+        "Framework.Modules",
         "Framework.Foundation",
         "Framework.Kernel",
         "UniTask",

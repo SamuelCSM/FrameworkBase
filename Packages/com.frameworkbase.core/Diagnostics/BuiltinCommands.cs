@@ -235,36 +235,7 @@ namespace Framework.Diagnostics
                     return CommandResult.Ok($"语言已切至 {Language.CurrentLanguage}。已订阅的文案/图片自动刷新。");
                 });
 
-            // 引导断点调试：操作设备级默认存档（PrefsGuideProgressStore），影响下次进入该引导的续跑/弹出。
-            // 不触碰内存中正在运行的 GuideFlow 实例，reset 后须重进流程才生效；账号级自定义存档的项目自行注册对应命令。
-            registry.Register(
-                new CommandInfo("guide", "引导断点调试：查看/重置/跳过某条引导的设备级进度",
-                    usage: "guide <status|reset|skip> <引导id>",
-                    requiredAccess: CommandAccessLevel.Privileged),
-                args =>
-                {
-                    string op = args.GetString(0);
-                    string guideId = args.GetString(1);
-                    IGuideProgressStore store = new PrefsGuideProgressStore();
-                    switch (op.ToLowerInvariant())
-                    {
-                        case "status":
-                            if (store.IsCompleted(guideId))
-                                return CommandResult.Ok($"引导 '{guideId}'：已完成");
-                            string stepId = store.GetStepId(guideId);
-                            return CommandResult.Ok(string.IsNullOrEmpty(stepId)
-                                ? $"引导 '{guideId}'：未开始"
-                                : $"引导 '{guideId}'：断点步骤 '{stepId}'（未完成）");
-                        case "reset":
-                            store.Clear(guideId);
-                            return CommandResult.Ok($"引导 '{guideId}' 进度已清（重进流程即从头重播）。");
-                        case "skip":
-                            store.MarkCompleted(guideId);
-                            return CommandResult.Ok($"引导 '{guideId}' 已标记完成（不再弹出；运行中的实例不受影响）。");
-                        default:
-                            throw new CommandArgumentException($"未知操作 '{op}'，应为 status/reset/skip。");
-                    }
-                });
+            // 引导断点调试命令（guide status/reset/skip）已随引导下沉到 GuideModule 注册（ADR-008）。
 
             registry.Register(
                 new CommandInfo("sysinfo", "设备与运行环境信息",

@@ -1,0 +1,20 @@
+{
+    "name": "Framework.Modules",
+    "rootNamespace": "Framework",
+    "references": [
+        "Framework",
+        "Framework.Kernel",
+        "Framework.Foundation",
+        "UniTask",
+        "UnityEngine.UI"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}
