@@ -4,6 +4,7 @@
     "references": [
         "Framework",
         "Framework.Modules",
+        "Framework.Modules.Editor",
         "Framework.Foundation",
         "Framework.Kernel",
         "Framework.Protocol.Abstractions",
