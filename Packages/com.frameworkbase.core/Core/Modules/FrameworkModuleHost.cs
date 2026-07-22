@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Threading;
 using Cysharp.Threading.Tasks;
 using UnityEngine;
 
@@ -26,14 +27,47 @@ namespace Framework.Core
 
         /// <summary>系统低内存回调，释放可重建缓存；无则空实现。</summary>
         void OnLowMemory();
+
+        /// <summary>
+        /// 账号进入回调（ADR-008）：登录成功、玩家身份贯通之后、业务入口之前，由宿主<b>有序 await</b> 驱动。
+        /// 适合做“必须在业务读数据前完成”的账号级加载（如红点已看版本），避免先亮后灭。无需求则空实现。
+        /// </summary>
+        /// <param name="cancellationToken">业务会话取消令牌；登出/退出会触发取消。</param>
+        UniTask OnAccountEnterAsync(CancellationToken cancellationToken);
+
+        /// <summary>
+        /// 账号退出回调（ADR-008）：在框架清除玩家身份（切回 guest 目录）<b>之前</b>同步调用。
+        /// 适合“需在旧身份仍有效时完成”的收尾（如红点已看快照捕获/回推）。须快速返回，异常被宿主隔离。
+        /// </summary>
+        void OnAccountExit();
+
+        /// <summary>每帧 LateUpdate 回调（ADR-008）：适合帧末统一结算（如红点合并刷新）。无需求则空实现。</summary>
+        /// <param name="deltaTime">本帧时长（秒）。</param>
+        void OnLateUpdate(float deltaTime);
     }
 
-    /// <summary>模块默认基类：按需覆盖，未覆盖的阶段为空操作。</summary>
+    /// <summary>模块默认基类：按需覆盖，未覆盖的阶段为空操作。引导等纯事件驱动模块只覆盖前两阶段即可。</summary>
     public abstract class FrameworkModuleBase : IFrameworkModule
     {
+        /// <summary>Phase 1：注册能力处理器。默认空实现。</summary>
         public virtual void RegisterCapabilities() { }
+
+        /// <summary>Phase 2：编排冻结后启动。默认空实现（立即完成）。</summary>
         public virtual UniTask StartAsync() => UniTask.CompletedTask;
+
+        /// <summary>低内存回调。默认空实现。</summary>
         public virtual void OnLowMemory() { }
+
+        /// <summary>账号进入。默认空实现（模块无账号级加载需求时无需覆盖）。</summary>
+        public virtual UniTask OnAccountEnterAsync(CancellationToken cancellationToken) => UniTask.CompletedTask;
+
+        /// <summary>账号退出。默认空实现（模块无账号级收尾需求时无需覆盖）。</summary>
+        public virtual void OnAccountExit() { }
+
+        /// <summary>每帧结算。默认空实现（模块无逐帧需求时无需覆盖）。</summary>
+        public virtual void OnLateUpdate(float deltaTime) { }
+
+        /// <summary>释放模块资源。默认空实现。</summary>
         public virtual void Dispose() { }
     }
 
@@ -102,6 +136,39 @@ namespace Framework.Core
             {
                 try { _modules[i].OnLowMemory(); }
                 catch (Exception ex) { Report("OnLowMemory", _modules[i], ex); }
+            }
+        }
+
+        /// <summary>
+        /// 账号进入：按登记顺序<b>有序 await</b> 各模块的账号加载（前一个完成再启动后一个）。
+        /// 单个模块异常被隔离并继续——账号级加载（如红点已看版本）失败不应卡住登录进入业务。
+        /// </summary>
+        public async UniTask OnAccountEnterAsync(CancellationToken cancellationToken)
+        {
+            for (int i = 0; i < _modules.Count; i++)
+            {
+                try { await _modules[i].OnAccountEnterAsync(cancellationToken); }
+                catch (Exception ex) { Report("OnAccountEnterAsync", _modules[i], ex); }
+            }
+        }
+
+        /// <summary>账号退出：按登记顺序驱动各模块收尾（异常隔离）。须在框架清除身份之前调用。</summary>
+        public void OnAccountExit()
+        {
+            for (int i = 0; i < _modules.Count; i++)
+            {
+                try { _modules[i].OnAccountExit(); }
+                catch (Exception ex) { Report("OnAccountExit", _modules[i], ex); }
+            }
+        }
+
+        /// <summary>每帧把 LateUpdate 广播给各模块（异常隔离）。属逐帧热路径，模块清单为空时零开销。</summary>
+        public void BroadcastLateUpdate(float deltaTime)
+        {
+            for (int i = 0; i < _modules.Count; i++)
+            {
+                try { _modules[i].OnLateUpdate(deltaTime); }
+                catch (Exception ex) { Report("OnLateUpdate", _modules[i], ex); }
             }
         }
 

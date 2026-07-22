@@ -401,6 +401,10 @@ namespace Framework.Core
             Modules.RegisterCapabilities();
             OnFreezeOrchestration?.Invoke();
             await Modules.StartAsync();
+            // 账号进入（ADR-008）：宿主在业务入口前有序 await 各模块的账号级加载（如红点已看版本），
+            // 避免先亮后灭。引导等模块此钩子为空实现。
+            await Modules.OnAccountEnterAsync(cancellationToken);
+            // TODO(ADR-008 步骤3a)：下面这行红点账号加载将迁入 RedDotModule.OnAccountEnterAsync 后删除。
             await Framework.RedDot.RedDotAccountSession.BeginAsync(RedDots);
             cancellationToken.ThrowIfCancellationRequested();
             if (OnBusinessEntryAsync != null)
@@ -485,8 +489,11 @@ namespace Framework.Core
             }
             finally
             {
+                // 账号退出（ADR-008）：身份清除前驱动各模块收尾。引导等模块此钩子为空实现。
+                Modules?.OnAccountExit();
                 // 此时 SaveManager 仍指向旧账号目录：先异步触发已看版本落盘，再清运行态；
                 // AppFlow 随后才调用 ClearLoggedInIdentity 切回 guest。
+                // TODO(ADR-008 步骤3a)：下面这行红点收尾将迁入 RedDotModule.OnAccountExit 后删除。
                 Framework.RedDot.RedDotAccountSession.End(RedDots);
             }
         }
@@ -714,6 +721,10 @@ namespace Framework.Core
                 catch (Exception ex) { LogComponentError("OnLateUpdate", _components[i], ex); }
             }
 
+            // 中间层模块帧末回调（ADR-008）：如红点在此做帧末合并结算。引导等模块此钩子为空实现。
+            Modules?.BroadcastLateUpdate(dt);
+
+            // TODO(ADR-008 步骤3a)：下面这段红点帧末结算将迁入 RedDotModule.OnLateUpdate 后删除。
             // 帧末统一结算红点：本帧内多个来源对同一子树的写入合并为一次聚合与 UI 通知，
             // 避免一帧内重复计算和多次刷新。目录初始化后自动开启合并模式；读接口仍按需即时结算。
             var redDots = RedDots;
