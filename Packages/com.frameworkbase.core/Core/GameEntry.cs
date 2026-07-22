@@ -158,6 +158,12 @@ namespace Framework.Core
         /// <summary>配置驱动的全局引导运行器；热更 Bootstrap 在配置库就绪后安装 Catalog。</summary>
         public static GuideRunner Guides { get; private set; }
 
+        /// <summary>
+        /// 中间层「框架自带业务模块」宿主（ADR-008）。L3 在配置库就绪前经 <c>Use</c> 登记模块，
+        /// GameEntry 在业务入口前驱动两阶段（RegisterCapabilities → 冻结编排 → StartAsync），退出时逆序 Dispose。
+        /// </summary>
+        public static FrameworkModuleHost Modules { get; private set; }
+
         // ── 生命周期 ─────────────────────────────────────────────────────────
 
         protected override void Awake()
@@ -236,6 +242,14 @@ namespace Framework.Core
             Guides.GuideCancelled += (_, __) => GuidePresentation?.Clear();
             Guides.GuideFailed += (_, __) => GuidePresentation?.Clear();
 
+            // 中间层模块宿主（ADR-008）：L3 经 Modules.Use 登记红点/引导等自带业务模块，
+            // 由 EnterBusinessSessionAsync 在配置库就绪后驱动两阶段。此处仅创建空宿主。
+            Modules = new FrameworkModuleHost
+            {
+                ModuleErrorSink = (phase, module, ex) =>
+                    LogOrchestrationError($"Module:{module?.GetType().Name}:{phase}", ex),
+            };
+
             // 线上性能采样：全构建生效，窗口聚合后经 Analytics 低频上报（挂在 Manager 之后，
             // 上报时经静态访问点取 Analytics，未就绪则静默跳过）
             if (_enablePerfSampling && GetComponent<Framework.Performance.PerfSampler>() == null)
@@ -290,6 +304,7 @@ namespace Framework.Core
                 catch (Exception ex) { LogComponentError("OnLowMemory", _components[i], ex); }
             }
 
+            Modules?.BroadcastLowMemory();
             Event?.Publish(GameMessage.LowMemoryWarning);
             Resources.UnloadUnusedAssets();
         }
@@ -393,6 +408,11 @@ namespace Framework.Core
             CancellationToken cancellationToken)
         {
             OnBeforeBusinessEntry?.Invoke();
+            // 中间层模块两阶段（ADR-008）：Phase 1 注册能力 → 冻结编排 Catalog → Phase 2 启动。
+            // 编排冻结当前仍由各热更 Bootstrap 负责（迁移完成后收敛到此处两阶段之间）；
+            // 模块清单为空时两阶段为空跑，无副作用。
+            Modules.RegisterCapabilities();
+            await Modules.StartAsync();
             await Framework.RedDot.RedDotAccountSession.BeginAsync(RedDots);
             cancellationToken.ThrowIfCancellationRequested();
             if (OnBusinessEntryAsync != null)
@@ -785,6 +805,8 @@ namespace Framework.Core
             _forceLogoutSub = null;
             _playerLogoutSub = null;
 
+            // 先逆序拆中间层模块，再拆其依赖的底层能力（引导/表现/Target 目录）。
+            Modules?.DisposeAll();
             Guides?.Dispose();
             GuidePresentation?.Dispose();
             UiTargets?.Clear();
