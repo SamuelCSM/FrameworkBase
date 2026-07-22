@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Threading;
 using Cysharp.Threading.Tasks;
@@ -39,29 +39,9 @@ namespace Framework
             public object Data;
         }
 
-        private sealed class RuntimeAction
-        {
-            public GuideStepActionDefinition Definition;
-        }
-
-        private sealed class RuntimeStep
-        {
-            public GuideStepDefinition Definition;
-            public readonly List<RuntimeAction> EnterActions = new List<RuntimeAction>();
-            public readonly List<RuntimeAction> ExitActions = new List<RuntimeAction>();
-            public readonly List<RuntimeAction> CancelActions = new List<RuntimeAction>();
-        }
-
-        private sealed class RuntimeGuide
-        {
-            public GuideDefinition Definition;
-            public readonly List<RuntimeStep> Steps = new List<RuntimeStep>();
-            public readonly Dictionary<int, int> StepIndexById = new Dictionary<int, int>();
-        }
-
         private sealed class Session
         {
-            public RuntimeGuide Guide;
+            public GuideRuntimeGuide Guide;
             public int StepIndex;
             public object Scope;
             public object Data;
@@ -70,7 +50,7 @@ namespace Framework
 
         private sealed class PendingStart
         {
-            public RuntimeGuide Guide;
+            public GuideRuntimeGuide Guide;
             public object Scope;
             public object Data;
         }
@@ -79,7 +59,8 @@ namespace Framework
         private readonly TriggerService _triggers;
         private readonly ActionService _actions;
         private readonly IGuideRuntimeProgressStore _progress;
-        private readonly Dictionary<int, RuntimeGuide> _guides = new Dictionary<int, RuntimeGuide>();
+        /// <summary>GuideId → 运行时引导；由 GuideCatalogBinder 在 Initialize 时织好后整体接管。</summary>
+        private Dictionary<int, GuideRuntimeGuide> _guides = new Dictionary<int, GuideRuntimeGuide>();
         private readonly List<IDisposable> _startSubscriptions = new List<IDisposable>();
         private readonly Dictionary<int, PendingStart> _pending = new Dictionary<int, PendingStart>();
 
@@ -125,10 +106,8 @@ namespace Framework
             if (!_rules.IsInitialized || !_triggers.IsInitialized || !_actions.IsInitialized)
                 throw new InvalidOperationException("Rule/Trigger/Action Catalog 必须先于 GuideCatalog 初始化。");
 
-            BuildGuides(catalog);
-            BuildSteps(catalog);
-            BuildActions(catalog);
-            ValidateGuides();
+            // 跨表校验与对象图织造交给绑定器；运行器只接管织好的结果，专注会话状态机。
+            _guides = GuideCatalogBinder.Bind(catalog, _rules, _triggers, _actions);
 
             Catalog = catalog;
             IsInitialized = true;
@@ -143,7 +122,7 @@ namespace Framework
             _listening = true;
             try
             {
-                foreach (RuntimeGuide guide in SortedGuides())
+                foreach (GuideRuntimeGuide guide in SortedGuides())
                 {
                     if (guide.Definition.StartTriggerId <= 0) continue;
                     IDisposable subscription = _triggers.Bind(
@@ -184,7 +163,7 @@ namespace Framework
         {
             ThrowIfDisposed();
             EnsureInitialized();
-            if (!_guides.TryGetValue(guideId, out RuntimeGuide guide))
+            if (!_guides.TryGetValue(guideId, out GuideRuntimeGuide guide))
                 throw new KeyNotFoundException($"Guide ID 不存在：{guideId}。");
 
             if (_active != null || _starting)
@@ -278,7 +257,7 @@ namespace Framework
             }
         }
 
-        private async UniTask HandleStartSignal(RuntimeGuide guide, TriggerSignal signal)
+        private async UniTask HandleStartSignal(GuideRuntimeGuide guide, TriggerSignal signal)
         {
             object scope = ResolveScope(signal.Data);
             await TryStartAsync(guide.Definition.Id, scope, signal.Data);
@@ -287,7 +266,7 @@ namespace Framework
         private async UniTask<StepEnterOutcome> EnterCurrentStepAsync(Session session, object data)
         {
             if (!ReferenceEquals(_active, session)) return StepEnterOutcome.Superseded;
-            RuntimeStep step = session.Guide.Steps[session.StepIndex];
+            GuideRuntimeStep step = session.Guide.Steps[session.StepIndex];
             _progress.SetCurrentStep(session.Guide.Definition.Id, step.Definition.StepId);
 
             if (!await ExecuteActionsAsync(session, step.EnterActions, data, session.Cancellation.Token))
@@ -332,7 +311,7 @@ namespace Framework
         private async UniTask CompleteCurrentStepAsync(Session session, int expectedStepId, object signalData)
         {
             if (!ReferenceEquals(_active, session)) return;
-            RuntimeStep current = session.Guide.Steps[session.StepIndex];
+            GuideRuntimeStep current = session.Guide.Steps[session.StepIndex];
             if (current.Definition.StepId != expectedStepId) return;
             if (_transitioning)
             {
@@ -393,7 +372,7 @@ namespace Framework
 
         private async UniTask<bool> ExecuteActionsAsync(
             Session session,
-            List<RuntimeAction> runtimeActions,
+            List<GuideRuntimeAction> runtimeActions,
             object data,
             CancellationToken cancellationToken)
         {
@@ -427,7 +406,7 @@ namespace Framework
             DisposeStepSubscription();
             try { session.Cancellation.Cancel(); } catch (Exception ex) { Report(ex); }
 
-            RuntimeStep step = session.Guide.Steps[session.StepIndex];
+            GuideRuntimeStep step = session.Guide.Steps[session.StepIndex];
             try
             {
                 if (runCancelActions)
@@ -481,7 +460,7 @@ namespace Framework
             }
         }
 
-        private void QueuePending(RuntimeGuide guide, object scope, object data)
+        private void QueuePending(GuideRuntimeGuide guide, object scope, object data)
         {
             if (_active?.Guide.Definition.Id == guide.Definition.Id) return;
             _pending[guide.Definition.Id] = new PendingStart
@@ -492,114 +471,9 @@ namespace Framework
             };
         }
 
-        private void BuildGuides(GuideCatalog catalog)
+        private IEnumerable<GuideRuntimeGuide> SortedGuides()
         {
-            GuideDefinition[] definitions = catalog.Guides ?? Array.Empty<GuideDefinition>();
-            var keys = new HashSet<string>(StringComparer.Ordinal);
-            for (int i = 0; i < definitions.Length; i++)
-            {
-                GuideDefinition definition = definitions[i]
-                    ?? throw new InvalidOperationException($"Guides[{i}] 为空。");
-                if (definition.Id <= 0) throw new InvalidOperationException("Guide Id 必须大于 0。");
-                if (string.IsNullOrWhiteSpace(definition.Key))
-                    throw new InvalidOperationException($"Guide {definition.Id} Key 不能为空。");
-                if (!_guides.TryAdd(definition.Id, new RuntimeGuide { Definition = definition }))
-                    throw new InvalidOperationException($"Guide Id 重复：{definition.Id}。");
-                if (!keys.Add(definition.Key))
-                    throw new InvalidOperationException($"Guide Key 重复：{definition.Key}。");
-                if (!Enum.IsDefined(typeof(GuideRepeatMode), definition.RepeatMode))
-                    throw new InvalidOperationException($"Guide {definition.Id} RepeatMode 非法。");
-                if (definition.StartRuleId > 0 && !_rules.ContainsRule(definition.StartRuleId))
-                    throw new InvalidOperationException($"Guide {definition.Id} StartRuleId 不存在：{definition.StartRuleId}。");
-                if (definition.StartTriggerId > 0 && !_triggers.ContainsTrigger(definition.StartTriggerId))
-                    throw new InvalidOperationException($"Guide {definition.Id} StartTriggerId 不存在：{definition.StartTriggerId}。");
-            }
-        }
-
-        private void BuildSteps(GuideCatalog catalog)
-        {
-            GuideStepDefinition[] definitions = catalog.Steps ?? Array.Empty<GuideStepDefinition>();
-            var identities = new HashSet<long>();
-            for (int i = 0; i < definitions.Length; i++)
-            {
-                GuideStepDefinition definition = definitions[i]
-                    ?? throw new InvalidOperationException($"Steps[{i}] 为空。");
-                if (!_guides.TryGetValue(definition.GuideId, out RuntimeGuide guide))
-                    throw new InvalidOperationException($"Step 引用了不存在的 GuideId={definition.GuideId}。");
-                if (definition.StepId <= 0)
-                    throw new InvalidOperationException($"Guide {definition.GuideId} StepId 必须大于 0。");
-                if (definition.CompleteTriggerId <= 0 || !_triggers.ContainsTrigger(definition.CompleteTriggerId))
-                    throw new InvalidOperationException(
-                        $"Guide {definition.GuideId} Step {definition.StepId} CompleteTriggerId 不存在：{definition.CompleteTriggerId}。");
-                long identity = ((long)definition.GuideId << 32) | (uint)definition.StepId;
-                if (!identities.Add(identity))
-                    throw new InvalidOperationException($"Guide {definition.GuideId} StepId 重复：{definition.StepId}。");
-                guide.Steps.Add(new RuntimeStep { Definition = definition });
-            }
-
-            foreach (RuntimeGuide guide in _guides.Values)
-                guide.Steps.Sort(CompareSteps);
-        }
-
-        private void BuildActions(GuideCatalog catalog)
-        {
-            GuideStepActionDefinition[] definitions = catalog.StepActions ?? Array.Empty<GuideStepActionDefinition>();
-            var orderKeys = new HashSet<string>(StringComparer.Ordinal);
-            for (int i = 0; i < definitions.Length; i++)
-            {
-                GuideStepActionDefinition definition = definitions[i]
-                    ?? throw new InvalidOperationException($"StepActions[{i}] 为空。");
-                if (!_guides.TryGetValue(definition.GuideId, out RuntimeGuide guide))
-                    throw new InvalidOperationException($"StepAction 引用了不存在的 GuideId={definition.GuideId}。");
-                RuntimeStep step = null;
-                for (int n = 0; n < guide.Steps.Count; n++)
-                    if (guide.Steps[n].Definition.StepId == definition.StepId) { step = guide.Steps[n]; break; }
-                if (step == null)
-                    throw new InvalidOperationException(
-                        $"StepAction 引用了不存在的 Step：Guide={definition.GuideId}, Step={definition.StepId}。");
-                if (!_actions.ContainsAction(definition.ActionId))
-                    throw new InvalidOperationException($"StepAction ActionId 不存在：{definition.ActionId}。");
-                if (!Enum.IsDefined(typeof(GuideActionPhase), definition.Phase)
-                    || !Enum.IsDefined(typeof(GuideActionFailurePolicy), definition.FailurePolicy))
-                    throw new InvalidOperationException("StepAction Phase/FailurePolicy 非法。");
-                string orderKey = $"{definition.GuideId}:{definition.StepId}:{(int)definition.Phase}:{definition.Order}";
-                if (!orderKeys.Add(orderKey))
-                    throw new InvalidOperationException($"同一步骤同一阶段 Action Order 重复：{orderKey}。");
-
-                var action = new RuntimeAction { Definition = definition };
-                GetActionList(step, definition.Phase).Add(action);
-            }
-
-            foreach (RuntimeGuide guide in _guides.Values)
-                for (int i = 0; i < guide.Steps.Count; i++)
-                {
-                    guide.Steps[i].EnterActions.Sort(CompareActions);
-                    guide.Steps[i].ExitActions.Sort(CompareActions);
-                    guide.Steps[i].CancelActions.Sort(CompareActions);
-                }
-        }
-
-        private void ValidateGuides()
-        {
-            foreach (RuntimeGuide guide in _guides.Values)
-            {
-                if (guide.Steps.Count == 0)
-                    throw new InvalidOperationException($"Guide {guide.Definition.Id} 至少需要一个步骤。");
-                var orders = new HashSet<int>();
-                for (int i = 0; i < guide.Steps.Count; i++)
-                {
-                    RuntimeStep step = guide.Steps[i];
-                    if (!orders.Add(step.Definition.Order))
-                        throw new InvalidOperationException(
-                            $"Guide {guide.Definition.Id} Step Order 重复：{step.Definition.Order}。");
-                    guide.StepIndexById.Add(step.Definition.StepId, i);
-                }
-            }
-        }
-
-        private IEnumerable<RuntimeGuide> SortedGuides()
-        {
-            var list = new List<RuntimeGuide>(_guides.Values);
+            var list = new List<GuideRuntimeGuide>(_guides.Values);
             list.Sort((left, right) =>
             {
                 int priority = right.Definition.Priority.CompareTo(left.Definition.Priority);
@@ -608,7 +482,7 @@ namespace Framework
             return list;
         }
 
-        private static int ResolveStepIndex(RuntimeGuide guide, int savedStepId)
+        private static int ResolveStepIndex(GuideRuntimeGuide guide, int savedStepId)
             => savedStepId > 0 && guide.StepIndexById.TryGetValue(savedStepId, out int index) ? index : 0;
 
         private static object ResolveScope(object signalData)
@@ -616,29 +490,6 @@ namespace Framework
             if (signalData is UIWindowLifecycleEvent window) return window.Root;
             if (signalData is UITarget target) return target.Scope;
             return null;
-        }
-
-        private static int CompareSteps(RuntimeStep left, RuntimeStep right)
-        {
-            int order = left.Definition.Order.CompareTo(right.Definition.Order);
-            return order != 0 ? order : left.Definition.StepId.CompareTo(right.Definition.StepId);
-        }
-
-        private static int CompareActions(RuntimeAction left, RuntimeAction right)
-        {
-            int order = left.Definition.Order.CompareTo(right.Definition.Order);
-            return order != 0 ? order : left.Definition.ActionId.CompareTo(right.Definition.ActionId);
-        }
-
-        private static List<RuntimeAction> GetActionList(RuntimeStep step, GuideActionPhase phase)
-        {
-            switch (phase)
-            {
-                case GuideActionPhase.Enter: return step.EnterActions;
-                case GuideActionPhase.Exit: return step.ExitActions;
-                case GuideActionPhase.Cancel: return step.CancelActions;
-                default: throw new ArgumentOutOfRangeException(nameof(phase));
-            }
         }
 
         private void DisposeStepSubscription()
