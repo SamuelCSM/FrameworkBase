@@ -6,7 +6,8 @@
         "Framework.Kernel",
         "Framework.Foundation",
         "UniTask",
-        "UnityEngine.UI"
+        "UnityEngine.UI",
+        "Unity.TextMeshPro"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],
