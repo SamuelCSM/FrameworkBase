@@ -98,15 +98,13 @@ namespace Framework
             TriggerService triggers,
             ActionService actions,
             UIManager ui,
-            UITargetRegistry targets,
-            GuidePresentationService guidePresentation)
+            UITargetRegistry targets)
         {
             if (rules == null) throw new ArgumentNullException(nameof(rules));
             if (triggers == null) throw new ArgumentNullException(nameof(triggers));
             if (actions == null) throw new ArgumentNullException(nameof(actions));
             if (ui == null) throw new ArgumentNullException(nameof(ui));
             if (targets == null) throw new ArgumentNullException(nameof(targets));
-            if (guidePresentation == null) throw new ArgumentNullException(nameof(guidePresentation));
 
             rules.Register(BuiltinOrchestrationTypeIds.Rules.UIWindowIsOpen,
                 new UIWindowIsOpenRule(ui));
@@ -126,10 +124,7 @@ namespace Framework
                 new UICloseWindowAction(ui));
             actions.Register(BuiltinOrchestrationTypeIds.Actions.Delay,
                 new DelayAction());
-            actions.Register(BuiltinOrchestrationTypeIds.Actions.GuideFocusTarget,
-                new GuideFocusTargetAction(guidePresentation));
-            actions.Register(BuiltinOrchestrationTypeIds.Actions.GuideClearFocus,
-                new GuideClearFocusAction(guidePresentation));
+            // 引导表现 Action（GuideFocusTarget / GuideClearFocus）已下沉到 GuideModule（ADR-008）。
         }
 
         private sealed class UIWindowIsOpenRule : IRuleEvaluator<UIWindowRulePayload>
@@ -281,39 +276,6 @@ namespace Framework
             }
         }
 
-        private sealed class GuideFocusTargetAction : IActionExecutor<GuideFocusTargetActionPayload>
-        {
-            private readonly GuidePresentationService _presentation;
-            public GuideFocusTargetAction(GuidePresentationService presentation) => _presentation = presentation;
-
-            public UniTask<ActionExecutionResult> ExecuteAsync(
-                GuideFocusTargetActionPayload payload,
-                ActionContext context,
-                CancellationToken cancellationToken)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                return UniTask.FromResult(
-                    _presentation.TryFocus(payload.TargetId, context.Scope, payload.Padding, payload.DimAlpha)
-                        ? ActionExecutionResult.Succeeded()
-                        : ActionExecutionResult.Failed(
-                            $"TargetId={payload.TargetId} 当前不存在或 Scope 不匹配。"));
-            }
-        }
-
-        private sealed class GuideClearFocusAction : IActionExecutor<GuideClearFocusActionPayload>
-        {
-            private readonly GuidePresentationService _presentation;
-            public GuideClearFocusAction(GuidePresentationService presentation) => _presentation = presentation;
-
-            public UniTask<ActionExecutionResult> ExecuteAsync(
-                GuideClearFocusActionPayload payload,
-                ActionContext context,
-                CancellationToken cancellationToken)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                _presentation.Clear();
-                return UniTask.FromResult(ActionExecutionResult.Succeeded());
-            }
-        }
+        // GuideFocusTargetAction / GuideClearFocusAction 已随引导表现下沉到 GuideModule（ADR-008）。
     }
 }

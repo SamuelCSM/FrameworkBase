@@ -152,15 +152,10 @@ namespace Framework.Core
         /// <summary>稳定 UI TargetId 到当前激活 Rect/Button 实例的运行时目录。</summary>
         public static UITargetRegistry UiTargets { get; private set; }
 
-        /// <summary>配置引导的通用挖孔/高亮表现服务。</summary>
-        public static GuidePresentationService GuidePresentation { get; private set; }
-
-        /// <summary>配置驱动的全局引导运行器；热更 Bootstrap 在配置库就绪后安装 Catalog。</summary>
-        public static GuideRunner Guides { get; private set; }
-
         /// <summary>
         /// 中间层「框架自带业务模块」宿主（ADR-008）。L3 在配置库就绪前经 <c>Use</c> 登记模块，
         /// GameEntry 在业务入口前驱动两阶段（RegisterCapabilities → 冻结编排 → StartAsync），退出时逆序 Dispose。
+        /// 引导/红点等运行器由各模块自身持有并暴露访问点（如 <c>Guides.Runner</c>），不再挂在 GameEntry 上。
         /// </summary>
         public static FrameworkModuleHost Modules { get; private set; }
 
@@ -225,22 +220,8 @@ namespace Framework.Core
             TweenBootstrap.Initialize();
             InitializeManagers();
             // 内置 UI/计时器 Rule、Trigger、Action 只依赖框架服务，在业务 Catalog 安装前一次性注册。
-            GuidePresentation = new GuidePresentationService(UI, UiTargets);
-            UIOrchestrationBuiltins.Register(
-                Rules, Triggers, Actions, UI, UiTargets, GuidePresentation);
-            Guides = new GuideRunner(
-                Rules,
-                Triggers,
-                Actions,
-                new PrefsGuideRuntimeProgressStore())
-            {
-                ObserverErrorSink = ex => LogOrchestrationError("Guide", ex),
-            };
-            // 表现清理由配置的 GuideClearFocus Action 负责；此处叠加防御性兜底，
-            // 确保引导在任意结束路径（完成/取消/失败）都不会遗留全屏挖孔遮罩卡死操作。
-            Guides.GuideCompleted += _ => GuidePresentation?.Clear();
-            Guides.GuideCancelled += (_, __) => GuidePresentation?.Clear();
-            Guides.GuideFailed += (_, __) => GuidePresentation?.Clear();
+            // 引导表现（GuideFocus/Clear）等业务能力由对应模块在 RegisterCapabilities 阶段注册（ADR-008）。
+            UIOrchestrationBuiltins.Register(Rules, Triggers, Actions, UI, UiTargets);
 
             // 中间层模块宿主（ADR-008）：L3 经 Modules.Use 登记红点/引导等自带业务模块，
             // 由 EnterBusinessSessionAsync 在配置库就绪后驱动两阶段。此处仅创建空宿主。
@@ -400,6 +381,13 @@ namespace Framework.Core
         public static Action OnBeforeBusinessEntry { get; set; }
 
         /// <summary>
+        /// 编排 Catalog 冻结钩子（ADR-008）。L3 在此用配置构建并 Initialize 全局 Rule/Trigger/Action 目录；
+        /// 由 <see cref="EnterBusinessSessionAsync"/> 在模块 RegisterCapabilities 之后、StartAsync 之前调用一次，
+        /// 确保各模块的能力处理器（如引导表现 Action）已注册完毕再冻结校验。实现须幂等（重复登录会再次调用）。
+        /// </summary>
+        public static Action OnFreezeOrchestration { get; set; }
+
+        /// <summary>
         /// 身份已经贯通后先加载当前账号的 LocalAccount 红点已看版本，再把会话交给业务层。
         /// 这样业务 Provider 首次提交快照时即可得到稳定的 EffectiveCount，不会先亮后灭。
         /// </summary>
@@ -408,10 +396,10 @@ namespace Framework.Core
             CancellationToken cancellationToken)
         {
             OnBeforeBusinessEntry?.Invoke();
-            // 中间层模块两阶段（ADR-008）：Phase 1 注册能力 → 冻结编排 Catalog → Phase 2 启动。
-            // 编排冻结当前仍由各热更 Bootstrap 负责（迁移完成后收敛到此处两阶段之间）；
-            // 模块清单为空时两阶段为空跑，无副作用。
+            // 中间层模块两阶段（ADR-008）：Phase 1 各模块注册能力 → 冻结全局编排 Catalog（L3 经
+            // OnFreezeOrchestration 构建并 Initialize）→ Phase 2 各模块启动。模块清单为空时全为空跑。
             Modules.RegisterCapabilities();
+            OnFreezeOrchestration?.Invoke();
             await Modules.StartAsync();
             await Framework.RedDot.RedDotAccountSession.BeginAsync(RedDots);
             cancellationToken.ThrowIfCancellationRequested();
@@ -805,10 +793,8 @@ namespace Framework.Core
             _forceLogoutSub = null;
             _playerLogoutSub = null;
 
-            // 先逆序拆中间层模块，再拆其依赖的底层能力（引导/表现/Target 目录）。
+            // 先逆序拆中间层模块（引导/红点运行器由各模块 Dispose 释放），再拆其依赖的 L1 Target 目录。
             Modules?.DisposeAll();
-            Guides?.Dispose();
-            GuidePresentation?.Dispose();
             UiTargets?.Clear();
 
             // 反向顺序关闭所有组件；逐个 try/catch 隔离，确保某组件清理异常不影响其余组件关闭

@@ -6,13 +6,14 @@ using Framework.Core;
 using Framework.Foundation;
 using HotUpdate.Config.Data;
 using HotUpdate.Config.Table;
-using UnityEngine;
 
 namespace HotUpdate.Guide
 {
     /// <summary>
-    /// 热更侧引导组合根：从标准 Ref/Table 构造强类型 Rule/Trigger/Action Catalog，再安装 GuideCatalog。
-    /// 业务扩展 TypeId 可在 Install 前注册 Payload Factory；对应 Evaluator/Binder/Executor 仍注册到通用服务。
+    /// 热更侧引导组合根（L3，ADR-008）：向框架宿主登记 <see cref="GuideModule"/>，并提供全局
+    /// Rule/Trigger/Action 编排目录的冻结实现（从标准 Ref/Table 构造强类型 Catalog）。引导运行器的生命周期、
+    /// 引导表现 Action 的注册与 GuideCatalog 的初始化都在 <see cref="GuideModule"/> 内完成。
+    /// 业务扩展 TypeId 可在冻结前注册 Payload Factory；对应 Evaluator/Binder/Executor 仍注册到通用服务。
     /// </summary>
     public static class GuideBootstrap
     {
@@ -22,8 +23,8 @@ namespace HotUpdate.Guide
             new Dictionary<int, Func<int, object>>();
         private static readonly Dictionary<int, Func<int, object>> CustomActionPayloadFactories =
             new Dictionary<int, Func<int, object>>();
-        private static GuideRunner _installedRunner;
-        private static GuideRunner _observedRunner;
+        private static GuideModule _module;
+        private static bool _frozen;
 
         public static void RegisterRulePayloadFactory<TPayload>(int typeId, Func<int, TPayload> factory)
             => RegisterFactory(CustomRulePayloadFactories, typeId, factory);
@@ -34,15 +35,20 @@ namespace HotUpdate.Guide
         public static void RegisterActionPayloadFactory<TPayload>(int typeId, Func<int, TPayload> factory)
             => RegisterFactory(CustomActionPayloadFactories, typeId, factory);
 
+        /// <summary>登记引导模块并挂上编排冻结钩子。幂等：重复登录只覆盖钩子、不重复登记模块。</summary>
         public static void Install()
         {
-            GuideRunner runner = GameEntry.Guides;
-            if (runner == null)
-            {
-                Debug.LogError("[Guide] GameEntry.Guides 尚未创建，无法安装引导目录。");
-                return;
-            }
-            if (ReferenceEquals(_installedRunner, runner) && runner.IsInitialized) return;
+            GameEntry.OnFreezeOrchestration = FreezeOrchestration;
+            if (_module != null) return;
+            _module = new GuideModule(BuildGuideCatalog);
+            GameEntry.Modules.Use(_module);
+        }
+
+        /// <summary>编排冻结（GameEntry 在模块 RegisterCapabilities 之后调用）：构建并 Initialize 全局编排目录。幂等。</summary>
+        private static void FreezeOrchestration()
+        {
+            if (_frozen) return;
+            _frozen = true;
 
             Dictionary<int, Func<int, object>> ruleFactories = BuildRuleFactories();
             Dictionary<int, Func<int, object>> triggerFactories = BuildTriggerFactories();
@@ -51,35 +57,12 @@ namespace HotUpdate.Guide
             MergeCustom(triggerFactories, CustomTriggerPayloadFactories, "Trigger");
             MergeCustom(actionFactories, CustomActionPayloadFactories, "Action");
 
-            RuleCatalog ruleCatalog = BuildRuleCatalog(ruleFactories);
-            TriggerCatalog triggerCatalog = BuildTriggerCatalog(triggerFactories);
-            ActionCatalog actionCatalog = BuildActionCatalog(actionFactories);
-            GuideCatalog guideCatalog = BuildGuideCatalog();
-
             if (!GameEntry.Rules.IsInitialized)
-                GameEntry.Rules.Initialize(ruleCatalog);
+                GameEntry.Rules.Initialize(BuildRuleCatalog(ruleFactories));
             if (!GameEntry.Triggers.IsInitialized)
-                GameEntry.Triggers.Initialize(triggerCatalog);
+                GameEntry.Triggers.Initialize(BuildTriggerCatalog(triggerFactories));
             if (!GameEntry.Actions.IsInitialized)
-                GameEntry.Actions.Initialize(actionCatalog);
-            if (!runner.IsInitialized)
-                runner.Initialize(guideCatalog);
-            AttachDiagnostics(runner);
-            runner.StartListening();
-
-            _installedRunner = runner;
-            Debug.Log($"[Guide] 引导目录已安装，Guide={runner.Catalog.Guides.Length}，Step={runner.Catalog.Steps.Length}。");
-        }
-
-        private static void AttachDiagnostics(GuideRunner runner)
-        {
-            if (ReferenceEquals(_observedRunner, runner)) return;
-            runner.GuideCompleted += guideId => Debug.Log($"[Guide] GUIDE_COMPLETED id={guideId}");
-            runner.GuideCancelled += (guideId, reason) =>
-                Debug.LogWarning($"[Guide] GUIDE_CANCELLED id={guideId} reason={reason}");
-            runner.GuideFailed += (guideId, reason) =>
-                Debug.LogError($"[Guide] GUIDE_FAILED id={guideId} reason={reason}");
-            _observedRunner = runner;
+                GameEntry.Actions.Initialize(BuildActionCatalog(actionFactories));
         }
 
         private static RuleCatalog BuildRuleCatalog(IReadOnlyDictionary<int, Func<int, object>> factories)
@@ -304,8 +287,8 @@ namespace HotUpdate.Guide
         {
             if (typeId <= 0) throw new ArgumentOutOfRangeException(nameof(typeId));
             if (factory == null) throw new ArgumentNullException(nameof(factory));
-            if (GameEntry.Guides?.IsInitialized == true)
-                throw new InvalidOperationException("Guide Catalog 已初始化，不能再注册 Payload Factory。");
+            if (_frozen)
+                throw new InvalidOperationException("编排 Catalog 已冻结，不能再注册 Payload Factory。");
             if (factories.ContainsKey(typeId))
                 throw new InvalidOperationException($"Payload Factory TypeId 重复：{typeId}。");
             factories.Add(typeId, id => factory(id));
