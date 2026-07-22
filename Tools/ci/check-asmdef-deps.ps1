@@ -10,6 +10,9 @@
 #      AppConfig.HotUpdateAssemblyFiles 非空时，其（去 .dll.bytes 后）集合须与 HybridCLRSettings 一致；
 #      有效热更入口程序集（AppConfig.HotUpdateEntryAssembly 优先，回退 VersionManager 默认）须为热更清单成员。
 #   R5 测试程序集 autoReferenced=false（避免被 Assembly-CSharp 自动引用污染）。
+#   R6 中间层单向（ADR-008）：L1 核心运行时层（Foundation/Kernel/Framework，不含 Editor）不得引用
+#      L2 中间层 Framework.Modules*（红点/引导等自带业务模块）；L1 只认识宿主与访问点，不认识具体模块。
+#      Editor 层可引用中间层的编译器/工具，故不在此约束内。
 #
 # 用法：
 #   pwsh -File Tools/ci/check-asmdef-deps.ps1          # 校验，违规则 exit 1
@@ -271,11 +274,25 @@ foreach ($n in $projectNames) {
     }
 }
 
+# ── R6 中间层单向（ADR-008）：L1 核心运行时层不得引用 L2 中间层 Framework.Modules* ────────────
+# 铁律"L1 不认识 L2"焊进 CI：红点/引导等自带业务模块经宿主(FrameworkModuleHost)驱动、经访问点
+# (Guides.Runner / RedDots.Service)消费，核心层不得反向直接引用中间层。Editor 层(rank 3)承载模块的
+# 编译器/窗口工具，允许引用中间层，故排除在外。
+foreach ($n in $projectNames) {
+    if (-not $tierRank.ContainsKey($n)) { continue }   # 只约束框架核心层（业务/热更/中间层自身不在此列）
+    if ($tierRank[$n] -ge $tierRank["Framework.Editor"]) { continue }  # Editor 层可引用中间层工具，跳过
+    foreach ($m in (Resolve-ProjectRefs $asms[$n])) {
+        if ($m -like "Framework.Modules*") {
+            Add-Violation "R6" "核心层 $n(rank $($tierRank[$n])) 不得引用中间层 $m（ADR-008：L1 不认识 L2，模块经宿主与访问点解耦）"
+        }
+    }
+}
+
 # ── 结论 ──────────────────────────────────────────────────────────────────────
 Write-Host "== asmdef 依赖门禁 =="
 Write-Host ("工程自有程序集: {0} 个；热更程序集: [{1}]" -f $projectNames.Count, (@($hotUpdate) -join ", "))
 if ($violations.Count -eq 0) {
-    Write-Host "[AsmdefGate] PASS —— R1..R5 全部通过。"
+    Write-Host "[AsmdefGate] PASS —— R1..R6 全部通过。"
     exit 0
 }
 Write-Host "[AsmdefGate] FAIL —— 违规 $($violations.Count) 项："
