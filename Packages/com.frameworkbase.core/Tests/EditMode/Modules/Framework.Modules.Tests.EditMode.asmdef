@@ -1,0 +1,30 @@
+{
+    "name": "Framework.Modules.Tests.EditMode",
+    "rootNamespace": "Framework.Tests",
+    "references": [
+        "Framework",
+        "Framework.Modules",
+        "Framework.Modules.Editor",
+        "Framework.Foundation",
+        "Framework.Kernel",
+        "Framework.Editor",
+        "UniTask",
+        "UnityEngine.TestRunner",
+        "UnityEditor.TestRunner"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": true,
+    "precompiledReferences": [
+        "nunit.framework.dll"
+    ],
+    "autoReferenced": false,
+    "defineConstraints": [
+        "UNITY_INCLUDE_TESTS"
+    ],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

@@ -288,6 +288,17 @@ foreach ($n in $projectNames) {
     }
 }
 
+# 核心测试集同样按层隔离：L2 模块测试归 Framework.Modules.Tests.EditMode，避免某个模块的测试
+# 编译失败就拖垮整个核心测试集（模块会越来越多）。
+$coreTestAsm = "Framework.Tests.EditMode"
+if ($asms.ContainsKey($coreTestAsm)) {
+    foreach ($m in (Resolve-ProjectRefs $asms[$coreTestAsm])) {
+        if ($m -like "Framework.Modules*") {
+            Add-Violation "R6" "核心测试集 $coreTestAsm 不得引用中间层 $m（中间层测试请放 Framework.Modules.Tests.EditMode）"
+        }
+    }
+}
+
 # ── 结论 ──────────────────────────────────────────────────────────────────────
 Write-Host "== asmdef 依赖门禁 =="
 Write-Host ("工程自有程序集: {0} 个；热更程序集: [{1}]" -f $projectNames.Count, (@($hotUpdate) -join ", "))
