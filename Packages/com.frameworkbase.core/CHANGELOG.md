@@ -7,6 +7,14 @@
 
 ### 新增
 
+- **运行时相机调度缝 `ICameraDirector` + `Cameras` 访问点**（框架核心零具体相机方案依赖）：只定义业务对镜头的
+  指令面（`Activate(id)` 激活命名镜头 / `Shake` 震屏 / `ActiveCameraId` / `IsRegistered`），把"用什么实现"
+  （Cinemachine / 自研 / 无）留给可选扩展包或项目层——与 PrimeTween(ADR-007)、崩溃后端、云存档同一模式
+  （主干接口+默认兜底+实现进扩展包）。默认 `NullCameraDirector` 无操作兜底，保证业务经 `Cameras.Director`
+  调用永不 NullReference、也不强迫项目接相机方案；扩展/项目经 `Cameras.Register` 注入实现。命名镜头的登记
+  属实现细节不进契约，Cinemachine blend 语义不泄漏进主干。Cinemachine 实现见独立可选包
+  `com.frameworkbase.cinemachine`（骨架，需装 Cinemachine 后启用）。EditMode 4 例。
+
 - **弹窗/流程序列队列 L2 模块 `PopupQueueModule`**（沿用 ADR-008 既有模块扩展机制，不改分层/依赖方向/
   公共契约，无需新 ADR）：借鉴 ALQueue 的序列消费思路，多来源弹窗请求不并发弹出，而是入队后一次只
   展示一个、关闭后再放下一个，按优先级（同级 FIFO）决定顺序。纯核 `PopupQueue`（不依赖 UnityEngine、
