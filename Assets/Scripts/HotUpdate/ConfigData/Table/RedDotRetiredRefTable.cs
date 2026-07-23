@@ -1,6 +1,7 @@
 // ==========================================
 // 自动生成的表加载类: RedDotRetiredRefTable
 // 来源工作表: red_dot_retired_ref
+// 生成时间: 2026-07-23 10:57:15
 // ==========================================
 
 using System;
@@ -10,11 +11,25 @@ using HotUpdate.Config.Data;
 
 namespace HotUpdate.Config.Table
 {
-    /// <summary>RedDotRetiredRef 表加载器。</summary>
+    /// <summary>
+    /// RedDotRetiredRef 表加载器。
+    /// </summary>
     public class RedDotRetiredRefTable : ConfigBase<int, RedDotRetiredRef>
     {
-        public RedDotRetiredRefTable() { }
+        /// <summary>
+        /// 构造函数。
+        /// </summary>
+        public RedDotRetiredRefTable()
+        {
+            // ConfigManager 会按需加载该配置表。
+        }
 
-        protected override int GetKey(RedDotRetiredRef item) => item.Id;
+        /// <summary>
+        /// 返回单行配置数据的主键。
+        /// </summary>
+        protected override int GetKey(RedDotRetiredRef item)
+        {
+            return item.Id;
+        }
     }
 }

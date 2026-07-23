@@ -1,6 +1,7 @@
 // ==========================================
 // 自动生成的配置类: RedDotModuleRef
 // 来源工作表: red_dot_module_ref
+// 生成时间: 2026-07-23 10:57:15
 // ==========================================
 
 using System;
@@ -12,30 +13,44 @@ using Framework.Foundation;
 
 namespace HotUpdate.Config.Data
 {
-    /// <summary>RedDotModuleRef 配置数据。</summary>
+    /// <summary>
+    /// RedDotModuleRef 配置数据。
+    /// </summary>
     [Table("red_dot_module_ref")]
     [Serializable]
     public class RedDotModuleRef
     {
-        /// <summary>稳定模块 ID。</summary>
+        /// <summary>
+        /// 稳定模块ID
+        /// </summary>
         [PrimaryKey]
         [Column("Id")]
         public int Id { get; set; }
 
-        /// <summary>模块程序短名，用于生成枚举与节点完整名称。</summary>
+        /// <summary>
+        /// 模块程序短名；用于生成枚举与节点完整名称
+        /// </summary>
         [Column("CodeName")]
         public string CodeName { get; set; }
 
-        /// <summary>模块职责说明。</summary>
+        /// <summary>
+        /// 模块职责说明
+        /// </summary>
         [Column("Description")]
         public string Description { get; set; }
 
-        /// <summary>节点 ID 号段起点（包含）。</summary>
+        /// <summary>
+        /// 节点ID号段起点（包含）
+        /// </summary>
         [Column("IdMin")]
         public int IdMin { get; set; }
 
-        /// <summary>节点 ID 号段终点（包含）。</summary>
+        /// <summary>
+        /// 节点ID号段终点（包含）
+        /// </summary>
         [Column("IdMax")]
         public int IdMax { get; set; }
+
     }
+
 }
