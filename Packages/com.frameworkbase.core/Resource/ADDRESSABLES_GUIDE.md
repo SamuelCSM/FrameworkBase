@@ -345,6 +345,9 @@ Warning 建议修，不一定阻止构建，但通常意味着包体、下载、
 | GroupOverBudget | Warning | 单组太大，更新粒度过粗 | 按功能或更新频率继续拆组 |
 | UnregisteredManagedAsset | Warning | `ResourcesOut` 里有资源没注册 | 执行 Register Assets (Sync ResourcesOut) |
 | EmptyGroup | Warning | 空组没有意义 | 删除空组 |
+| RemoteBundleNamingNoContentHash | Warning | 远端组 Bundle 命名不含内容哈希（NoHash / FileNameHash），内容热更后 CDN 可能供旧字节 | 组 Schema 的 Bundle Naming 改 Append Hash 或 Use Hash of AssetBundle |
+| RemoteBundleUncompressed | Warning | 远端组 Bundle 未压缩，下载体积翻数倍 | 组 Schema 的 Compression 改 LZ4 |
+| CoarsePatchGranularity | Warning | 远端组 PackTogether 且条目过多，改一个资源要重下整包 | 按更新频率拆组，或改 Pack Separately |
 
 ## 常用修复操作
 

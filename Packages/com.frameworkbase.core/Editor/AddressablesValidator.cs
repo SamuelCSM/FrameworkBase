@@ -106,6 +106,9 @@ namespace Framework.Editor
                 {
                     groupModel.BuildPathName = schema.BuildPath.GetName(settings) ?? string.Empty;
                     groupModel.LoadPathName = schema.LoadPath.GetName(settings) ?? string.Empty;
+                    groupModel.Packing = MapPacking(schema.BundleMode);
+                    groupModel.Naming = MapNaming(schema.BundleNaming);
+                    groupModel.Compression = MapCompression(schema.Compression);
                 }
 
                 foreach (AddressableAssetEntry entry in group.entries)
@@ -181,6 +184,42 @@ namespace Framework.Editor
 
                 if (settings.FindAssetEntry(guid) == null)
                     model.UnregisteredManagedAssets.Add(path);
+            }
+        }
+
+        // ── Addressables schema 枚举 → 框架侧解耦枚举（规则层不碰 Addressables API）──
+
+        private static BundlePackingKind MapPacking(BundledAssetGroupSchema.BundlePackingMode mode)
+        {
+            switch (mode)
+            {
+                case BundledAssetGroupSchema.BundlePackingMode.PackTogether: return BundlePackingKind.PackTogether;
+                case BundledAssetGroupSchema.BundlePackingMode.PackSeparately: return BundlePackingKind.PackSeparately;
+                case BundledAssetGroupSchema.BundlePackingMode.PackTogetherByLabel: return BundlePackingKind.PackTogetherByLabel;
+                default: return BundlePackingKind.Unknown;
+            }
+        }
+
+        private static BundleNamingKind MapNaming(BundledAssetGroupSchema.BundleNamingStyle style)
+        {
+            switch (style)
+            {
+                case BundledAssetGroupSchema.BundleNamingStyle.AppendHash: return BundleNamingKind.AppendHash;
+                case BundledAssetGroupSchema.BundleNamingStyle.OnlyHash: return BundleNamingKind.OnlyHash;
+                case BundledAssetGroupSchema.BundleNamingStyle.FileNameHash: return BundleNamingKind.FileNameHash;
+                case BundledAssetGroupSchema.BundleNamingStyle.NoHash: return BundleNamingKind.NoHash;
+                default: return BundleNamingKind.Unknown;
+            }
+        }
+
+        private static BundleCompressionKind MapCompression(BundledAssetGroupSchema.BundleCompressionMode mode)
+        {
+            switch (mode)
+            {
+                case BundledAssetGroupSchema.BundleCompressionMode.Uncompressed: return BundleCompressionKind.Uncompressed;
+                case BundledAssetGroupSchema.BundleCompressionMode.LZ4: return BundleCompressionKind.LZ4;
+                case BundledAssetGroupSchema.BundleCompressionMode.LZMA: return BundleCompressionKind.LZMA;
+                default: return BundleCompressionKind.Unknown;
             }
         }
 

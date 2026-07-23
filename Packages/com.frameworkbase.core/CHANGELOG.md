@@ -7,6 +7,14 @@
 
 ### 新增
 
+- **Addressables 远端 bundle 布局审计（规则 11~13）**：`AddressablesValidationRules` 在既有重复隐式依赖
+  （规则 9）、组更新粒度（规则 8）之上，补三条远端组 bundle 布局咨询规则——① 命名不含内容哈希
+  （NoHash/FileNameHash）→ 内容热更后 CDN 可能按 URL 供旧字节（热更特有隐患，关联 ADR-005/009）；
+  ② 未压缩 → 下载体积翻数倍；③ PackTogether 且条目超阈值 → 改一个资源重下整包、补丁粒度过粗
+  （与按体积的组超限互补）。模型加与 Addressables API 解耦的 `BundlePackingKind/BundleNamingKind/
+  BundleCompressionKind`（采集层从 `BundledAssetGroupSchema` 映射，规则层不碰 Addressables）。均为
+  Warning、不阻断构建，随既有 `AddressablesValidator` 门禁在 CiGate 里输出。EditMode 4 例。
+
 - **预加载按设备档位限流并行 `ResourceManager.PreloadAssetsAsync`**：此前批量预加载是串行
   `foreach await`（低端不安全地无上限也谈不上、高端白白丢吞吐）。现按 `DeviceTierService.Tier`
   经纯映射 `DeviceTierResourceTuning.PreloadConcurrency`（Low=1 串行保内存 / Mid=3 / High=6）决定
