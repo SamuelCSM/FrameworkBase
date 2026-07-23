@@ -163,6 +163,16 @@
 - ConfigManager 首装路径去噪：初始化时持久化数据库尚不存在属正常序列（LaunchFlow 随后从首包安装），该提示从 Warning 降为普通日志；「安装后仍无可用库」保持 Warning/Error。此前该噪声被验收器清库路径不对（未删真实的 `{persistentDataPath}/config.db`）掩盖，真实首装设备每次都会打出一条告警。
 - AudioManager 改用 `AssetLease<AudioClip>` 记录每次播放所有权；自然结束、Stop/StopAll、Shutdown、加载取消/失败均幂等归还，且代际安全 Handle 阻止池化 AudioSource 被旧引用误操作。
 - `.gitignore` 补齐 Addressables 内容构建生成的 `Assets/AddressableAssetsData/Windows.meta`（目录已忽略、其文件夹 meta 此前遗漏，资源发布后残留未跟踪文件）。
+- **ResourceManager 并发/同步失败句柄泄漏**：命中共享句柄的等待者在加载失败时只减引用、不释放底层
+  Addressables 句柄，与创建者的 `RollbackLoad` 回收路径不一致；并发加载同一地址且失败、由等待者最后把
+  引用减到 0 时（缓存已被创建者移除），句柄无人释放。新增 `RollbackSharedReference` 统一"谁减到 0 谁
+  释放"。同步 `LoadAsset` 两处一并修：命中在途句柄改阻塞完成再取值且仅成功才增引用（原实现在途读到 null
+  却已增引用，引用超计）；新句柄加载失败改就地释放（原实现失败句柄既不入缓存也不释放）。
+- **启动下载阶段句柄释放兜底 + 取消令牌贯穿**：`DownloadDependenciesAsync` /
+  `DownloadAllRemoteDependenciesAsync` 的句柄改在 `finally` 统一释放（原 `catch` 路径漏释放，异常时泄漏），
+  并支持循环内取消。启动作用域取消令牌（GameEntry 新增 `_bootCts`，早于既有 `_appFlowCts`）经
+  LaunchFlow → 更新执行器逐层下传到 Catalog/资源/代码补丁下载，使应用退出/销毁能干净中止在途下载——
+  此前启动下载阶段完全无令牌可用。
 
 ### 变更
 
@@ -186,6 +196,12 @@
   对齐、字体入库后，`ci.yml` 资源门禁恢复 `-strictFonts` 严格模式（缺字重新阻断，撤销 e0b19e2 的临时降级）。新增
   `Framework/Localization/Build CJK Fallback SDF` 菜单与 batchmode 入口 `CjkFallbackFontBuilder.BuildForBatch`
   从子集 OTF 重建动态 SDF 资产。**注意**：字体入包后 Android 包体增长，需按门禁提示滚动 build-size 基线。
+- **热更低层入口 `HotUpdateManager.DownloadPatchAsync` 收 `internal`（破坏性，孵化期）**：该重载按调用方给定
+  `PatchFile.Url` 单源下载，绕过可信 CDN 内容身份路由（无 `TrustedContentIdentity` 绑定、无"URL 属主更新根"
+  校验、无多 CDN 故障熔断，见 ADR-005），仅按 Size/SHA-256 校验完整性但无法证明字段来自已验签清单。从公共
+  API 面移除以防业务误用（ADR-003 补遗方向），仅保留给框架内部与存储类单测（`InternalsVisibleTo` 已覆盖）。
+  正式代码补丁一律走 `DownloadCodePatchAsync`（从 `AppConfig` 构建 `TrustedCdnRouteSet`、按内容身份下载、
+  Host 不参与信任判定）。无生产调用方，业务侧零迁移。
 
 ## [0.16.0] - 2026-07-09
 
