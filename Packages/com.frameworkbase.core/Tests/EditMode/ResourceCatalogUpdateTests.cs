@@ -1,8 +1,11 @@
 using System;
 using System.Collections.Generic;
+using System.Security.Cryptography;
+using System.Text;
 using System.Threading;
 using Cysharp.Threading.Tasks;
 using Framework.Core;
+using Framework.HotUpdate;
 using NUnit.Framework;
 
 namespace Framework.Tests
@@ -21,8 +24,10 @@ namespace Framework.Tests
             public Func<List<string>> CheckBehavior = () => new List<string>();
             public Action UpdateBehavior = () => { };
             public Func<long> SizeBehavior = () => 0;
+            public Func<string, byte[]> CatalogBytesBehavior = _ => Array.Empty<byte>();
             public int CheckCalls;
             public int UpdateCalls;
+            public int CatalogBytesCalls;
 
             public UniTask<List<string>> CheckForCatalogUpdatesAsync(CancellationToken cancellationToken)
             {
@@ -43,6 +48,13 @@ namespace Framework.Tests
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 return UniTask.FromResult(SizeBehavior());
+            }
+
+            public UniTask<byte[]> DownloadRemoteCatalogBytesAsync(string catalogId, CancellationToken cancellationToken)
+            {
+                CatalogBytesCalls++;
+                cancellationToken.ThrowIfCancellationRequested();
+                return UniTask.FromResult(CatalogBytesBehavior(catalogId));
             }
         }
 
@@ -161,6 +173,76 @@ namespace Framework.Tests
             Assert.AreEqual(CatalogUpdateErrorCodes.InvalidResult, result.ErrorCode);
         }
 
+        // ── ADR-009：应用前对已验签 Catalog 内容身份校验 ─────────────────────
+
+        [Test]
+        public void 资源版本增长_Catalog身份匹配_验签通过并激活()
+        {
+            byte[] bytes = SampleCatalogBytes();
+            _service.CheckBehavior = () => new List<string> { "https://cdn.example.com/addr/catalog_x.json" };
+            _service.CatalogBytesBehavior = _ => bytes;
+
+            CatalogUpdateResult result = Wait(_flow.CheckAndUpdateAsync(default, IdentityFor(bytes)));
+
+            Assert.AreEqual(CatalogUpdateStatus.Updated, result.Status);
+            Assert.AreEqual(1, _service.CatalogBytesCalls, "应用前必须下载并验签 Catalog 字节");
+            Assert.AreEqual(1, _service.UpdateCalls, "验签通过才允许激活");
+        }
+
+        [Test]
+        public void 资源版本增长_Catalog哈希不符_IntegrityFailed且绝不激活()
+        {
+            _service.CheckBehavior = () => new List<string> { "https://cdn.example.com/addr/catalog_x.json" };
+            _service.CatalogBytesBehavior = _ => Encoding.UTF8.GetBytes("被篡改的 catalog 内容");
+
+            CatalogUpdateResult result = Wait(_flow.CheckAndUpdateAsync(default, IdentityFor(SampleCatalogBytes())));
+
+            Assert.AreEqual(CatalogUpdateStatus.IntegrityFailed, result.Status);
+            Assert.IsFalse(result.Succeeded);
+            Assert.AreEqual(CatalogUpdateErrorCodes.IntegrityFailed, result.ErrorCode);
+            Assert.AreEqual(0, _service.UpdateCalls, "身份不符绝不允许激活未签名的资源目录");
+        }
+
+        [Test]
+        public void 资源版本增长_更新集无匹配身份的Catalog_IntegrityFailed()
+        {
+            // 多个待更新 catalog 但无一匹配已验签身份的文件名：定位不到即失败关闭，且不下载任何字节。
+            _service.CheckBehavior = () => new List<string> { "catalog_a.json", "catalog_b.json" };
+
+            var identity = IdentityFor(SampleCatalogBytes());
+            identity.FileName = "catalog_x.json";
+            CatalogUpdateResult result = Wait(_flow.CheckAndUpdateAsync(default, identity));
+
+            Assert.AreEqual(CatalogUpdateStatus.IntegrityFailed, result.Status);
+            Assert.AreEqual(0, _service.CatalogBytesCalls);
+            Assert.AreEqual(0, _service.UpdateCalls);
+        }
+
+        [Test]
+        public void Catalog字节下载失败_IntegrityFailed失败关闭()
+        {
+            _service.CheckBehavior = () => new List<string> { "https://cdn.example.com/addr/catalog_x.json" };
+            _service.CatalogBytesBehavior = _ => throw new CatalogOperationException("模拟 Catalog 下载 500");
+
+            CatalogUpdateResult result = Wait(_flow.CheckAndUpdateAsync(default, IdentityFor(SampleCatalogBytes())));
+
+            Assert.AreEqual(CatalogUpdateStatus.IntegrityFailed, result.Status);
+            Assert.AreEqual(0, _service.UpdateCalls);
+        }
+
+        [Test]
+        public void 无期望身份_不触发验签_保持原行为()
+        {
+            // 纯代码更新/老项目：expectedCatalog 为 null，不下载不验签，行为与历史一致。
+            _service.CheckBehavior = () => new List<string> { "catalog_a" };
+
+            CatalogUpdateResult result = Wait(_flow.CheckAndUpdateAsync());
+
+            Assert.AreEqual(CatalogUpdateStatus.Updated, result.Status);
+            Assert.AreEqual(0, _service.CatalogBytesCalls, "无期望身份时不应触发 Catalog 验签下载");
+            Assert.AreEqual(1, _service.UpdateCalls);
+        }
+
         // ── 下载尺寸查询：失败与"无需下载"是两个结果 ─────────────────────────
 
         [Test]
@@ -260,6 +342,23 @@ namespace Framework.Tests
             var step4 = LaunchFlowUpdateExecutor.EvaluateResourceUpdate(canceled, null, null);
 
             Assert.IsFalse(step4.Success, "取消必须中止启动更新");
+        }
+
+        // ── ADR-009 验签测试辅助 ─────────────────────────────────────────────
+
+        private static byte[] SampleCatalogBytes() => Encoding.UTF8.GetBytes("{\"m_LocatorId\":\"catalog\",\"v\":2}");
+
+        /// <summary>为给定字节构造与之匹配的已验签身份（Size + 真实 SHA-256）。</summary>
+        private static ResourceCatalogFile IdentityFor(byte[] bytes, string fileName = "catalog_x.json")
+        {
+            using (SHA256 sha = SHA256.Create())
+            {
+                byte[] hash = sha.ComputeHash(bytes);
+                var sb = new StringBuilder(hash.Length * 2);
+                foreach (byte b in hash)
+                    sb.Append(b.ToString("x2"));
+                return new ResourceCatalogFile { FileName = fileName, Size = bytes.Length, SHA256 = sb.ToString() };
+            }
         }
     }
 }

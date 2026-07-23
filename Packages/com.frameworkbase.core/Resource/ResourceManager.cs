@@ -127,10 +127,14 @@ namespace Framework
         /// </para>
         /// </summary>
         /// <param name="cancellationToken">启动流程取消令牌；取消返回 Canceled 终态而非抛异常。</param>
-        public async UniTask<CatalogUpdateResult> CheckAndUpdateCatalogsAsync(CancellationToken cancellationToken = default)
+        /// <param name="expectedCatalog">已验签清单声明的资源 Catalog 内容身份（ADR-009）；非 null 时应用前验签，
+        /// 失败关闭。资源版本未增长（纯代码更新/老项目）传 null，保持原行为。</param>
+        public async UniTask<CatalogUpdateResult> CheckAndUpdateCatalogsAsync(
+            CancellationToken cancellationToken = default,
+            HotUpdate.ResourceCatalogFile expectedCatalog = null)
         {
             GameLog.Log("[ResourceManager] 检查 Catalog 更新...");
-            CatalogUpdateResult result = await CatalogFlow.CheckAndUpdateAsync(cancellationToken);
+            CatalogUpdateResult result = await CatalogFlow.CheckAndUpdateAsync(cancellationToken, expectedCatalog);
             if (result.Status == CatalogUpdateStatus.UpToDate)
             {
                 GameLog.Log("[ResourceManager] Catalog 已是最新（Editor Play Mode 下属正常，" +

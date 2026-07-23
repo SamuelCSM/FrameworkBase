@@ -255,7 +255,10 @@ namespace Framework.Core
                 }
 
                 var step4 = LaunchTelemetryHelper.BeginPhaseMetric(runMetric, LaunchPhase.ResourceUpdate, "step04_resource_update");
-                var resourceUpdateResult = await LaunchFlowUpdateExecutor.ExecuteResourceUpdateAsync(loading, resourceUpdated, cancellationToken);
+                // serverVersion 已过验签 + 字段级准入（CheckUpdateAsync），其 ResourceCatalog 身份可信；
+                // 传给资源更新执行器，供应用远端 Catalog 前验签（ADR-009）。
+                var resourceUpdateResult = await LaunchFlowUpdateExecutor.ExecuteResourceUpdateAsync(
+                    loading, resourceUpdated, cancellationToken, serverVersion?.ResourceCatalog);
                 if (!resourceUpdateResult.Success)
                 {
                     // 失败关闭：Catalog 失败 / 尺寸查询失败 / 下载失败都中止启动，绝不提交 ResourceVersion。

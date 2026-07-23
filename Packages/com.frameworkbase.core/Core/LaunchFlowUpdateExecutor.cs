@@ -147,7 +147,8 @@ namespace Framework.Core
         /// 任一发生都返回 Success=false，LaunchFlow 据此中止启动并禁止提交 ResourceVersion。
         /// </summary>
         public static async UniTask<ResourceUpdateResult> ExecuteResourceUpdateAsync(
-            LoadingWindow loading, bool resourceUpdated, CancellationToken cancellationToken = default)
+            LoadingWindow loading, bool resourceUpdated, CancellationToken cancellationToken = default,
+            HotUpdate.ResourceCatalogFile expectedCatalog = null)
         {
             if (!resourceUpdated)
             {
@@ -160,7 +161,8 @@ namespace Framework.Core
             loading.SetProgress(0.25f);
 
             // ── Step 4a：Catalog 检查 + 更新 ────────────────────────────────
-            CatalogUpdateResult catalogResult = await GameEntry.Resource.CheckAndUpdateCatalogsAsync(cancellationToken);
+            CatalogUpdateResult catalogResult =
+                await GameEntry.Resource.CheckAndUpdateCatalogsAsync(cancellationToken, expectedCatalog);
             Debug.Log($"[LaunchFlow] Step 4a  Catalog 结果: {catalogResult}");
             if (!catalogResult.Succeeded)
             {

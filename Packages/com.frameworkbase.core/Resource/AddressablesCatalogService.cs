@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Threading;
 using Cysharp.Threading.Tasks;
 using UnityEngine.AddressableAssets;
+using UnityEngine.Networking;
 using UnityEngine.ResourceManagement.AsyncOperations;
 using UnityEngine.ResourceManagement.ResourceLocations;
 
@@ -70,6 +71,37 @@ namespace Framework
             {
                 if (handle.IsValid())
                     Addressables.Release(handle);
+            }
+        }
+
+        /// <inheritdoc />
+        public async UniTask<byte[]> DownloadRemoteCatalogBytesAsync(string catalogId, CancellationToken cancellationToken)
+        {
+            if (string.IsNullOrWhiteSpace(catalogId))
+                throw new ArgumentException("Catalog ID 不能为空。", nameof(catalogId));
+            cancellationToken.ThrowIfCancellationRequested();
+
+            // 远端 Catalog 的 ID 即其加载 URL（本地 catalog 不进入本路径——只有存在远端更新时才校验）。
+            // 这里只取字节做验签，不激活；激活仍由 UpdateCatalogsAsync 走 Addressables 常规路径。
+            using (UnityWebRequest request = UnityWebRequest.Get(catalogId))
+            {
+                try
+                {
+                    await request.SendWebRequest().WithCancellation(cancellationToken);
+                }
+                catch (UnityWebRequestException ex)
+                {
+                    throw new CatalogOperationException(
+                        $"下载远端 Catalog 字节失败：id={catalogId}，{ex.Result} {ex.Message}");
+                }
+
+                if (request.result != UnityWebRequest.Result.Success)
+                {
+                    throw new CatalogOperationException(
+                        $"下载远端 Catalog 字节失败：id={catalogId}，result={request.result}，error={request.error}");
+                }
+
+                return request.downloadHandler.data ?? Array.Empty<byte>();
             }
         }
 
