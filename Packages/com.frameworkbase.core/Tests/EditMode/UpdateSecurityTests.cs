@@ -164,6 +164,62 @@ namespace Framework.Tests
             Assert.IsFalse(UpdateSecurity.ValidateManifest(server, local, "prod", "default", out _));
         }
 
+        // ── ADR-009：资源 Catalog 内容身份 ──────────────────────────────────
+
+        [Test]
+        public void 合法Catalog身份_通过()
+        {
+            Assert.IsTrue(UpdateSecurity.ValidateResourceCatalogFile(CreateValidCatalog(), out string reason), reason);
+        }
+
+        [Test]
+        public void Catalog身份_空或字段非法_逐项拒绝()
+        {
+            Assert.IsFalse(UpdateSecurity.ValidateResourceCatalogFile(null, out _), "null 身份");
+
+            var traversal = CreateValidCatalog(); traversal.FileName = "../catalog.json";
+            Assert.IsFalse(UpdateSecurity.ValidateResourceCatalogFile(traversal, out _), "目录穿越名");
+
+            var notJson = CreateValidCatalog(); notJson.FileName = "catalog.bin";
+            Assert.IsFalse(UpdateSecurity.ValidateResourceCatalogFile(notJson, out _), "非 .json 后缀");
+
+            var badSize = CreateValidCatalog(); badSize.Size = 0;
+            Assert.IsFalse(UpdateSecurity.ValidateResourceCatalogFile(badSize, out _), "Size<=0");
+
+            var badHash = CreateValidCatalog(); badHash.SHA256 = "not-a-digest";
+            Assert.IsFalse(UpdateSecurity.ValidateResourceCatalogFile(badHash, out _), "非 64 位十六进制");
+        }
+
+        [Test]
+        public void 资源版本增长但缺Catalog身份_拒绝()
+        {
+            UpdateInfo local = CreateLocalVersion();
+            UpdateInfo server = CreateValidManifest(local, local.CodeVersion);
+            server.ResourceVersion = local.ResourceVersion + 1; // 资源升级
+            server.ResourceCatalog = null;                       // 却无签名身份
+            Assert.IsFalse(UpdateSecurity.ValidateManifest(server, local, "prod", "default", out string reason));
+            Assert.IsTrue(reason.Contains("Catalog"), reason);
+        }
+
+        [Test]
+        public void 资源版本增长且带合法Catalog身份_放行()
+        {
+            UpdateInfo local = CreateLocalVersion();
+            UpdateInfo server = CreateValidManifest(local, local.CodeVersion);
+            server.ResourceVersion = local.ResourceVersion + 1;
+            server.ResourceCatalog = CreateValidCatalog();
+            Assert.IsTrue(UpdateSecurity.ValidateManifest(server, local, "prod", "default", out string reason), reason);
+        }
+
+        [Test]
+        public void 资源版本未增长_无Catalog身份也放行_老项目零迁移()
+        {
+            UpdateInfo local = CreateLocalVersion();
+            UpdateInfo server = CreateValidManifest(local, local.CodeVersion); // ResourceVersion 保持不变
+            server.ResourceCatalog = null;
+            Assert.IsTrue(UpdateSecurity.ValidateManifest(server, local, "prod", "default", out string reason), reason);
+        }
+
         // ── 公钥环与签名 ────────────────────────────────────────────────────
 
         [Test]
@@ -267,6 +323,14 @@ namespace Framework.Tests
             FileName = fileName,
             Url = $"https://cdn.example.com/Updates/{fileName}",
             Size = 1024,
+            SHA256 = ValidSha256,
+        };
+
+        /// <summary>创建字段完整的测试用资源 Catalog 身份（ADR-009）。</summary>
+        private static ResourceCatalogFile CreateValidCatalog() => new ResourceCatalogFile
+        {
+            FileName = "catalog_2026072301.json",
+            Size = 4096,
             SHA256 = ValidSha256,
         };
 

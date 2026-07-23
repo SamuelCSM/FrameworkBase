@@ -308,6 +308,18 @@ namespace Framework.HotUpdate
                     return false;
             }
 
+            // ADR-009：资源版本增长时清单必须携带合法的 Catalog 内容身份——与上方 CodeVersion→PatchFiles
+            // 对称。缺失即拒绝（失败关闭），杜绝"资源版本涨了、Catalog 却无签名身份可验、只能盲信 .hash"。
+            // 资源版本未增长时 ResourceCatalog 可空（纯代码更新/老项目零迁移）。
+            if (appCompare == 0 && server.ResourceVersion > local.ResourceVersion)
+            {
+                if (!ValidateResourceCatalogFile(server.ResourceCatalog, out rejectReason))
+                {
+                    rejectReason = $"ResourceVersion 已增加，但 Catalog 身份无效：{rejectReason}";
+                    return false;
+                }
+            }
+
             return true;
         }
 
@@ -440,6 +452,52 @@ namespace Framework.HotUpdate
             if (fileName.Contains("..") || fileName.IndexOfAny(new[] { '/', '\\', ':' }) >= 0) return false;
             if (fileName.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0) return false;
             return fileName.EndsWith(".dll.bytes", StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>
+        /// 判断文件名是否为可安全拼接到远程加载根下的 Catalog 叶子文件名（ADR-009）。
+        /// 与 <see cref="IsSafeLeafFileName"/> 同样拒绝目录穿越/盘符/非法字符，但后缀要求为 <c>.json</c>
+        /// （Addressables 产出的 <c>catalog_*.json</c>），而非 <c>.dll.bytes</c>。
+        /// </summary>
+        public static bool IsSafeCatalogLeafFileName(string fileName)
+        {
+            if (string.IsNullOrWhiteSpace(fileName)) return false;
+            if (!string.Equals(fileName, Path.GetFileName(fileName), StringComparison.Ordinal)) return false;
+            if (fileName.Contains("..") || fileName.IndexOfAny(new[] { '/', '\\', ':' }) >= 0) return false;
+            if (fileName.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0) return false;
+            return fileName.EndsWith(".json", StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>
+        /// 校验资源远程 Catalog 的内容身份（ADR-009）：安全 <c>.json</c> 叶子名、Size 为正、SHA-256 为
+        /// 64 位十六进制摘要。资源版本增长时清单必须携带通过本校验的身份，客户端据此在应用前验签 Catalog。
+        /// </summary>
+        /// <param name="catalog">待校验的 Catalog 身份；为 null 视为非法。</param>
+        /// <param name="rejectReason">失败时返回拒绝原因。</param>
+        public static bool ValidateResourceCatalogFile(ResourceCatalogFile catalog, out string rejectReason)
+        {
+            rejectReason = null;
+            if (catalog == null)
+            {
+                rejectReason = "资源 Catalog 身份为空。";
+                return false;
+            }
+            if (!IsSafeCatalogLeafFileName(catalog.FileName))
+            {
+                rejectReason = $"资源 Catalog 文件名不是安全的 .json 叶子名：{catalog.FileName}";
+                return false;
+            }
+            if (catalog.Size <= 0)
+            {
+                rejectReason = $"资源 Catalog Size 必须大于 0：{catalog.FileName}";
+                return false;
+            }
+            if (!IsHexDigest(catalog.SHA256, 64))
+            {
+                rejectReason = $"资源 Catalog SHA-256 不是 64 位十六进制摘要：{catalog.FileName}";
+                return false;
+            }
+            return true;
         }
 
         /// <summary>

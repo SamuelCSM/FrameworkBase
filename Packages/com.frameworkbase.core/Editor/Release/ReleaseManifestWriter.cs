@@ -52,6 +52,13 @@ namespace Framework.Editor.Release
                 throw new ArgumentException($"代码补丁快照无效：{patchError}", nameof(manifest));
             }
 
+            // ADR-009：Catalog 身份若提供必须合法（"资源版本增长时必须提供"的门控在构建期校验，需本地基线）。
+            if (manifest.ResourceCatalog != null &&
+                !UpdateSecurity.ValidateResourceCatalogFile(manifest.ResourceCatalog, out string catalogError))
+            {
+                throw new ArgumentException($"资源 Catalog 身份无效：{catalogError}", nameof(manifest));
+            }
+
             return JsonUtility.ToJson(manifest, prettyPrint: true);
         }
     }
