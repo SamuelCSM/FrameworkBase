@@ -4,6 +4,7 @@ using System.IO;
 using System.Text.RegularExpressions;
 using Cysharp.Threading.Tasks;
 using Framework.Save;
+using Framework.Serialization;
 using NUnit.Framework;
 using UnityEngine;
 using UnityEngine.TestTools;
@@ -37,6 +38,16 @@ namespace Framework.Tests
         private sealed class FixedKeyProvider : ISaveKeyProvider
         {
             public string GetMasterSecret() => "save-manager-test-secret";
+        }
+
+        /// <summary>与 SaveManager 磁盘信封同字段的测试 DTO，用于按字段篡改后回写。</summary>
+        [Serializable]
+        private class RawEnvelope
+        {
+            public int    v;
+            public string h;
+            public string d;
+            public string m;
         }
 
         private string _user;
@@ -87,7 +98,48 @@ namespace Framework.Tests
             string raw = File.ReadAllText(SavePath(_user, nameof(ProfileSave)));
             StringAssert.DoesNotContain("PlainSecretName", raw, "昵称明文不得出现在存档文件中");
             StringAssert.DoesNotContain("12345", raw, "金币明文不得出现在存档文件中");
-            StringAssert.Contains("hmac256", raw, "封包应标记 HMAC 完整性方案");
+            StringAssert.Contains("\"m\":\"hmac256h\"", raw, "封包应标记 header-bound HMAC 完整性方案");
+        });
+
+        [UnityTest]
+        public IEnumerator 降级到裸SHA256被拒_旧洞已堵() => UniTask.ToCoroutine(async () =>
+        {
+            await SaveManager.Instance.SaveAsync(new ProfileSave { nickname = "orig", coins = 50 });
+
+            // 模拟降级攻击：篡改密文，把方案抹成空（旧版据此走裸 SHA-256），再用无密钥的 SHA-256
+            // 重算一个"合法"完整性码。旧代码会接受并加载被篡改的档；现只认 hmac256h，必须拒绝。
+            string path = SavePath(_user, nameof(ProfileSave));
+            var envelope = JsonSerializers.Shared.FromJson<RawEnvelope>(File.ReadAllText(path));
+            byte[] encrypted = Convert.FromBase64String(envelope.d);
+            encrypted[encrypted.Length - 1] ^= 0xFF;   // 翻转一字节，模拟数据被改
+            envelope.d = Convert.ToBase64String(encrypted);
+            envelope.m = "";                           // 降级到"空方案"
+            envelope.h = AesHelper.Sha256Hex(encrypted); // 无密钥摘要，模拟攻击者自行重算
+            File.WriteAllText(path, JsonSerializers.Shared.ToJson(envelope, false));
+            File.Delete(path + ".bak");
+
+            var loaded = await SaveManager.Instance.LoadAsync<ProfileSave>();
+            Assert.AreEqual("", loaded.nickname, "降级到裸 SHA-256 的伪造档必须被拒绝，回退默认");
+            Assert.AreEqual(0, loaded.coins);
+        });
+
+        [UnityTest]
+        public IEnumerator 篡改版本号被拒_元数据已纳入认证() => UniTask.ToCoroutine(async () =>
+        {
+            await SaveManager.Instance.SaveAsync(new ProfileSave { nickname = "orig", coins = 50 });
+
+            // 只改信封里的版本号 v（不动密文与 h）。旧方案 MAC 只覆盖密文，改 v 不影响校验，
+            // 会以被篡改的版本触发错误迁移；现在 v 已纳入 MAC，改 v 必然使校验失败。
+            string path = SavePath(_user, nameof(ProfileSave));
+            string raw = File.ReadAllText(path);
+            string tampered = Regex.Replace(raw, "\"v\":\\s*-?\\d+", "\"v\":999");
+            Assert.AreNotEqual(raw, tampered, "测试前提：信封应含可篡改的 v 字段");
+            File.WriteAllText(path, tampered);
+            File.Delete(path + ".bak");
+
+            var loaded = await SaveManager.Instance.LoadAsync<ProfileSave>();
+            Assert.AreEqual("", loaded.nickname, "篡改版本号的档必须被拒绝，回退默认");
+            Assert.AreEqual(0, loaded.coins);
         });
 
         [UnityTest]

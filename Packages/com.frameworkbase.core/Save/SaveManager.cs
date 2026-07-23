@@ -87,16 +87,20 @@ namespace Framework.Save
         }
 
         // ── 磁盘封包格式 ─────────────────────────────────────────────────────
-        // 完整性方案标识：旧档无此字段（m 为空）→ 裸 SHA-256；新档 = HMAC-SHA256
-        private const string MacSchemeHmac = "hmac256";
+        // 完整性方案：只接受 hmac256h —— HMAC-SHA256 覆盖「认证头(方案 m + 版本 v) + 密文」。
+        // 历史上曾有两条更弱的读取路径，均已移除（见提交说明），因为它们各自留有认证缺口：
+        //   · m 为空 → 裸 SHA-256：无密钥，攻击者可篡改密文后自行重算合法码，属认证绕过（降级攻击）；
+        //   · m=hmac256（旧）：MAC 只覆盖密文，未覆盖 v/m，元数据（版本号、方案标识）可被篡改。
+        // 现在 m/v 一并纳入 MAC，且非 hmac256h 一律拒绝加载（回退备份 → 默认值）。
+        private const string MacSchemeHmacHeader = "hmac256h";
 
         [Serializable]
         private class SaveEnvelope
         {
-            public int    v;   // dataVersion at time of save
-            public string h;   // 完整性码（按 m 区分：空=裸 SHA-256 旧档，hmac256=HMAC-SHA256）
+            public int    v;   // 存档时的 dataVersion；已纳入 MAC 认证，篡改会导致校验失败
+            public string h;   // 完整性码：HMAC-SHA256(认证头 + 密文) 的十六进制
             public string d;   // Base64(IV + AES ciphertext)
-            public string m;   // 完整性方案标识；旧档无此字段反序列化为 null，按裸 SHA-256 兼容读取
+            public string m;   // 完整性方案标识；已纳入 MAC 认证，只接受 hmac256h
         }
 
         /// <summary>
@@ -125,14 +129,15 @@ namespace Framework.Save
             var json      = JsonSerializers.Shared.ToJson(data, false);
             var encrypted = AesHelper.Encrypt(json);
 
-            // 完整性一律用 HMAC-SHA256（encrypt-then-MAC）：篡改后无 MAC Key 无法重算合法完整性码
+            // 完整性用 HMAC-SHA256（encrypt-then-MAC）：篡改后无 MAC Key 无法重算合法完整性码。
+            // MAC 覆盖「认证头(方案 m + 版本 v) + 密文」，把元数据一并绑进签名——防止篡改 v/m 或降级方案。
             var envelope = new SaveEnvelope
             {
                 v = data.dataVersion,
-                h = AesHelper.HmacSha256Hex(encrypted),
                 d = Convert.ToBase64String(encrypted),
-                m = MacSchemeHmac,
+                m = MacSchemeHmacHeader,
             };
+            envelope.h = AesHelper.HmacSha256Hex(BuildMacInput(envelope.m, envelope.v, encrypted));
             var envelopeJson = JsonSerializers.Shared.ToJson(envelope, false);
 
             var savePath   = SlotPath<T>(slot);
@@ -235,20 +240,29 @@ namespace Framework.Save
             return new T();
         }
 
-        // 按封包标识的完整性方案校验密文：
-        //   · m == hmac256：HMAC-SHA256 常数时间校验（防篡改）；
-        //   · m 为空：旧档兼容，退回裸 SHA-256（仅防意外损坏，下次写档自动升级为 HMAC）；
-        //   · 其它取值：未知方案，视为校验失败。
+        // 完整性校验：只接受 hmac256h —— HMAC-SHA256 覆盖「认证头(方案+版本)+密文」，常数时间比较。
+        // 空方案(裸 SHA-256)与旧 hmac256(仅覆盖密文)一律拒绝：前者无密钥可伪造，后者元数据未认证。
+        // 认证头用文件里读到的 m/v 重算——攻击者改动任一字段都会使 MAC 不匹配。
         private static bool VerifyIntegrity(byte[] encrypted, SaveEnvelope envelope)
         {
-            if (envelope.m == MacSchemeHmac)
-                return AesHelper.VerifyHmac(encrypted, envelope.h);
+            if (envelope.m != MacSchemeHmacHeader)
+            {
+                GameLog.Warning($"[SaveManager] 不受支持的完整性方案 m={envelope.m ?? "(空)"}，拒绝加载");
+                return false;
+            }
+            return AesHelper.VerifyHmac(BuildMacInput(envelope.m, envelope.v, encrypted), envelope.h);
+        }
 
-            if (string.IsNullOrEmpty(envelope.m))
-                return AesHelper.Sha256Hex(encrypted) == envelope.h;
-
-            GameLog.Warning($"[SaveManager] 未知完整性方案 m={envelope.m}，拒绝加载");
-            return false;
+        // 构造 MAC 覆盖的字节：认证头(方案 + 版本，换行域分隔) 前置于密文。
+        // 换行分隔避免 "1"+"23" 与 "12"+"3" 之类的拼接歧义；把 m/v 纳入认证，
+        // 使元数据篡改与方案降级都会导致 MAC 不匹配。写入与校验两侧共用，保证一致。
+        private static byte[] BuildMacInput(string scheme, int version, byte[] encrypted)
+        {
+            byte[] header = System.Text.Encoding.UTF8.GetBytes($"{scheme}\n{version}\n");
+            var buffer = new byte[header.Length + encrypted.Length];
+            Buffer.BlockCopy(header, 0, buffer, 0, header.Length);
+            Buffer.BlockCopy(encrypted, 0, buffer, header.Length, encrypted.Length);
+            return buffer;
         }
 
         // ── 工具方法 ─────────────────────────────────────────────────────────
