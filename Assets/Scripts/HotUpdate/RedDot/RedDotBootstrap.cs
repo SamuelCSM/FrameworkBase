@@ -1,9 +1,11 @@
 using System.Collections.Generic;
 using System.Linq;
+using Framework;
 using Framework.Core;
 using Framework.Foundation;
 using HotUpdate.Config.Data;
 using HotUpdate.Config.Table;
+using HotUpdate.Entry;
 using UnityEngine;
 
 namespace HotUpdate.RedDot
@@ -18,8 +20,8 @@ namespace HotUpdate.RedDot
     /// </summary>
     public static class RedDotBootstrap
     {
-        /// <summary>最近一次完成目录安装的服务实例，用于识别同一进程内的重复装配。</summary>
-        private static RedDotService _installedService;
+        /// <summary>已登记的红点模块实例，用于识别同一进程内的重复装配（幂等）。</summary>
+        private static RedDotModule _module;
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         private static void AutoRegisterForOfflineDev() => RegisterPreEntryHook();
@@ -27,29 +29,24 @@ namespace HotUpdate.RedDot
         /// <summary>注册离线整包的登录前装配钩子；重复调用只会重挂当前静态入口。</summary>
         public static void RegisterPreEntryHook()
         {
-            GameEntry.OnBeforeBusinessEntry = Install;
+            RuntimeCatalogBootstrap.RegisterPreEntryHook();
         }
 
-        /// <summary>从 ConfigData 读取五张红点表并初始化当前 GameEntry.RedDots；同一服务只执行一次。</summary>
+        /// <summary>
+        /// 向中间层宿主登记红点模块（ADR-008）。红点服务的创建、目录初始化、账号已看版本会话与帧末结算
+        /// 均由 <see cref="RedDotModule"/> 承接；本方法只负责组装目录提供者并登记模块。幂等。
+        /// </summary>
         public static void Install()
         {
-            RedDotService service = GameEntry.RedDots;
-            if (service == null)
-            {
-                Debug.LogError("[RedDot] GameEntry.RedDots 尚未创建，无法安装热更红点目录。");
-                return;
-            }
-
-            if (object.ReferenceEquals(_installedService, service) && service.IsInitialized)
-                return;
-
-            if (!service.IsInitialized)
-                service.Initialize(BuildCatalog());
-
-            _installedService = service;
-            Debug.Log($"[RedDot] 热更目录已安装，节点数={service.Catalog.Nodes.Length}。");
+            if (_module != null) return;
+            _module = new RedDotModule(BuildCatalog);
+            GameEntry.Modules.Use(_module);
         }
 
+        /// <summary>
+        /// 从 ConfigData 五张红点表（模块/节点/边/已看策略/退休）组装运行时 <see cref="RedDotCatalog"/>：
+        /// 节点完整 Key 由「模块 CodeName + 节点 CodeName」派生；各数组按 Id 稳定排序，保证校验与遍历顺序确定。
+        /// </summary>
         private static RedDotCatalog BuildCatalog()
         {
             List<RedDotModuleRef> moduleRows = GameEntry.RefData

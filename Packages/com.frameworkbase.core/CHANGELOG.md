@@ -7,6 +7,48 @@
 
 ### 新增
 
+- **配置驱动全局引导框架**：新增稳定整数 `GuideId / StepId / WindowId / TargetId`、通用
+  `RuleService / TriggerService / ActionService`、事件驱动 `GuideRunner`、强类型断点存储以及 Target 挖孔表现。
+  `UIWindow.xlsx + Guide.xlsx` 沿用标准 `xxxRef / xxxTable / config.db` 管线，关系表使用 `ConfigListBase`；
+  专用编译器校验跨表引用、号段与退休 ID，并确定性生成 `UIWindowIds.g.cs / GuideIds.g.cs`。Clicker 商店提供
+  “窗口 Ready → 检查目标 → 挖孔 → 真实按钮点击完成 → 清遮罩”的完整配置样例。复杂业务可按 TypeId 注册
+  强类型 Payload Factory 与自定义 Evaluator/Binder/Executor。见 `Guide/CONFIG_DRIVEN_GUIDE.md`。
+  `GuideRunner.TryStartAsync` 返回 `GuideStartResult`（`Started/Rejected/Queued`），区分“拒绝启动 / 已排队 /
+  已启动”；步骤在进入时被自定义触发器同步完成时可正确链式推进而不会误判失败或吞掉信号；引导在完成/取消/
+  失败的任意路径都会兜底清理挖孔遮罩，避免遗留全屏遮罩卡死操作。
+
+- **红点亮起路径导航器 `RedDotNavigator`**（把 `GetActivePath` 接成"点击入口红点→逐级跳转到点亮来源"）：
+  按节点注册跳转处理器（打开页面/切页签），`Navigate(entryId)` 沿亮起路径从入口到来源依次触发命中的
+  处理器；入口未点亮返回 0，单个处理器异常隔离上报不阻断其余跳转。纯逻辑无 Unity 依赖，EditMode 用例 5 个。
+- **红点徽标图标变体 `RedDotBadge.StyleVariant`**（按样式切换美术根）：可配置一组"样式→美术根"，徽标可见时
+  只激活与当前 `DisplayMode` 匹配的根、其余关闭，支持小红点 / NEW 角标 / 感叹号图标等美术变体切换。
+  切换判定收口到纯函数 `RedDotBadgePresentation.ShouldShowVariant`；未配置变体则保持原有 Badge Root + 文本
+  表现。Inspector 已暴露该字段。
+- **ServerAccount 已看同步 `IRedDotSeenSyncBackend` + `RedDotServerSeenSync`**（多端红点一致性的框架级闭环）：
+  抽象出业务实现的拉取/上报后端，框架负责"取 max 版本"冲突合并与拉取/回推编排——登录拉取并合并、
+  本地领先时回推、会话内 `Acknowledge` 触发去抖上报、登出前捕获快照最终回推。协议、鉴权、重试仍由
+  后端实现。`RedDotService` 新增非破坏性 `MergeSeen`（逐 Signal 取 max）与 `ServerSeenChanged` 事件；
+  `RedDotAccountSession.ConfigureServerSync` 注册后端后，每次账号会话自动完成同步。EditMode 用例 5 个。
+- **红点徽标展示样式扩展（New / Exclamation）**：`RedDotBadge.DisplayMode` 在 DotOnly/Number 之外新增
+  `New`（显示 NEW）与 `Exclamation`（显示感叹号），展示解析收口到纯函数 `RedDotBadgePresentation` 便于
+  单测。样式属于 UI 表现、不进入逻辑配置——同一红点 ID 可被不同入口按不同样式呈现。枚举序号保持稳定，
+  兼容既有 Prefab 序列化。EditMode 用例 5 个。
+- **红点亮起路径导航 `RedDotService.GetActivePath(id)`**（点击红点跳转到具体来源的数据支撑）：从入口
+  节点沿"有值"的子边逐层深入，返回一条到最深亮起 Signal 的确定性路径（每层在多个亮起子节点中按
+  FinalCount 降序、ID 升序择一，同状态下可复现）。入口未点亮返回空列表。UI 可据此把玩家一路带到点亮
+  红点的叶子功能。诊断命令新增 `reddot path <ID|Key>` 直观打印路径。
+
+### 优化
+
+- **红点增量结算/通知零 GC 分配**：`FlushDirty` 改用节点上的 `Affected` 标记 + 复用缓冲（受影响集合、
+  传播队列、变化集合、通知快照、拓扑序比较委托全部复用 `Clear()`），去掉旧实现每次 Flush 新建的
+  `HashSet`/`Queue`/`List` 与 LINQ `OrderBy`；`Notify` 用复用缓冲替代 `list.ToArray()`。登录批量写入
+  和高频事件驱动下不再产生临时分配。行为语义不变。
+- **红点帧末合并（可选）`SetFrameCoalescing` / `FlushPending`**：启用后批处理之外的写入只标脏，由帧驱动
+  （GameEntry 的 LateUpdate 自动接管）在帧末统一结算一次，避免一帧内多来源写同一子树造成的重复聚合与
+  多次 UI 刷新；读接口（`GetCount`/`Snapshot`/`GetActivePath` 等）按需先行结算，保证"读到自己的写入"。
+  未启用时行为与历史完全一致（逐笔即时刷新），单测默认走即时模式。
+
 - **banned-API 静态门禁 `Tools/ci/check-banned-apis.ps1`**（运行时代码的 API 红线焊进 CI）：纯文本
   扫描（无需 Unity，Windows/ubuntu 双平台），只管跑在玩家设备上的代码（Editor/Tests 不扫）。三条规则：
   `local-time`（DateTime.Now 可被玩家改表、跨设备不可比→用 UtcNow/ServerTime）、`thread-sleep`

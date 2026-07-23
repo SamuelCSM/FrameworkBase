@@ -133,12 +133,21 @@ namespace Framework.Core
         /// </summary>
         public static Framework.Diagnostics.CommandRegistry Commands { get; private set; }
 
+        /// <summary>通用无副作用条件求值服务；业务模块只注册领域叶子 Evaluator。</summary>
+        public static Framework.Foundation.RuleService Rules { get; private set; }
+
+        /// <summary>通用作用域触发器服务；UI/计时器由框架内置，领域成功事件由业务注册。</summary>
+        public static Framework.Foundation.TriggerService Triggers { get; private set; }
+
+        /// <summary>通用异步动作执行服务；配置实例通过稳定 ActionId 寻址。</summary>
+        public static Framework.Foundation.ActionService Actions { get; private set; }
+
         /// <summary>
-        /// 配置驱动的共享红点 DAG — 业务只写稳定 ID 对应的 Signal，Aggregate 按目录关系自动聚合。
-        /// UI 挂 <see cref="RedDotBadge"/> 或代码 Subscribe 绑定 ID；账号切换时框架统一清运行态并加载
-        /// LocalAccount 已看版本。独立玩法仍可自建局部 <see cref="Framework.Foundation.RedDotTree"/>。
+        /// 中间层「框架自带业务模块」宿主（ADR-008）。L3 在配置库就绪前经 <c>Use</c> 登记模块，
+        /// GameEntry 在业务入口前驱动两阶段（RegisterCapabilities → 冻结编排 → StartAsync），退出时逆序 Dispose。
+        /// 引导/红点等运行器由各模块自身持有并暴露访问点（如 <c>Guides.Runner</c>），不再挂在 GameEntry 上。
         /// </summary>
-        public static Framework.Foundation.RedDotService RedDots { get; private set; }
+        public static FrameworkModuleHost Modules { get; private set; }
 
         // ── 生命周期 ─────────────────────────────────────────────────────────
 
@@ -153,16 +162,20 @@ namespace Framework.Core
             Commands.SetGrantedAccess(Framework.Diagnostics.CommandAccessLevel.Development);
 #endif
 
-            // 框架只创建空服务，不持有业务拓扑。UI 可在目录安装前先订阅；热更业务侧在配置库就绪后
-            // 从标准 ConfigData 五张表组装目录，内容事务保证配置与引用它的代码处于同一发行版本。
-            // 订阅者异常送日志诊断，单个 UI 回调不会中断其它订阅者。
-            RedDots = new Framework.Foundation.RedDotService
+            // 框架只创建空的通用编排服务，不持有业务拓扑；热更业务在配置库就绪后组装目录并冻结。
+            // 红点/引导等框架自带业务模块由中间层宿主（Modules）承接，不再挂在 GameEntry 上（ADR-008）。
+            // 订阅者/执行器异常统一送日志诊断，单个回调不会中断其它订阅者。
+            Rules = new Framework.Foundation.RuleService
             {
-                ObserverErrorSink = ex =>
-                {
-                    Debug.LogError("[GameEntry] 红点订阅者异常（已隔离）");
-                    Debug.LogException(ex);
-                },
+                ObserverErrorSink = ex => LogOrchestrationError("Rule", ex),
+            };
+            Triggers = new Framework.Foundation.TriggerService
+            {
+                ObserverErrorSink = ex => LogOrchestrationError("Trigger", ex),
+            };
+            Actions = new Framework.Foundation.ActionService
+            {
+                ObserverErrorSink = ex => LogOrchestrationError("Action", ex),
             };
 
 #if !UNITY_EDITOR && DEVELOPMENT_BUILD
@@ -183,6 +196,19 @@ namespace Framework.Core
             // 通用补间（PrimeTween）容量与默认缓动一次性引导：须早于任何 UI 过渡 / 场景动画。
             TweenBootstrap.Initialize();
             InitializeManagers();
+            // UI Target 目录归 UIManager 持有（纯 UI 概念），此处只接上诊断出口。
+            UI.Targets.ObserverErrorSink = ex => LogOrchestrationError("UITarget", ex);
+            // 内置 UI/计时器 Rule、Trigger、Action 只依赖框架服务，在业务 Catalog 安装前一次性注册。
+            // 引导表现（GuideFocus/Clear）等业务能力由对应模块在 RegisterCapabilities 阶段注册（ADR-008）。
+            UIOrchestrationBuiltins.Register(Rules, Triggers, Actions, UI);
+
+            // 中间层模块宿主（ADR-008）：L3 经 Modules.Use 登记红点/引导等自带业务模块，
+            // 由 EnterBusinessSessionAsync 在配置库就绪后驱动两阶段。此处仅创建空宿主。
+            Modules = new FrameworkModuleHost
+            {
+                ModuleErrorSink = (phase, module, ex) =>
+                    LogOrchestrationError($"Module:{module?.GetType().Name}:{phase}", ex),
+            };
 
             // 线上性能采样：全构建生效，窗口聚合后经 Analytics 低频上报（挂在 Manager 之后，
             // 上报时经静态访问点取 Analytics，未就绪则静默跳过）
@@ -218,6 +244,12 @@ namespace Framework.Core
             }
         }
 
+        private static void LogOrchestrationError(string source, Exception error)
+        {
+            Debug.LogError($"[GameEntry] {source} 编排回调/执行器异常（已隔离）");
+            if (error != null) Debug.LogException(error);
+        }
+
         /// <summary>
         /// 系统低内存回调：先让各框架组件清理自持缓存（对象池等），再广播事件让业务层跟进，
         /// 最后卸载未引用资产。异步卸载可能引起短暂卡顿，但低内存时避免被系统杀进程优先。
@@ -232,6 +264,7 @@ namespace Framework.Core
                 catch (Exception ex) { LogComponentError("OnLowMemory", _components[i], ex); }
             }
 
+            Modules?.BroadcastLowMemory();
             Event?.Publish(GameMessage.LowMemoryWarning);
             Resources.UnloadUnusedAssets();
         }
@@ -327,15 +360,33 @@ namespace Framework.Core
         public static Action OnBeforeBusinessEntry { get; set; }
 
         /// <summary>
-        /// 身份已经贯通后先加载当前账号的 LocalAccount 红点已看版本，再把会话交给业务层。
+        /// 编排 Catalog 冻结钩子（ADR-008）。L3 在此用配置构建并 Initialize 全局 Rule/Trigger/Action 目录；
+        /// 由 <see cref="EnterBusinessSessionAsync"/> 在模块 RegisterCapabilities 之后、StartAsync 之前调用一次，
+        /// 确保各模块的能力处理器（如引导表现 Action）已注册完毕再冻结校验。实现须幂等（重复登录会再次调用）。
+        /// <b>赋值语义而非多播</b>：L3 侧必须有且只有一个装配根持有它（参考壳工程的 OrchestrationBootstrap），
+        /// 各模块经该装配根贡献自己的 Payload 工厂，不要各自往这里挂。
+        /// </summary>
+        public static Action OnFreezeOrchestration { get; set; }
+
+        /// <summary>
+        /// 身份已经贯通后先驱动中间层模块两阶段与账号级加载（如红点已看版本），再把会话交给业务层。
         /// 这样业务 Provider 首次提交快照时即可得到稳定的 EffectiveCount，不会先亮后灭。
+        /// 模块启动阶段为 fail-fast：异常直接冒泡使本次登录失败，根因不被掩盖（见 <see cref="FrameworkModuleHost"/>）。
         /// </summary>
         private static async UniTask EnterBusinessSessionAsync(
             LoginResult loginResult,
             CancellationToken cancellationToken)
         {
             OnBeforeBusinessEntry?.Invoke();
-            await Framework.RedDot.RedDotAccountSession.BeginAsync(RedDots);
+            // 中间层模块两阶段（ADR-008）：Phase 1 各模块注册能力 → 冻结全局编排 Catalog（L3 经
+            // OnFreezeOrchestration 构建并 Initialize）→ Phase 2 各模块启动。模块清单为空时全为空跑。
+            // 此三步任一抛出都不拦截：能力注册/冻结校验失败属装配错误，进业务只会引发更难查的次生故障。
+            Modules.RegisterCapabilities();
+            OnFreezeOrchestration?.Invoke();
+            await Modules.StartAsync();
+            // 账号进入（ADR-008）：宿主在业务入口前有序 await 各模块的账号级加载（如红点已看版本），
+            // 避免先亮后灭。引导等模块此钩子为空实现。
+            await Modules.OnAccountEnterAsync(cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
             if (OnBusinessEntryAsync != null)
                 await OnBusinessEntryAsync(loginResult);
@@ -419,9 +470,9 @@ namespace Framework.Core
             }
             finally
             {
-                // 此时 SaveManager 仍指向旧账号目录：先异步触发已看版本落盘，再清运行态；
-                // AppFlow 随后才调用 ClearLoggedInIdentity 切回 guest。
-                Framework.RedDot.RedDotAccountSession.End(RedDots);
+                // 账号退出（ADR-008）：身份清除前驱动各模块收尾——此时 SaveManager 仍指向旧账号目录，
+                // RedDotModule.OnAccountExit 在此落盘已看版本并回推；AppFlow 随后才 ClearLoggedInIdentity 切回 guest。
+                Modules?.OnAccountExit();
             }
         }
 
@@ -647,6 +698,10 @@ namespace Framework.Core
                 try { _components[i].OnLateUpdate(dt); }
                 catch (Exception ex) { LogComponentError("OnLateUpdate", _components[i], ex); }
             }
+
+            // 中间层模块帧末回调（ADR-008）：红点在此做帧末合并结算（本帧多来源写入合并为一次聚合与
+            // UI 通知），引导等模块为空实现。
+            Modules?.BroadcastLateUpdate(dt);
         }
 
         private void FixedUpdate()
@@ -717,6 +772,10 @@ namespace Framework.Core
             _playerLogoutSub?.Dispose();
             _forceLogoutSub = null;
             _playerLogoutSub = null;
+
+            // 先逆序拆中间层模块（引导/红点运行器由各模块 Dispose 释放），再拆其依赖的 L1 Target 目录。
+            Modules?.DisposeAll();
+            UI?.Targets?.Clear();
 
             // 反向顺序关闭所有组件；逐个 try/catch 隔离，确保某组件清理异常不影响其余组件关闭
             for (int i = _components.Count - 1; i >= 0; i--)

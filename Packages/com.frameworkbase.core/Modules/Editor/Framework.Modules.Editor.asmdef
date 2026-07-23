@@ -1,0 +1,25 @@
+{
+    "name": "Framework.Modules.Editor",
+    "rootNamespace": "Framework.Editor",
+    "references": [
+        "Framework.Modules",
+        "Framework",
+        "Framework.Kernel",
+        "Framework.Foundation",
+        "Framework.Editor",
+        "UniTask",
+        "Unity.Addressables.Editor",
+        "Unity.TextMeshPro"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

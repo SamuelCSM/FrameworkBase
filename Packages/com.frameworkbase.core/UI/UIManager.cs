@@ -10,11 +10,23 @@ namespace Framework
     /// </summary>
     public class UIRegisterInfo
     {
+        /// <summary>稳定窗口 ID；0 表示旧式仅按 Type 注册。</summary>
+        public int     Id            { get; set; }
+
         /// <summary>窗口逻辑类类型（UIBase 子类）</summary>
         public Type    UIType        { get; set; }
 
+        /// <summary>窗口逻辑对象工厂；配置驱动注册默认使用已校验 Type 的无参构造。</summary>
+        internal Func<UIBaseCore> LogicFactory { get; set; }
+
         /// <summary>Addressables 地址，用于加载 Prefab</summary>
         public string  Address       { get; set; }
+
+        /// <summary>
+        /// 纯代码 UI 的根节点工厂。与 <see cref="Address"/> 二选一；
+        /// 由 UIManager 传入目标层节点，工厂返回已挂载对应 UIView 的窗口根节点。
+        /// </summary>
+        public Func<Transform, GameObject> Factory { get; set; }
 
         /// <summary>窗口所在层级（决定 Canvas SortingOrder）</summary>
         public UILayer Layer         { get; set; }
@@ -49,6 +61,26 @@ namespace Framework
     /// </summary>
     public class UIManager : Core.FrameworkComponent<UIManager>
     {
+        private sealed class LifecycleSubscription : IDisposable
+        {
+            private UIManager _owner;
+            public readonly Action<UIWindowLifecycleEvent> Handler;
+
+            public LifecycleSubscription(UIManager owner, Action<UIWindowLifecycleEvent> handler)
+            {
+                _owner = owner;
+                Handler = handler;
+            }
+
+            public void Dispose()
+            {
+                UIManager owner = _owner;
+                if (owner == null) return;
+                _owner = null;
+                owner.RemoveLifecycleSubscription(this);
+            }
+        }
+
         // ── 内部状态 ─────────────────────────────────────────────────────────
 
         /// <summary>
@@ -57,8 +89,21 @@ namespace Framework
         /// </summary>
         private UIBootstrap _bootstrap;
 
+        /// <summary>
+        /// 稳定 UI TargetId → 当前激活 Rect/Button 实例的运行时目录（<see cref="UITargetAnchor"/> 挂载即注册）。
+        /// 引导等编排能力按 TargetId 寻址控件；归 UIManager 持有而非 GameEntry——它是纯 UI 概念，
+        /// 生命周期也与 UI 一致（框架关闭时随 UI 一起 Clear）。
+        /// </summary>
+        public UITargetRegistry Targets { get; } = new UITargetRegistry();
+
         /// <summary>窗口类型 → 注册信息（Addressables 地址、层级、是否允许多开）</summary>
         private readonly Dictionary<Type, UIRegisterInfo>   _registerInfos = new Dictionary<Type, UIRegisterInfo>();
+
+        /// <summary>稳定窗口 ID → 注册信息；仅收录 Id &gt; 0 的配置化窗口。</summary>
+        private readonly Dictionary<int, UIRegisterInfo> _registerInfosById = new Dictionary<int, UIRegisterInfo>();
+
+        /// <summary>窗口类型 → 稳定 ID；保持泛型 API 与 ID API 走同一份注册信息。</summary>
+        private readonly Dictionary<Type, int> _windowIdsByType = new Dictionary<Type, int>();
 
         /// <summary>窗口类型 → 当前所有已打开实例列表（AllowMultiple 时可能多个）</summary>
         private readonly Dictionary<Type, List<UIBaseCore>> _openedUIs     = new Dictionary<Type, List<UIBaseCore>>();
@@ -79,6 +124,9 @@ namespace Framework
 
         /// <summary>窗口逻辑实例 → 对应的遮罩 GameObject（用于关闭时同步销毁遮罩）</summary>
         private readonly Dictionary<UIBaseCore, GameObject> _uiBlockers    = new Dictionary<UIBaseCore, GameObject>();
+
+        /// <summary>窗口生命周期订阅；窗口开关低频，通知时快照隔离回调内退订和嵌套导航。</summary>
+        private readonly List<LifecycleSubscription> _lifecycleSubscriptions = new List<LifecycleSubscription>();
 
         // ── 生命周期 ─────────────────────────────────────────────────────────
 
@@ -107,6 +155,9 @@ namespace Framework
             _uiBlockers.Clear();
             _uiStack.Clear();
             _registerInfos.Clear();
+            _registerInfosById.Clear();
+            _windowIdsByType.Clear();
+            _lifecycleSubscriptions.Clear();
             _uiPools.Clear();
 
             GameLog.Log("[UIManager] 已关闭");
@@ -162,6 +213,53 @@ namespace Framework
             RegisterUI(typeof(T), address, layer, allowMultiple, stackBehavior, blockerMode);
         }
 
+        /// <summary>以稳定 ID 注册 Addressables UI；供配置目录 Bootstrap 使用。</summary>
+        public void RegisterUI<T>(
+            int windowId,
+            string address,
+            UILayer layer,
+            bool allowMultiple = false,
+            UIStackBehavior stackBehavior = UIStackBehavior.PushToStack,
+            UIBlockerMode blockerMode = UIBlockerMode.None)
+            where T : UIBaseCore
+        {
+            RegisterUI(windowId, typeof(T), address, layer, allowMultiple, stackBehavior, blockerMode);
+        }
+
+        /// <summary>
+        /// 注册纯代码构建的 UI。窗口仍完整走 UIManager 的生命周期、导航栈、遮罩和动画，
+        /// 只是根节点由工厂创建而非从 Addressables 实例化。
+        /// </summary>
+        /// <typeparam name="T">窗口逻辑类型，必须继承 UIBaseCore。</typeparam>
+        /// <param name="factory">接收目标层父节点并返回窗口根节点的工厂。</param>
+        /// <param name="layer">窗口所在 UI 层级。</param>
+        /// <param name="allowMultiple">是否允许同类型多实例并存。</param>
+        /// <param name="stackBehavior">窗口在导航栈中的行为。</param>
+        /// <param name="blockerMode">窗口弹出时的遮罩模式。</param>
+        public void RegisterCodeUI<T>(
+            Func<Transform, GameObject> factory,
+            UILayer layer,
+            bool allowMultiple = false,
+            UIStackBehavior stackBehavior = UIStackBehavior.PushToStack,
+            UIBlockerMode blockerMode = UIBlockerMode.None)
+            where T : UIBaseCore
+        {
+            RegisterCodeUIInternal(0, typeof(T), factory, layer, allowMultiple, stackBehavior, blockerMode);
+        }
+
+        /// <summary>以稳定 ID 注册纯代码 UI；窗口定义仍不加载任何 Prefab。</summary>
+        public void RegisterCodeUI<T>(
+            int windowId,
+            Func<Transform, GameObject> factory,
+            UILayer layer,
+            bool allowMultiple = false,
+            UIStackBehavior stackBehavior = UIStackBehavior.PushToStack,
+            UIBlockerMode blockerMode = UIBlockerMode.None)
+            where T : UIBaseCore
+        {
+            RegisterCodeUIInternal(windowId, typeof(T), factory, layer, allowMultiple, stackBehavior, blockerMode);
+        }
+
         /// <summary>
         /// 以运行时类型注册 UI 窗口，用于配置表或代码生成清单驱动的窗口注册。
         /// </summary>
@@ -179,40 +277,20 @@ namespace Framework
             UIStackBehavior stackBehavior = UIStackBehavior.PushToStack,
             UIBlockerMode blockerMode = UIBlockerMode.None)
         {
-            if (uiType == null)
-            {
-                GameLog.Error("[UIManager] RegisterUI: uiType 为空");
-                return;
-            }
+            RegisterUIInternal(0, uiType, address, layer, allowMultiple, stackBehavior, blockerMode);
+        }
 
-            if (!typeof(UIBaseCore).IsAssignableFrom(uiType))
-            {
-                GameLog.Error($"[UIManager] RegisterUI: {uiType.FullName} 不是 UIBaseCore 子类");
-                return;
-            }
-
-            if (string.IsNullOrWhiteSpace(address))
-            {
-                GameLog.Error($"[UIManager] RegisterUI: {uiType.Name} 的 Address 为空");
-                return;
-            }
-
-            var type = uiType;
-            if (_registerInfos.ContainsKey(type))
-            {
-                GameLog.Warning($"[UIManager] 重复注册: {type.Name}");
-                return;
-            }
-            _registerInfos[type] = new UIRegisterInfo
-            {
-                UIType        = type,
-                Address       = address,
-                Layer         = layer,
-                AllowMultiple = allowMultiple,
-                StackBehavior = stackBehavior,
-                BlockerMode   = blockerMode,
-            };
-            GameLog.Log($"[UIManager] 注册: {type.Name} Layer={layer}");
+        /// <summary>以稳定 ID + 运行时 Type 注册窗口；Type 只在 Bootstrap 解析一次。</summary>
+        public void RegisterUI(
+            int windowId,
+            Type uiType,
+            string address,
+            UILayer layer,
+            bool allowMultiple = false,
+            UIStackBehavior stackBehavior = UIStackBehavior.PushToStack,
+            UIBlockerMode blockerMode = UIBlockerMode.None)
+        {
+            RegisterUIInternal(windowId, uiType, address, layer, allowMultiple, stackBehavior, blockerMode);
         }
 
         // ── 打开 ─────────────────────────────────────────────────────────────
@@ -232,90 +310,21 @@ namespace Framework
                 return null;
             }
 
-            if (!info.AllowMultiple
-                && _openedUIs.TryGetValue(type, out var existing)
-                && existing.Count > 0)
-            {
-                GameLog.Warning($"[UIManager] 已打开且不允许多实例: {type.Name}");
-                return existing[0] as TWindow;
-            }
+            return await OpenUIInternalAsync(info, userData, usePool) as TWindow;
+        }
 
-            var uiObj = usePool
-                ? await GetUIFromPool(type, info.Address, info.Layer)
-                : await Core.GameEntry.Resource.InstantiateAsync(
-                    info.Address, GetLayerCanvas(info.Layer).transform);
-
-            if (uiObj == null)
+        /// <summary>按稳定 ID 打开窗口；配置、引导、任务等运行时编排使用。</summary>
+        public async UniTask<UIBaseCore> OpenUIAsync(
+            int windowId,
+            object userData = null,
+            bool usePool = true)
+        {
+            if (!_registerInfosById.TryGetValue(windowId, out UIRegisterInfo info))
             {
-                GameLog.Error($"[UIManager] 加载失败: {type.Name}");
+                GameLog.Error($"[UIManager] 未注册 WindowId={windowId}");
                 return null;
             }
-
-            var window = new TWindow();
-            var view = uiObj.GetComponent(window.ViewType) as UIView;
-            if (view == null)
-            {
-                GameLog.Error($"[UIManager] 缺少 View 组件: {window.ViewType.Name}");
-                GameObject.Destroy(uiObj);
-                return null;
-            }
-
-            window.Initialize(info.Layer, view, uiObj);
-
-            if (!_openedUIs.TryGetValue(type, out var list))
-            {
-                list = new List<UIBaseCore>();
-                _openedUIs[type] = list;
-            }
-
-            list.Add(window);
-            _uiGameObjects[window] = uiObj;
-
-            // 根据 StackBehavior 决定导航栈行为
-            switch (info.StackBehavior)
-            {
-                case UIStackBehavior.PushToStack:
-                    // 新页面入栈前隐藏当前栈顶，避免同层历史页面继续渲染并争抢射线；
-                    // 出栈（GoBack / 关闭栈顶）时再恢复显示，实现页面路由的入栈隐藏 / 出栈恢复对称。
-                    SetStackTopActive(false);
-                    _uiStack.AddLast(window);
-                    break;
-
-                case UIStackBehavior.ReplaceTop:
-                    if (_uiStack.Last != null)
-                    {
-                        var replaced = _uiStack.Last.Value;
-                        _uiStack.RemoveLast();
-                        CloseUI(replaced);
-                    }
-                    _uiStack.AddLast(window);
-                    break;
-
-                case UIStackBehavior.NoStack:
-                    // 不入栈
-                    break;
-            }
-
-            // 创建遮罩
-            GameObject blockerGO = null;
-            if (info.BlockerMode != UIBlockerMode.None)
-            {
-                System.Action onBlockerClick = null;
-                if (info.BlockerMode == UIBlockerMode.ClickToClose)
-                {
-                    onBlockerClick = () => CloseUIAsync(window).Forget();
-                }
-                blockerGO = UIBlocker.Create(uiObj, info.BlockerMode, onBlockerClick);
-                if (blockerGO != null)
-                {
-                    _uiBlockers[window] = blockerGO;
-                }
-            }
-
-            await window.OpenWithAnimAsync(userData);
-
-            GameLog.Log($"[UIManager] 打开: {type.Name}");
-            return window;
+            return await OpenUIInternalAsync(info, userData, usePool);
         }
 
         // ── 关闭 ─────────────────────────────────────────────────────────────
@@ -328,6 +337,8 @@ namespace Framework
             if (ui == null) return;
 
             var type = ui.GetType();
+            _uiGameObjects.TryGetValue(ui, out GameObject uiObj);
+            PublishLifecycle(GetWindowId(type), UIWindowPhase.Closing, ui, uiObj);
             RemoveFromTracking(ui, type);
             DestroyBlocker(ui);
 
@@ -335,7 +346,7 @@ namespace Framework
             await ui.CloseWithAnimAsync();
 
             // 回收或销毁
-            _uiGameObjects.TryGetValue(ui, out var uiObj);
+            PublishLifecycle(GetWindowId(type), UIWindowPhase.Closed, ui, uiObj);
             RecycleOrDestroy(ui, type, uiObj, destroy);
             _uiGameObjects.Remove(ui);
 
@@ -350,6 +361,13 @@ namespace Framework
                 await CloseUIAsync(list[0], destroy);
         }
 
+        /// <summary>异步关闭稳定 ID 对应的第一个实例。</summary>
+        public async UniTask CloseUIAsync(int windowId, bool destroy = false)
+        {
+            UIBaseCore ui = GetUI(windowId);
+            if (ui != null) await CloseUIAsync(ui, destroy);
+        }
+
         /// <summary>
         /// 同步关闭（跳过动画）。
         /// 用于批量关闭或不关心过渡效果的场景。
@@ -359,11 +377,14 @@ namespace Framework
             if (ui == null) return;
 
             var type = ui.GetType();
+            _uiGameObjects.TryGetValue(ui, out GameObject uiObj);
+            PublishLifecycle(GetWindowId(type), UIWindowPhase.Closing, ui, uiObj);
             RemoveFromTracking(ui, type);
             DestroyBlocker(ui);
             ui.ForceClose();
 
-            if (_uiGameObjects.TryGetValue(ui, out var uiObj))
+            PublishLifecycle(GetWindowId(type), UIWindowPhase.Closed, ui, uiObj);
+            if (uiObj != null)
             {
                 RecycleOrDestroy(ui, type, uiObj, destroy);
                 _uiGameObjects.Remove(ui);
@@ -376,6 +397,13 @@ namespace Framework
             var type = typeof(T);
             if (_openedUIs.TryGetValue(type, out var list) && list.Count > 0)
                 CloseUI(list[0], destroy);
+        }
+
+        /// <summary>同步关闭稳定 ID 对应的第一个实例。</summary>
+        public void CloseUI(int windowId, bool destroy = false)
+        {
+            UIBaseCore ui = GetUI(windowId);
+            if (ui != null) CloseUI(ui, destroy);
         }
 
         /// <summary>同步关闭指定类型的所有实例。</summary>
@@ -482,6 +510,40 @@ namespace Framework
         /// <summary>获取指定类型当前打开的实例数量</summary>
         public int  GetUICount<T>()    where T : UIBaseCore => _openedUIs.TryGetValue(typeof(T), out var l) ? l.Count : 0;
 
+        /// <summary>指定窗口类型是否已经注册。</summary>
+        public bool IsUIRegistered<T>() where T : UIBaseCore => _registerInfos.ContainsKey(typeof(T));
+
+        /// <summary>稳定窗口 ID 是否已注册。</summary>
+        public bool IsUIRegistered(int windowId) => _registerInfosById.ContainsKey(windowId);
+
+        /// <summary>获取稳定窗口 ID 对应的第一个已打开实例。</summary>
+        public UIBaseCore GetUI(int windowId)
+        {
+            if (!_registerInfosById.TryGetValue(windowId, out UIRegisterInfo info)) return null;
+            return _openedUIs.TryGetValue(info.UIType, out List<UIBaseCore> list) && list.Count > 0
+                ? list[0]
+                : null;
+        }
+
+        /// <summary>稳定窗口 ID 是否至少有一个已打开实例。</summary>
+        public bool IsUIOpened(int windowId) => GetUI(windowId) != null;
+
+        /// <summary>稳定窗口 ID 当前打开实例数。</summary>
+        public int GetUICount(int windowId)
+        {
+            if (!_registerInfosById.TryGetValue(windowId, out UIRegisterInfo info)) return 0;
+            return _openedUIs.TryGetValue(info.UIType, out List<UIBaseCore> list) ? list.Count : 0;
+        }
+
+        /// <summary>订阅统一窗口生命周期；返回句柄负责解绑。</summary>
+        public IDisposable SubscribeWindowLifecycle(Action<UIWindowLifecycleEvent> handler)
+        {
+            if (handler == null) throw new ArgumentNullException(nameof(handler));
+            var subscription = new LifecycleSubscription(this, handler);
+            _lifecycleSubscriptions.Add(subscription);
+            return subscription;
+        }
+
         /// <summary>导航栈深度（主要用于判断是否还有历史页面可返回）</summary>
         public int  GetStackDepth()    => _uiStack.Count;
 
@@ -525,6 +587,222 @@ namespace Framework
         }
 
         // ── 内部工具 ─────────────────────────────────────────────────────────
+
+        private void RegisterUIInternal(
+            int windowId,
+            Type uiType,
+            string address,
+            UILayer layer,
+            bool allowMultiple,
+            UIStackBehavior stackBehavior,
+            UIBlockerMode blockerMode)
+        {
+            if (string.IsNullOrWhiteSpace(address))
+            {
+                GameLog.Error($"[UIManager] RegisterUI: {uiType?.Name ?? "(null)"} 的 Address 为空");
+                return;
+            }
+            RegisterInternal(windowId, uiType, address, null, layer, allowMultiple, stackBehavior, blockerMode);
+        }
+
+        private void RegisterCodeUIInternal(
+            int windowId,
+            Type uiType,
+            Func<Transform, GameObject> factory,
+            UILayer layer,
+            bool allowMultiple,
+            UIStackBehavior stackBehavior,
+            UIBlockerMode blockerMode)
+        {
+            if (factory == null)
+            {
+                GameLog.Error($"[UIManager] RegisterCodeUI: {uiType?.Name ?? "(null)"} 的 Factory 为空");
+                return;
+            }
+            RegisterInternal(windowId, uiType, null, factory, layer, allowMultiple, stackBehavior, blockerMode);
+        }
+
+        private void RegisterInternal(
+            int windowId,
+            Type uiType,
+            string address,
+            Func<Transform, GameObject> factory,
+            UILayer layer,
+            bool allowMultiple,
+            UIStackBehavior stackBehavior,
+            UIBlockerMode blockerMode)
+        {
+            if (windowId < 0)
+            {
+                GameLog.Error($"[UIManager] WindowId 不能为负：{windowId}");
+                return;
+            }
+            if (uiType == null)
+            {
+                GameLog.Error("[UIManager] RegisterUI: uiType 为空");
+                return;
+            }
+            if (!typeof(UIBaseCore).IsAssignableFrom(uiType) || uiType.IsAbstract)
+            {
+                GameLog.Error($"[UIManager] RegisterUI: {uiType.FullName} 不是可实例化的 UIBaseCore 子类");
+                return;
+            }
+            if (uiType.GetConstructor(Type.EmptyTypes) == null)
+            {
+                GameLog.Error($"[UIManager] RegisterUI: {uiType.FullName} 缺少公共无参构造");
+                return;
+            }
+            if (_registerInfos.ContainsKey(uiType))
+            {
+                GameLog.Warning($"[UIManager] 窗口类型重复注册: {uiType.Name}");
+                return;
+            }
+            if (windowId > 0 && _registerInfosById.ContainsKey(windowId))
+            {
+                GameLog.Warning($"[UIManager] WindowId 重复注册: {windowId}");
+                return;
+            }
+
+            var info = new UIRegisterInfo
+            {
+                Id = windowId,
+                UIType = uiType,
+                LogicFactory = () => (UIBaseCore)Activator.CreateInstance(uiType),
+                Address = address,
+                Factory = factory,
+                Layer = layer,
+                AllowMultiple = allowMultiple,
+                StackBehavior = stackBehavior,
+                BlockerMode = blockerMode,
+            };
+            _registerInfos.Add(uiType, info);
+            if (windowId > 0)
+            {
+                _registerInfosById.Add(windowId, info);
+                _windowIdsByType.Add(uiType, windowId);
+            }
+            GameLog.Log($"[UIManager] 注册{(factory != null ? "代码 " : "")}" +
+                        $"UI: id={windowId} type={uiType.Name} layer={layer}");
+        }
+
+        private async UniTask<UIBaseCore> OpenUIInternalAsync(
+            UIRegisterInfo info,
+            object userData,
+            bool usePool)
+        {
+            Type type = info.UIType;
+            if (!info.AllowMultiple && _openedUIs.TryGetValue(type, out List<UIBaseCore> existing)
+                                    && existing.Count > 0)
+            {
+                GameLog.Warning($"[UIManager] 已打开且不允许多实例: {type.Name}");
+                return existing[0];
+            }
+
+            GameObject uiObj;
+            if (info.Factory != null)
+            {
+                Transform parent = GetLayerRoot(info.Layer);
+                if (parent == null) return null;
+                try { uiObj = info.Factory(parent); }
+                catch (Exception ex)
+                {
+                    GameLog.Error($"[UIManager] 代码 UI 构建失败: {type.Name} - {ex.Message}");
+                    return null;
+                }
+            }
+            else
+            {
+                uiObj = usePool
+                    ? await GetUIFromPool(type, info.Address, info.Layer)
+                    : await Core.GameEntry.Resource.InstantiateAsync(
+                        info.Address, GetLayerCanvas(info.Layer).transform);
+            }
+
+            if (uiObj == null)
+            {
+                GameLog.Error($"[UIManager] 加载失败: {type.Name}");
+                return null;
+            }
+
+            UIBaseCore window;
+            try { window = info.LogicFactory(); }
+            catch (Exception ex)
+            {
+                GameLog.Error($"[UIManager] 创建窗口逻辑失败: {type.FullName} - {ex.Message}");
+                GameObject.Destroy(uiObj);
+                return null;
+            }
+
+            UIView view = uiObj.GetComponent(window.ViewType) as UIView;
+            if (view == null)
+            {
+                GameLog.Error($"[UIManager] 缺少 View 组件: {window.ViewType.Name}");
+                GameObject.Destroy(uiObj);
+                return null;
+            }
+
+            window.Initialize(info.Layer, view, uiObj);
+            if (!_openedUIs.TryGetValue(type, out List<UIBaseCore> list))
+            {
+                list = new List<UIBaseCore>();
+                _openedUIs[type] = list;
+            }
+            list.Add(window);
+            _uiGameObjects[window] = uiObj;
+
+            switch (info.StackBehavior)
+            {
+                case UIStackBehavior.PushToStack:
+                    SetStackTopActive(false);
+                    _uiStack.AddLast(window);
+                    break;
+                case UIStackBehavior.ReplaceTop:
+                    if (_uiStack.Last != null)
+                    {
+                        UIBaseCore replaced = _uiStack.Last.Value;
+                        _uiStack.RemoveLast();
+                        CloseUI(replaced);
+                    }
+                    _uiStack.AddLast(window);
+                    break;
+            }
+
+            if (info.BlockerMode != UIBlockerMode.None)
+            {
+                Action onBlockerClick = info.BlockerMode == UIBlockerMode.ClickToClose
+                    ? () => CloseUIAsync(window).Forget()
+                    : (Action)null;
+                GameObject blocker = UIBlocker.Create(uiObj, info.BlockerMode, onBlockerClick);
+                if (blocker != null) _uiBlockers[window] = blocker;
+            }
+
+            PublishLifecycle(info.Id, UIWindowPhase.Opening, window, uiObj);
+            await window.OpenWithAnimAsync(userData);
+            PublishLifecycle(info.Id, UIWindowPhase.Ready, window, uiObj);
+            GameLog.Log($"[UIManager] 打开: id={info.Id} type={type.Name}");
+            return window;
+        }
+
+        private int GetWindowId(Type type)
+            => type != null && _windowIdsByType.TryGetValue(type, out int id) ? id : 0;
+
+        private void PublishLifecycle(int windowId, UIWindowPhase phase, UIBaseCore instance, GameObject root)
+        {
+            if (_lifecycleSubscriptions.Count == 0) return;
+            LifecycleSubscription[] snapshot = _lifecycleSubscriptions.ToArray();
+            var evt = new UIWindowLifecycleEvent(windowId, phase, instance, root);
+            for (int i = 0; i < snapshot.Length; i++)
+            {
+                try { snapshot[i].Handler?.Invoke(evt); }
+                catch (Exception ex)
+                {
+                    GameLog.Error($"[UIManager] 窗口生命周期订阅者异常: {ex}");
+                }
+            }
+        }
+
+        private void RemoveLifecycleSubscription(LifecycleSubscription subscription)
+            => _lifecycleSubscriptions.Remove(subscription);
 
         /// <summary>
         /// 返回指定层级的 Canvas，委托给 UIBootstrap。

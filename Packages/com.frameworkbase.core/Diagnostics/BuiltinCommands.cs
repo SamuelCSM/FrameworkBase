@@ -112,84 +112,7 @@ namespace Framework.Diagnostics
                     requiredAccess: CommandAccessLevel.Privileged),
                 _ => LogDump.DumpAsync());
 
-            registry.Register(
-                new CommandInfo("reddot", "查询共享红点 DAG：无参列非零节点，支持 ID/Key 与 explain 来源链",
-                    usage: "reddot [ID|Key] | reddot explain <ID|Key>",
-                    requiredAccess: CommandAccessLevel.Privileged),
-                args =>
-                {
-                    var service = Core.GameEntry.RedDots;
-                    if (service == null || !service.IsInitialized)
-                        return CommandResult.Ok("红点目录未初始化。");
-
-                    bool explain = string.Equals(args.GetStringOrDefault(0), "explain", StringComparison.OrdinalIgnoreCase);
-                    string target = args.GetStringOrDefault(explain ? 1 : 0);
-                    if (!string.IsNullOrEmpty(target))
-                    {
-                        int id;
-                        if (!int.TryParse(target, out id) && !service.TryResolveId(target, out id))
-                            return CommandResult.Fail($"红点 ID/Key 不存在：{target}");
-
-                        Framework.Foundation.RedDotNodeSnapshot info = default;
-                        bool found = false;
-                        foreach (Framework.Foundation.RedDotNodeSnapshot item in service.Snapshot())
-                        {
-                            if (item.Id != id) continue;
-                            info = item;
-                            found = true;
-                            break;
-                        }
-                        if (!found) return CommandResult.Fail($"红点 ID 不存在：{id}");
-
-                        var detail = new StringBuilder(256);
-                        detail.Append(info.Id).Append(" [").Append(info.Key).Append("] = ").Append(info.FinalCount)
-                            .Append(" kind=").Append(info.Kind)
-                            .Append(" aggregation=").Append(info.Aggregation);
-                        if (info.Kind == Framework.Foundation.RedDotNodeKind.Signal)
-                        {
-                            detail.Append(" raw=").Append(info.RawCount)
-                                .Append(" effective=").Append(info.EffectiveCount)
-                                .Append(" provider=").Append(info.Provider ?? "(direct)")
-                                .Append(" ready=").Append(info.Provider == null || info.ProviderReady);
-                            if (info.SeenPolicy != null)
-                            {
-                                detail.Append(" seen=").Append(info.LastSeenVersion).Append('/')
-                                    .Append(info.SeenPolicy.Version)
-                                    .Append(" trigger=").Append(info.SeenPolicy.Trigger)
-                                    .Append(" save=").Append(info.SeenPolicy.SaveMode);
-                            }
-                        }
-
-                        if (explain)
-                        {
-                            foreach (Framework.Foundation.RedDotNodeSnapshot source in service.GetActiveSignalSources(id))
-                            {
-                                detail.AppendLine().Append("  <- ").Append(source.Id).Append(" [")
-                                    .Append(source.Key).Append("] raw=").Append(source.RawCount)
-                                    .Append(" effective=").Append(source.EffectiveCount)
-                                    .Append(" provider=").Append(source.Provider ?? "(direct)")
-                                    .Append(" ready=").Append(source.Provider == null || source.ProviderReady);
-                            }
-                        }
-                        return CommandResult.Ok(detail.ToString());
-                    }
-
-                    var sb = new StringBuilder(256);
-                    sb.Append("红点 DAG（非零节点；DAG 无隐式 TotalCount）：");
-                    int shown = 0;
-                    foreach (Framework.Foundation.RedDotNodeSnapshot info in service.Snapshot())
-                    {
-                        if (info.FinalCount == 0)
-                            continue;
-                        sb.AppendLine().Append("  ").Append(info.Id).Append(" [").Append(info.Key)
-                            .Append("] = ").Append(info.FinalCount);
-                        if (info.Kind == Framework.Foundation.RedDotNodeKind.Aggregate) sb.Append("（聚合）");
-                        shown++;
-                    }
-                    if (shown == 0)
-                        sb.AppendLine().Append("  （全空）");
-                    return CommandResult.Ok(sb.ToString());
-                });
+            // 红点查询命令（reddot / explain / path）已随红点下沉到 RedDotModule 注册（ADR-008 步骤3b）。
 
             registry.Register(
                 new CommandInfo("lang", "查看/切换当前语言：无参看当前，带语言代码切换（如 lang en_us）",
@@ -206,36 +129,7 @@ namespace Framework.Diagnostics
                     return CommandResult.Ok($"语言已切至 {Language.CurrentLanguage}。已订阅的文案/图片自动刷新。");
                 });
 
-            // 引导断点调试：操作设备级默认存档（PrefsGuideProgressStore），影响下次进入该引导的续跑/弹出。
-            // 不触碰内存中正在运行的 GuideFlow 实例，reset 后须重进流程才生效；账号级自定义存档的项目自行注册对应命令。
-            registry.Register(
-                new CommandInfo("guide", "引导断点调试：查看/重置/跳过某条引导的设备级进度",
-                    usage: "guide <status|reset|skip> <引导id>",
-                    requiredAccess: CommandAccessLevel.Privileged),
-                args =>
-                {
-                    string op = args.GetString(0);
-                    string guideId = args.GetString(1);
-                    IGuideProgressStore store = new PrefsGuideProgressStore();
-                    switch (op.ToLowerInvariant())
-                    {
-                        case "status":
-                            if (store.IsCompleted(guideId))
-                                return CommandResult.Ok($"引导 '{guideId}'：已完成");
-                            string stepId = store.GetStepId(guideId);
-                            return CommandResult.Ok(string.IsNullOrEmpty(stepId)
-                                ? $"引导 '{guideId}'：未开始"
-                                : $"引导 '{guideId}'：断点步骤 '{stepId}'（未完成）");
-                        case "reset":
-                            store.Clear(guideId);
-                            return CommandResult.Ok($"引导 '{guideId}' 进度已清（重进流程即从头重播）。");
-                        case "skip":
-                            store.MarkCompleted(guideId);
-                            return CommandResult.Ok($"引导 '{guideId}' 已标记完成（不再弹出；运行中的实例不受影响）。");
-                        default:
-                            throw new CommandArgumentException($"未知操作 '{op}'，应为 status/reset/skip。");
-                    }
-                });
+            // 引导断点调试命令（guide status/reset/skip）已随引导下沉到 GuideModule 注册（ADR-008）。
 
             registry.Register(
                 new CommandInfo("sysinfo", "设备与运行环境信息",

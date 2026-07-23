@@ -1,6 +1,5 @@
 using Framework;
-using Framework.Core;
-using Framework.UI;
+using HotUpdate.UI.Generated;
 using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
@@ -8,67 +7,44 @@ using UnityEngine.UI;
 namespace HotUpdate.Clicker
 {
     /// <summary>
-    /// 商店弹窗（代码构建，挂在 UILayer.Popup，渲染于主界面之上）。
-    /// 存在意义：验证 UI 分层（Popup &gt; Normal）与二级窗口开/关/回主界面的栈行为。
+    /// Clicker 商店的视图引用容器。窗口行为由 <see cref="ClickerShopWindow"/> 驱动，
+    /// 创建与销毁由 UIManager 统一管理。
     /// </summary>
-    public class ClickerShopView : MonoBehaviour
+    public sealed class ClickerShopView : UIView
     {
-        private static ClickerShopView _current;
-        private ClickerModel _model;
+        public Button BuyButton { get; internal set; }
+        public Button CloseButton { get; internal set; }
+    }
 
-        public Button BuyButton { get; private set; }
-        public Button CloseButton { get; private set; }
-
-        public static ClickerShopView Open(ClickerModel model)
+    /// <summary>纯代码 UI 工厂：只负责构建视图层级，不持有业务状态或窗口生命周期。</summary>
+    internal static class ClickerShopViewFactory
+    {
+        internal static GameObject Create(Transform parent)
         {
-            if (_current != null)
-                return _current;
+            var root = new GameObject("ClickerShopView", typeof(RectTransform));
+            root.layer = LayerMask.NameToLayer("UI");
+            root.transform.SetParent(parent, false);
+            ClickerUiKit.Stretch(root);
 
-            Transform parent = GameEntry.UI.GetLayerRoot(UILayer.Popup);
-            var go = new GameObject("ClickerShopView", typeof(RectTransform));
-            go.layer = LayerMask.NameToLayer("UI");
-            go.transform.SetParent(parent, false);
-            var view = go.AddComponent<ClickerShopView>();
-            _current = view;
-            view.Build(model);
-            return view;
-        }
-
-        /// <summary>业务会话退出时关闭仍存活的商店弹窗。幂等。</summary>
-        public static void CloseAll()
-        {
-            if (_current != null)
-                Destroy(_current.gameObject);
-            _current = null;
-        }
-
-        private void Build(ClickerModel model)
-        {
-            _model = model;
-            ClickerUiKit.Stretch(gameObject);
-            // 半透明遮罩（吃点击，避免穿透到主界面）
-            var dim = ClickerUiKit.Image(transform, "Dim", new Color(0f, 0f, 0f, 0.6f), stretch: true);
-            dim.raycastTarget = true;
-
-            Transform panel = ClickerUiKit.Panel(transform, "Panel", new Vector2(720, 460));
+            var view = root.AddComponent<ClickerShopView>();
+            Transform panel = ClickerUiKit.Panel(root.transform, "Panel", new Vector2(720, 460));
             ClickerUiKit.Text(panel, "Title", "商店", 40, TextAlignmentOptions.Center,
-                new Vector2(0.5f, 1f), new Vector2(0, -50), new Vector2(600, 70), pivot: new Vector2(0.5f, 1f));
+                new Vector2(0.5f, 1f), new Vector2(0, -50), new Vector2(600, 70),
+                pivot: new Vector2(0.5f, 1f));
 
-            BuyButton = ClickerUiKit.Button(panel, "BuyButton", "领 +100 金币", 30,
+            view.BuyButton = ClickerUiKit.Button(panel, "BuyButton", "领 +100 金币", 30,
                 new Vector2(0.5f, 0.5f), new Vector2(0, 20), new Vector2(440, 110));
-            BuyButton.onClick.AddListener(() => _model.GrantCoins(100));
-
-            CloseButton = ClickerUiKit.Button(panel, "CloseButton", "关闭", 28,
+            view.CloseButton = ClickerUiKit.Button(panel, "CloseButton", "关闭", 28,
                 new Vector2(0.5f, 0f), new Vector2(0, 60), new Vector2(260, 90));
-            CloseButton.onClick.AddListener(Close);
-        }
-
-        private void Close() => Destroy(gameObject);
-
-        private void OnDestroy()
-        {
-            if (_current == this)
-                _current = null;
+            view.BuyButton.gameObject.AddComponent<UITargetAnchor>().Configure(
+                UITargetIds.Clicker.ShopBuyButton,
+                view.BuyButton.transform as RectTransform,
+                view.BuyButton);
+            view.CloseButton.gameObject.AddComponent<UITargetAnchor>().Configure(
+                UITargetIds.Clicker.ShopCloseButton,
+                view.CloseButton.transform as RectTransform,
+                view.CloseButton);
+            return root;
         }
     }
 }

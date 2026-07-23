@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using UnityEditor;
 using UnityEditor.Build;
@@ -91,14 +92,19 @@ namespace Framework.Editor
                 exitCode = 1;
             }
 
-            if (Framework.Editor.RedDot.RedDotBuildValidator.ValidateForBuild(out string redDotReport))
+            // 模块特定门禁（如红点配置/引用校验）经 IBuildValidator 解耦：TypeCache 发现并遍历，
+            // CiGate 不静态引用任何具体校验器（ADR-008 形态 C）。框架级校验仍在上方直接执行。
+            foreach (IBuildValidator validator in DiscoverValidators())
             {
-                Debug.Log("[CiGate] 红点配置与 UI 引用校验通过。\n" + redDotReport);
-            }
-            else
-            {
-                Debug.LogError("[CiGate] 红点配置门禁未通过：\n" + redDotReport);
-                exitCode = 1;
+                if (validator.Validate(out string moduleReport))
+                {
+                    Debug.Log($"[CiGate] {validator.DisplayName}校验通过。\n{moduleReport}");
+                }
+                else
+                {
+                    Debug.LogError($"[CiGate] {validator.DisplayName}门禁未通过：\n{moduleReport}");
+                    exitCode = 1;
+                }
             }
 
             if (!FontCoverageChecker.CheckFontsForCi(out string fontReport, out int fontsWithMissing))
@@ -124,6 +130,18 @@ namespace Framework.Editor
 
             Debug.Log($"[CiGate] ===== 资源门禁结束（exit={exitCode}）=====");
             return exitCode;
+        }
+
+        /// <summary>用 TypeCache 发现所有 <see cref="IBuildValidator"/> 实现（模块特定门禁），与具体校验器解耦。</summary>
+        private static List<IBuildValidator> DiscoverValidators()
+        {
+            var list = new List<IBuildValidator>();
+            foreach (Type type in TypeCache.GetTypesDerivedFrom<IBuildValidator>())
+            {
+                if (type.IsAbstract || type.IsInterface) continue;
+                list.Add((IBuildValidator)Activator.CreateInstance(type));
+            }
+            return list;
         }
 
         private static bool HasArg(string key)
