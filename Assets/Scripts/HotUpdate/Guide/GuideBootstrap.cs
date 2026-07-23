@@ -95,6 +95,7 @@ namespace HotUpdate.Guide
                         StepId = value.StepId,
                         Order = value.Order,
                         CompleteTriggerId = value.CompleteTriggerId,
+                        TimeoutMs = value.TimeoutMs,
                         Key = value.CodeName,
                         Description = value.Description,
                     }).ToArray(),

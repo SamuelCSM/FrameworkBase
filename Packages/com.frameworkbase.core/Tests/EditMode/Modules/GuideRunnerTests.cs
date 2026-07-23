@@ -426,6 +426,24 @@ namespace Framework.Tests
         }
 
         [Test]
+        public void 步骤配了TimeoutMs时按步覆盖运行器级时限()
+        {
+            // 运行器级 30s，但该步配了 5s——看门狗须取步骤值。
+            CreateRuntime(true, out GuideRunner runner, out ManualBinder binder, out _, out _,
+                firstStepTimeoutMs: 5000);
+            var clock = new ManualDelay();
+            runner.StepTimeout = TimeSpan.FromSeconds(30);
+            runner.StepTimeoutDelay = clock.Delay;
+
+            runner.StartListening();
+            binder.Fire(1);
+
+            Assert.AreEqual(1, clock.Requests);
+            Assert.AreEqual(TimeSpan.FromMilliseconds(5000), clock.LastTimeout,
+                "按步 TimeoutMs 应覆盖运行器级 StepTimeout");
+        }
+
+        [Test]
         public void StepTimeout置零时不挂看门狗()
         {
             CreateRuntime(true, out GuideRunner runner, out ManualBinder binder, out _, out _);
@@ -448,7 +466,8 @@ namespace Framework.Tests
             out MemoryProgress progress,
             bool includeSecondStep = false,
             bool enterFails = false,
-            GuideRepeatMode repeatMode = GuideRepeatMode.Once)
+            GuideRepeatMode repeatMode = GuideRepeatMode.Once,
+            int firstStepTimeoutMs = 0)
         {
             var rules = new RuleService();
             rules.Register(1, new BoolRule());
@@ -497,7 +516,7 @@ namespace Framework.Tests
             var steps = new List<GuideStepDefinition>
             {
                 new GuideStepDefinition { GuideId = 100, StepId = 10, Order = 100,
-                    CompleteTriggerId = 21, Key = "first" },
+                    CompleteTriggerId = 21, Key = "first", TimeoutMs = firstStepTimeoutMs },
             };
             if (includeSecondStep)
                 steps.Add(new GuideStepDefinition { GuideId = 100, StepId = 20, Order = 200,
