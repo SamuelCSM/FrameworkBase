@@ -173,12 +173,27 @@ function Invoke-AssetGate {
 
     # 以 CiGate 落日志的 ASCII 结论哨兵为准，而非 Unity 进程退出码：
     # batchmode 下即便 EditorApplication.Exit(0)，Unity 进程仍可能返回非 0（与测试跑道同款现象）。
-    # 关键：Unity 日志在进程退出后仍有落盘延迟（末尾几行可能还没冲刷），必须像测试跑道等结果
-    # 文件那样轮询等待哨兵出现，否则会读到不含结论的半截日志而误判「未产出结论」。
-    # 纯 ASCII 匹配 + UTF8 读取，免受日志中文编码影响。
+    # 关键：Unity 日志在进程退出后仍有落盘延迟（末尾几行可能还没冲刷），必须轮询等待哨兵出现，
+    # 否则会读到不含结论的半截日志而误判「未产出结论」。纯 ASCII 匹配 + UTF8 读取，免受中文编码影响。
+    #
+    # 判定基于「日志稳定性」而非固定短窗口——退出卡死（licensing 握手失败 / abort_threads）会把已算出的
+    # 结论哨兵的冲刷拖到进程返回之后很久，30s 固定窗口会把「已通过、只是没冲完」误报成「未产出结论」。
+    # 改法：见到哨兵即用；未见到则只在日志「停止增长」（冲刷完成）后才判定无结论，避免误报，也不在真失败
+    # 时空等满上限。硬上限 300s 兜底防永久卡死。
     $verdict = $null
-    for ($i = 0; $i -lt 150; $i++) {
-        if (Test-Path $logPath) {
+    $lastSize = -1
+    $stableCount = 0
+    $maxIterations = 1500     # 300s 硬上限（1500 × 200ms）
+    $stableThreshold = 15     # 连续 15 × 200ms = 3s 大小不变，视为 Unity 已停止写日志、冲刷完成
+    for ($i = 0; $i -lt $maxIterations; $i++) {
+        $size = -1
+        $item = Get-Item $logPath -ErrorAction SilentlyContinue
+        if ($item) { $size = $item.Length }
+
+        if ($size -ne $lastSize) {
+            # 日志有新内容：重扫结论哨兵（仅在变化时扫，省去每 200ms 全量读大日志的浪费）。
+            $lastSize = $size
+            $stableCount = 0
             $endLine = Get-Content $logPath -Encoding UTF8 -ErrorAction SilentlyContinue |
                 Where-Object { $_ -match "\[CiGate\]\s+GATE_RESULT\s+exit=(\d+)" } | Select-Object -Last 1
             if ($endLine -and $endLine -match "GATE_RESULT\s+exit=(\d+)") {
@@ -186,6 +201,12 @@ function Invoke-AssetGate {
                 break
             }
         }
+        elseif ($size -ge 0) {
+            # 大小稳定：Unity 已停止写日志。连续稳定达阈值 = 冲刷完成且仍无哨兵 = 真无结论，提前收敛。
+            $stableCount++
+            if ($stableCount -ge $stableThreshold) { break }
+        }
+
         if ($i -gt 0 -and $i % 25 -eq 0) {
             Write-Host "等待资源门禁结论落盘... $([int]($i / 5))s"
         }
