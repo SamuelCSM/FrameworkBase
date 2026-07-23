@@ -9,16 +9,16 @@ namespace Framework
     /// 一并放在中间层——L1 的 <see cref="BuiltinOrchestrationTypeIds"/> 只保留 UI/时间等中立能力。
     /// R6 门禁拦得住程序集引用方向，拦不住"L1 号段表里出现业务概念"，靠归属划分自律。
     /// </para>
+    /// 号段：落在 Action 千位 3 的<b>模块段</b>（x100-x199，见 <see cref="BuiltinOrchestrationTypeIds"/> 规约）；
+    /// 引导占 3100-3119。改这些常量须同步改 <c>Guide.xlsx</c> 的 <c>action_ref.TypeId</c> 并重导 config.db。
     /// </summary>
     public static class GuideOrchestrationTypeIds
     {
         /// <summary>Action：把挖孔遮罩聚焦到指定 UI Target。</summary>
-        // TODO(下次配表大改并重导 config.db 时): 迁到模块段 3100+；当前 3004/3005 仍落在框架段内，
-        // 属号段规约建立之前的历史占位，改值须同步改 Guide.xlsx 的 action_ref.TypeId。
-        public const int FocusTargetAction = 3004;
+        public const int FocusTargetAction = 3100;
 
         /// <summary>Action：清除挖孔遮罩。</summary>
-        public const int ClearFocusAction = 3005;
+        public const int ClearFocusAction = 3101;
     }
 
     /// <summary>引导挖孔 Action 参数：聚焦到哪个 UI Target，以及挖孔留白与压暗强度。</summary>
