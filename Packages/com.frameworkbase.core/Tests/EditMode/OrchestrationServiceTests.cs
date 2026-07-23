@@ -187,9 +187,9 @@ namespace Framework.Tests
                 Nodes = new[]
                 {
                     new RuleNodeDefinition { Id = 10, RuleId = 1, Kind = RuleNodeKind.All },
-                    new RuleNodeDefinition { Id = 11, RuleId = 1, Kind = RuleNodeKind.Predicate, TypeId = 7,
+                    new RuleNodeDefinition { Id = 11, RuleId = 1, Kind = RuleNodeKind.Predicate, TypeId = 1,
                         Payload = new BoolPayload { Value = true } },
-                    new RuleNodeDefinition { Id = 12, RuleId = 1, Kind = RuleNodeKind.Predicate, TypeId = 8,
+                    new RuleNodeDefinition { Id = 12, RuleId = 1, Kind = RuleNodeKind.Predicate, TypeId = 1,
                         Payload = new BoolPayload { Value = false } },
                 },
                 Edges = new[]
