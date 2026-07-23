@@ -86,6 +86,47 @@ namespace Framework.Tests
             }
         }
 
+        [Test]
+        public void 通知期间注销其它Target的订阅_最外层结束即压实不滞留()
+        {
+            var registry = new UITargetRegistry();
+            GameObject a = CreateButton("a", out RectTransform aRect, out Button aButton);
+            GameObject b = CreateButton("b", out RectTransform bRect, out Button bButton);
+            try
+            {
+                using (registry.Register(1001, aRect, aButton))
+                using (registry.Register(2001, bRect, bButton))
+                {
+                    // B 的订阅在 A 的点击处理中被注销——通知进行中，注销须延后压实。
+                    IDisposable subB = registry.SubscribeClick(2001, _ => { });
+                    using (registry.SubscribeClick(1001, _ => subB.Dispose()))
+                    {
+                        aButton.onClick.Invoke();
+                    }
+
+                    // 修复前：B 的已释放订阅滞留到 2001 下次被点击才清；修复后：最外层通知结束即压实。
+                    Assert.AreEqual(0, ActiveSubscriptionCount(registry, 2001),
+                        "跨 Target 注销应在最外层通知结束时压实，不得滞留");
+                }
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(a);
+                UnityEngine.Object.DestroyImmediate(b);
+            }
+        }
+
+        /// <summary>反射读私有订阅表，验证 leak 修复（该状态无对外可观测的分发差异，只能查内部）。</summary>
+        private static int ActiveSubscriptionCount(UITargetRegistry registry, int targetId)
+        {
+            var field = typeof(UITargetRegistry).GetField(
+                "_clickSubscriptions",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            var map = (System.Collections.IDictionary)field.GetValue(registry);
+            if (!map.Contains(targetId)) return 0;
+            return ((System.Collections.ICollection)map[targetId]).Count;
+        }
+
         private static GameObject CreateButton(string name, out RectTransform rect, out Button button)
         {
             var go = new GameObject(name, typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(Button));
