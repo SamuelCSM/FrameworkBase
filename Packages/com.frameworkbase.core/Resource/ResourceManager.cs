@@ -419,7 +419,9 @@ namespace Framework
                     AddReference(address);
                     if (!cachedHandle.IsDone) await cachedHandle.Task;
                     T cached = cachedHandle.Result as T;
-                    if (cached == null) RemoveReference(address); // 共享句柄加载失败，回滚本次计数
+                    // 共享句柄加载失败：与创建者的 RollbackLoad 一致地回滚——谁把引用减到 0 谁释放底层句柄。
+                    // 修复"创建者已移缓存并把引用减到非零、命中者随后减到 0 却只减引用不释放"的并发失败句柄泄漏。
+                    if (cached == null) RollbackSharedReference(address, cachedHandle);
                     return cached;
                 }
 
@@ -477,7 +479,8 @@ namespace Framework
                     }
                     onProgress?.Invoke(1f);
                     T cached = cachedHandle.Result as T;
-                    if (cached == null) RemoveReference(address); // 共享句柄加载失败，回滚本次计数
+                    // 共享句柄加载失败：同上，交由 RollbackSharedReference 统一回收，避免并发失败漏释放句柄。
+                    if (cached == null) RollbackSharedReference(address, cachedHandle);
                     return cached;
                 }
 
@@ -534,12 +537,20 @@ namespace Framework
             // 检查缓存
             if (_handleCache.TryGetValue(address, out var cachedHandle))
             {
+                // 命中的共享句柄可能仍在途（由某次 LoadAssetAsync 创建但未完成）：同步 API 无法 await，
+                // 只能阻塞其完成再取值。原实现直接读 Result，在途时得到 null 却已 AddReference，造成引用超计泄漏。
+                T cached = cachedHandle.IsDone
+                    ? cachedHandle.Result as T
+                    : cachedHandle.WaitForCompletion() as T;
+                // 仅在拿到可用资源时才计一次引用；共享句柄失败不为其增引用（回收交由创建者路径）。
+                if (cached == null)
+                    return null;
                 AddReference(address);
-                return cachedHandle.Result as T;
+                return cached;
             }
 
             GameLog.Warning($"LoadAsset: 资源未预加载，建议使用 LoadAssetAsync - {address}");
-            
+
             // 同步加载（会阻塞主线程，不推荐）
             var handle = Addressables.LoadAssetAsync<T>(address);
             T asset = handle.WaitForCompletion();
@@ -548,6 +559,12 @@ namespace Framework
             {
                 _handleCache[address] = handle;
                 AddReference(address);
+            }
+            else
+            {
+                // 加载失败：句柄不入缓存，必须就地释放，否则同步失败路径会永久泄漏该句柄。
+                if (handle.IsValid())
+                    Addressables.Release(handle);
             }
 
             return asset;
@@ -851,6 +868,36 @@ namespace Framework
             if (noRefsLeft && handle.IsValid())
             {
                 Addressables.Release(handle);
+            }
+        }
+
+        /// <summary>
+        /// 命中共享句柄却未取得可用资源（加载失败）时的回收，与 <see cref="RollbackLoad"/> 语义统一：
+        /// 谁把引用减到 0，谁负责移除缓存并释放底层句柄。修复并发失败下"创建者已移缓存、命中者减到 0
+        /// 却只减引用不释放句柄"的泄漏。必须传入调用方自己 await 的句柄，因为缓存此刻可能已被创建者回滚移除，
+        /// 从缓存重新查会取不到而漏释放。
+        /// </summary>
+        /// <param name="address">资源地址。</param>
+        /// <param name="sharedHandle">调用方等待过的共享句柄。</param>
+        private void RollbackSharedReference(string address, AsyncOperationHandle sharedHandle)
+        {
+            bool noRefsLeft = RemoveReference(address);
+            if (!noRefsLeft)
+            {
+                return;
+            }
+
+            // 本次调用把引用清零：缓存可能仍指向该失败句柄（无人回滚过），也可能已被创建者移除，
+            // 或已被新一轮加载替换成别的句柄。仅当仍指向同一句柄时才由此处移除，避免误删新句柄的缓存项。
+            if (_handleCache.TryGetValue(address, out var cached) && cached.Equals(sharedHandle))
+            {
+                _handleCache.Remove(address);
+            }
+
+            // 释放与缓存是否命中无关：只要本次把引用清零且句柄有效，就必须归还，避免并发失败漏释放。
+            if (sharedHandle.IsValid())
+            {
+                Addressables.Release(sharedHandle);
             }
         }
 
