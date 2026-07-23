@@ -177,6 +177,47 @@ namespace Framework.Tests
         }
 
         [Test]
+        public void Explain逐节点展开求值树_顶层与短路裁决一致且叶子原因可见()
+        {
+            var rules = new RuleService();
+            rules.Register(1, new BoolRule());
+            rules.Initialize(new RuleCatalog
+            {
+                Rules = new[] { new RuleDefinition { Id = 1, Key = "all", RootNodeId = 10 } },
+                Nodes = new[]
+                {
+                    new RuleNodeDefinition { Id = 10, RuleId = 1, Kind = RuleNodeKind.All },
+                    new RuleNodeDefinition { Id = 11, RuleId = 1, Kind = RuleNodeKind.Predicate, TypeId = 7,
+                        Payload = new BoolPayload { Value = true } },
+                    new RuleNodeDefinition { Id = 12, RuleId = 1, Kind = RuleNodeKind.Predicate, TypeId = 8,
+                        Payload = new BoolPayload { Value = false } },
+                },
+                Edges = new[]
+                {
+                    new RuleEdgeDefinition { ParentNodeId = 10, ChildNodeId = 11, Order = 1 },
+                    new RuleEdgeDefinition { ParentNodeId = 10, ChildNodeId = 12, Order = 2 },
+                },
+            });
+
+            System.Collections.Generic.IReadOnlyList<RuleService.RuleTraceLine> trace = rules.Explain(1);
+
+            // 前序：父在子前，且逐节点求值（不因短路漏掉第二个叶子）。
+            Assert.AreEqual(3, trace.Count);
+            Assert.AreEqual(RuleNodeKind.All, trace[0].Kind);
+            Assert.AreEqual(0, trace[0].Depth);
+            Assert.AreEqual(RuleStatus.Failed, trace[0].Status, "顶层状态须与短路裁决一致");
+            Assert.AreEqual(RuleResult.Failed().Status, rules.Evaluate(1).Status);
+
+            Assert.AreEqual(11, trace[1].NodeId);
+            Assert.AreEqual(1, trace[1].Depth);
+            Assert.AreEqual(RuleStatus.Passed, trace[1].Status);
+
+            Assert.AreEqual(12, trace[2].NodeId);
+            Assert.AreEqual(RuleStatus.Failed, trace[2].Status);
+            Assert.AreEqual("false", trace[2].Reason, "叶子失败原因须透出，供定位具体条件");
+        }
+
+        [Test]
         public void TriggerBindOnce对同步触发安全且只回调一次()
         {
             var binder = new SynchronousTriggerBinder();

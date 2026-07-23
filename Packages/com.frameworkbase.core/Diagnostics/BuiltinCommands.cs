@@ -132,6 +132,13 @@ namespace Framework.Diagnostics
             // 引导断点调试命令（guide status/reset/skip）已随引导下沉到 GuideModule 注册（ADR-008）。
 
             registry.Register(
+                new CommandInfo("rule",
+                    "规则求值排查：无参列全部规则，rule <id|key> 看裁决，rule explain <id|key> 展开求值树",
+                    usage: "rule [id|key] | rule explain <id|key>",
+                    requiredAccess: CommandAccessLevel.Privileged),
+                args => RuleCommand(args));
+
+            registry.Register(
                 new CommandInfo("sysinfo", "设备与运行环境信息",
                     requiredAccess: CommandAccessLevel.Privileged),
                 _ =>
@@ -145,6 +152,67 @@ namespace Framework.Diagnostics
                       .Append(Application.systemLanguage);
                     return CommandResult.Ok(sb.ToString());
                 });
+        }
+
+        /// <summary>
+        /// rule 命令实现：读全局 <see cref="Core.GameEntry.Rules"/> 求值排查。规则求值无副作用，
+        /// 安全反复调用。GM 现场只能给空上下文，需 Owner/Scope 的叶子会体现为其自身状态（NotReady/Failed）。
+        /// </summary>
+        private static CommandResult RuleCommand(CommandArgs args)
+        {
+            var rules = Core.GameEntry.Rules;
+            if (rules == null || !rules.IsInitialized)
+                return CommandResult.Ok("规则目录未初始化（尚未登录或未冻结编排）。");
+
+            string sub = args.GetStringOrDefault(0);
+            bool explain = string.Equals(sub, "explain", StringComparison.OrdinalIgnoreCase);
+            string target = args.GetStringOrDefault(explain ? 1 : 0);
+
+            // 无参：列出全部规则及其当前裁决。
+            if (string.IsNullOrEmpty(target) && !explain)
+            {
+                Framework.Foundation.RuleDefinition[] all = rules.Catalog?.Rules
+                    ?? Array.Empty<Framework.Foundation.RuleDefinition>();
+                if (all.Length == 0) return CommandResult.Ok("（无规则）");
+                var list = new StringBuilder(256);
+                list.Append("规则清单（Id [Key] 裁决）：");
+                for (int i = 0; i < all.Length; i++)
+                {
+                    Framework.Foundation.RuleResult verdict = rules.Evaluate(all[i].Id);
+                    list.AppendLine().Append("  ").Append(all[i].Id).Append(" [").Append(all[i].Key)
+                        .Append("] = ").Append(verdict.Status);
+                }
+                return CommandResult.Ok(list.ToString());
+            }
+
+            if (string.IsNullOrEmpty(target))
+                return CommandResult.Fail("用法：rule explain <id|key>");
+            if (!int.TryParse(target, out int ruleId) && !rules.TryResolveId(target, out ruleId))
+                return CommandResult.Fail($"规则 ID/Key 不存在：{target}");
+            if (!rules.ContainsRule(ruleId))
+                return CommandResult.Fail($"规则 ID 不存在：{ruleId}");
+
+            // rule <id>：只报总裁决与首因；rule explain <id>：展开逐节点求值树。
+            if (!explain)
+            {
+                Framework.Foundation.RuleResult verdict = rules.Evaluate(ruleId);
+                string reason = string.IsNullOrEmpty(verdict.Reason) ? string.Empty : $"（{verdict.Reason}）";
+                return CommandResult.Ok($"规则 {ruleId} = {verdict.Status}{reason}");
+            }
+
+            var tree = new StringBuilder(256);
+            tree.Append("规则 ").Append(ruleId).Append(" 求值树（不短路，逐节点）：");
+            foreach (Framework.Foundation.RuleService.RuleTraceLine line in rules.Explain(ruleId))
+            {
+                tree.AppendLine().Append("  ");
+                for (int d = 0; d < line.Depth; d++) tree.Append("  ");
+                tree.Append(line.Kind);
+                if (line.Kind == Framework.Foundation.RuleNodeKind.Predicate)
+                    tree.Append(':').Append(line.TypeId);
+                tree.Append(" #").Append(line.NodeId).Append(" => ").Append(line.Status);
+                if (!string.IsNullOrEmpty(line.Reason)) tree.Append(' ').Append(line.Reason);
+            }
+            return CommandResult.Ok(tree.ToString());
         }
 
         private static CommandResult Help(CommandRegistry registry, CommandArgs args)

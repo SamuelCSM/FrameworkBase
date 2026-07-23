@@ -189,6 +189,134 @@ namespace Framework.Foundation
 
         public bool ContainsRule(int ruleId) => IsInitialized && _rules.ContainsKey(ruleId);
 
+        /// <summary>把配置 Key 解析为 RuleId，供 GM 诊断命令用可读 Key 代替数字 Id。</summary>
+        public bool TryResolveId(string key, out int ruleId)
+        {
+            ruleId = 0;
+            if (!IsInitialized || string.IsNullOrWhiteSpace(key)) return false;
+            foreach (Rule rule in _rules.Values)
+            {
+                if (!string.Equals(rule.Definition.Key, key, StringComparison.Ordinal)) continue;
+                ruleId = rule.Definition.Id;
+                return true;
+            }
+            return false;
+        }
+
+        /// <summary>诊断用的单节点求值轨迹（深度、节点、种类、TypeId、状态与原因）。</summary>
+        public readonly struct RuleTraceLine
+        {
+            public RuleTraceLine(int depth, int nodeId, RuleNodeKind kind, int typeId, RuleStatus status, string reason)
+            {
+                Depth = depth;
+                NodeId = nodeId;
+                Kind = kind;
+                TypeId = typeId;
+                Status = status;
+                Reason = reason;
+            }
+
+            public int Depth { get; }
+            public int NodeId { get; }
+            public RuleNodeKind Kind { get; }
+            public int TypeId { get; }
+            public RuleStatus Status { get; }
+            public string Reason { get; }
+        }
+
+        /// <summary>
+        /// 展开一条规则的求值轨迹（前序，父在子前）：<b>不短路，逐节点求值</b>，让每个叶子的状态与原因都可见——
+        /// "这条引导为什么不弹"最常见的排查诉求就是定位到具体哪个条件未过。组合节点的状态仍按短路语义合成，
+        /// 因此顶层节点的状态与 <see cref="Evaluate"/> 的裁决一致。叶子求值应无副作用（与规则设计契约一致）。
+        /// </summary>
+        /// <param name="context">求值上下文；GM 命令通常只能给空上下文，需 Owner/Scope 的叶子会体现为其自身状态。</param>
+        public IReadOnlyList<RuleTraceLine> Explain(int ruleId, RuleContext context = default)
+        {
+            EnsureInitialized();
+            if (!_rules.TryGetValue(ruleId, out Rule rule))
+                throw new KeyNotFoundException($"规则 ID 不存在：{ruleId}。");
+            var lines = new List<RuleTraceLine>();
+            TraceNode(rule.Root, 0, context, lines);
+            return lines;
+        }
+
+        private RuleStatus TraceNode(Node node, int depth, RuleContext context, List<RuleTraceLine> lines)
+        {
+            // 先占位保证父在子前；状态依赖子节点，故求值后回填。
+            int slot = lines.Count;
+            lines.Add(default);
+            RuleStatus status;
+            string reason = null;
+
+            switch (node.Definition.Kind)
+            {
+                case RuleNodeKind.Predicate:
+                {
+                    RuleResult leaf = EvaluateNode(node, context);
+                    status = leaf.Status;
+                    reason = leaf.Reason;
+                    break;
+                }
+                case RuleNodeKind.Not:
+                    status = NegateStatus(TraceNode(node.Children[0].Node, depth + 1, context, lines));
+                    break;
+                case RuleNodeKind.All:
+                {
+                    // 与 EvaluateAll 同语义：首个 Failed/Error 决定，否则有 NotReady 则 NotReady，否则 Passed。
+                    RuleStatus decided = RuleStatus.Passed;
+                    bool isDecided = false, anyNotReady = false;
+                    for (int i = 0; i < node.Children.Count; i++)
+                    {
+                        RuleStatus child = TraceNode(node.Children[i].Node, depth + 1, context, lines);
+                        if (!isDecided && (child == RuleStatus.Failed || child == RuleStatus.Error))
+                        {
+                            decided = child;
+                            isDecided = true;
+                        }
+                        if (child == RuleStatus.NotReady) anyNotReady = true;
+                    }
+                    status = isDecided ? decided : anyNotReady ? RuleStatus.NotReady : RuleStatus.Passed;
+                    break;
+                }
+                case RuleNodeKind.Any:
+                {
+                    // 与 EvaluateAny 同语义：首个 Passed/Error 决定，否则有 NotReady 则 NotReady，否则 Failed。
+                    RuleStatus decided = RuleStatus.Failed;
+                    bool isDecided = false, anyNotReady = false;
+                    for (int i = 0; i < node.Children.Count; i++)
+                    {
+                        RuleStatus child = TraceNode(node.Children[i].Node, depth + 1, context, lines);
+                        if (!isDecided && (child == RuleStatus.Passed || child == RuleStatus.Error))
+                        {
+                            decided = child;
+                            isDecided = true;
+                        }
+                        if (child == RuleStatus.NotReady) anyNotReady = true;
+                    }
+                    status = isDecided ? decided : anyNotReady ? RuleStatus.NotReady : RuleStatus.Failed;
+                    break;
+                }
+                default:
+                    status = RuleStatus.Error;
+                    reason = $"未知 RuleNodeKind：{node.Definition.Kind}。";
+                    break;
+            }
+
+            lines[slot] = new RuleTraceLine(
+                depth, node.Definition.Id, node.Definition.Kind, node.Definition.TypeId, status, reason);
+            return status;
+        }
+
+        private static RuleStatus NegateStatus(RuleStatus value)
+        {
+            switch (value)
+            {
+                case RuleStatus.Passed: return RuleStatus.Failed;
+                case RuleStatus.Failed: return RuleStatus.Passed;
+                default: return value;
+            }
+        }
+
         public RuleResult Evaluate(int ruleId, RuleContext context = default)
         {
             EnsureInitialized();
