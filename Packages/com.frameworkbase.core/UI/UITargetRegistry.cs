@@ -86,6 +86,11 @@ namespace Framework
         private readonly Dictionary<int, List<ClickSubscription>> _clickSubscriptions =
             new Dictionary<int, List<ClickSubscription>>();
         private int _notifyDepth;
+        /// <summary>
+        /// 通知期间被 Dispose 的订阅所属 targetId；最外层通知结束时统一压实。
+        /// 懒分配：无"通知中注销"时（常态）保持 null，热路径零分配。
+        /// </summary>
+        private HashSet<int> _dirtyTargets;
 
         public Action<Exception> ObserverErrorSink { get; set; }
 
@@ -183,6 +188,7 @@ namespace Framework
             _targets.Clear();
             _clickSubscriptions.Clear();
             _notifyDepth = 0;
+            _dirtyTargets?.Clear();
         }
 
         private void NotifyClick(UITarget target)
@@ -191,6 +197,7 @@ namespace Framework
             _notifyDepth++;
             try
             {
+                // count 定格在进入时：通知期间新订阅（SubscribeClick）不在本轮触发；已 Dispose 的跳过。
                 int count = list.Count;
                 for (int i = 0; i < count; i++)
                 {
@@ -204,7 +211,7 @@ namespace Framework
             finally
             {
                 _notifyDepth--;
-                if (_notifyDepth == 0) Compact(list, target.TargetId);
+                if (_notifyDepth == 0) FlushDirty();
             }
         }
 
@@ -220,14 +227,27 @@ namespace Framework
 
         private void RemoveSubscription(ClickSubscription subscription)
         {
-            if (_notifyDepth > 0) return;
-            if (!_clickSubscriptions.TryGetValue(subscription.TargetId, out List<ClickSubscription> list)) return;
-            list.Remove(subscription);
-            if (list.Count == 0) _clickSubscriptions.Remove(subscription.TargetId);
+            // 通知进行中（可能是任意 target）改列表会破坏正在进行的遍历——订阅已被自身 Dispose 标记
+            // IsDisposed，此处只记脏、延到最外层通知结束统一压实；否则该订阅会滞留到其所属 target 下次点击。
+            if (_notifyDepth > 0)
+            {
+                (_dirtyTargets ??= new HashSet<int>()).Add(subscription.TargetId);
+                return;
+            }
+            CompactTarget(subscription.TargetId);
         }
 
-        private void Compact(List<ClickSubscription> list, int targetId)
+        private void FlushDirty()
         {
+            if (_dirtyTargets == null || _dirtyTargets.Count == 0) return;
+            foreach (int targetId in _dirtyTargets) CompactTarget(targetId);
+            _dirtyTargets.Clear();
+        }
+
+        /// <summary>移除某 targetId 列表中所有已 Dispose 的订阅；列表空则连键一并删除。</summary>
+        private void CompactTarget(int targetId)
+        {
+            if (!_clickSubscriptions.TryGetValue(targetId, out List<ClickSubscription> list)) return;
             for (int i = list.Count - 1; i >= 0; i--)
                 if (list[i].IsDisposed) list.RemoveAt(i);
             if (list.Count == 0) _clickSubscriptions.Remove(targetId);

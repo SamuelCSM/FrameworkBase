@@ -34,7 +34,7 @@ namespace Framework
             public const int UIOpenWindow = 3001;
             public const int UICloseWindow = 3002;
             public const int Delay = 3003;
-            // 3004/3005 由引导模块占用（GuideOrchestrationTypeIds），号段规约建立前的历史占位，勿复用。
+            // 框架段止于 3099；模块段（3100+）由各模块自持，如引导的 GuideOrchestrationTypeIds（3100-3119）。
         }
     }
 

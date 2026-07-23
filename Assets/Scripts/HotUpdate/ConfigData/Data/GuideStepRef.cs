@@ -1,7 +1,7 @@
 // ==========================================
 // 自动生成的配置类: GuideStepRef
 // 来源工作表: guide_step_ref
-// 生成时间: 2026-07-22 11:30:15
+// 生成时间: 2026-07-23 10:33:43
 // ==========================================
 
 using System;
@@ -55,6 +55,12 @@ namespace HotUpdate.Config.Data
         /// </summary>
         [Column("Description")]
         public string Description { get; set; }
+
+        /// <summary>
+        /// 本步超时毫秒；<=0 继承运行器级
+        /// </summary>
+        [Column("TimeoutMs")]
+        public int TimeoutMs { get; set; }
 
     }
 

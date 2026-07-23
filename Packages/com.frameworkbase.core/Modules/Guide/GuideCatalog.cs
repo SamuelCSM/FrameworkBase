@@ -45,6 +45,8 @@ namespace Framework
         public int StepId;
         public int Order;
         public int CompleteTriggerId;
+        /// <summary>本步等待完成信号的超时毫秒；&lt;=0 表示沿用运行器级 <see cref="GuideRunner.StepTimeout"/>。</summary>
+        public int TimeoutMs;
         public string Key;
         public string Description;
     }

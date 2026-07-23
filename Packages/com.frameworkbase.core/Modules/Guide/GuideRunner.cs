@@ -364,20 +364,25 @@ namespace Framework
                 return StepEnterOutcome.Superseded;
             }
             _stepSubscription = binding;
-            StartStepWatchdog(session, step.Definition.StepId);
+            StartStepWatchdog(session, step.Definition);
             return StepEnterOutcome.Entered;
         }
 
         /// <summary>
-        /// 为当前步骤启动超时看门狗。计时随步骤订阅同生共死：步骤被推进、被取代或会话结束时，
-        /// <see cref="DisposeStepSubscription"/> 会取消它，因此正常路径下永远不会触发。
+        /// 为当前步骤启动超时看门狗。时限优先取步骤配的 <see cref="GuideStepDefinition.TimeoutMs"/>，
+        /// 缺省（&lt;=0）则回退运行器级 <see cref="StepTimeout"/>；两者都不设限时不挂表。
+        /// 计时随步骤订阅同生共死：步骤被推进、被取代或会话结束时，<see cref="DisposeStepSubscription"/>
+        /// 会取消它，因此正常路径下永远不会触发。
         /// </summary>
-        private void StartStepWatchdog(Session session, int stepId)
+        private void StartStepWatchdog(Session session, GuideStepDefinition step)
         {
-            if (StepTimeout <= TimeSpan.Zero) return;
+            TimeSpan timeout = step.TimeoutMs > 0
+                ? TimeSpan.FromMilliseconds(step.TimeoutMs)
+                : StepTimeout;
+            if (timeout <= TimeSpan.Zero) return;
             var cts = CancellationTokenSource.CreateLinkedTokenSource(session.Cancellation.Token);
             _stepTimeoutCts = cts;
-            WatchStepAsync(session, stepId, StepTimeout, cts.Token).Forget();
+            WatchStepAsync(session, step.StepId, timeout, cts.Token).Forget();
         }
 
         private async UniTask WatchStepAsync(
