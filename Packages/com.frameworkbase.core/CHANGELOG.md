@@ -22,6 +22,9 @@
   `IPopupPresenter`（"展示至关闭才返回"的 async 契约）+ 模块以"泵"串行消费（单弹窗展示异常隔离不卡队列、
   会话取消停止泵、账号退出清待展示队列）。访问点 `Popups.Service` 于 Phase 1 发布，`popup` 调试命令查队列
   状态。刻意不做抢占（打断需保存/恢复现场，属业务策略）。纯核 EditMode 11 例。
+  **默认接框架自带 UI 框架**：新增 `UIManagerPopupPresenter`（模块无参构造即用它），把弹窗队列长在
+  `UIManager` 上——业务入队 Key 传窗口稳定 ID 字符串，presenter 先订阅生命周期再 `OpenUIAsync(id)` 打开、
+  等 `Closed` 事件推进下一个；打开失败不卡队列。业务零胶水，非 UIManager 方案仍可走自定义 presenter 构造。
 
 - **Addressables 远端 bundle 布局审计（规则 11~13）**：`AddressablesValidationRules` 在既有重复隐式依赖
   （规则 9）、组更新粒度（规则 8）之上，补三条远端组 bundle 布局咨询规则——① 命名不含内容哈希

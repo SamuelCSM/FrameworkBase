@@ -199,6 +199,84 @@ namespace Framework.Popup
         /// <summary>清空待展示队列（不影响正在展示者）。</summary>
         public void ClearPending() => _queue.ClearPending();
     }
+
+    /// <summary>
+    /// UIManager 支撑的默认弹窗展示者：把弹窗队列接到框架自带的 UI 窗口系统（<see cref="UIManager"/>），
+    /// 而非让业务自写"队列↔UI"胶水。
+    /// <para>
+    /// 展示流程：由请求解析出目标窗口稳定 ID（默认取 <see cref="PopupRequest.Key"/> 解析为 int），
+    /// 先订阅窗口生命周期再 <see cref="UIManager.OpenUIAsync(int, object, bool)"/> 打开（避免错过极快关闭的
+    /// Closed 事件），等到该窗口 <see cref="UIWindowPhase.Closed"/> 或会话取消才返回，从而驱动队列推进下一个。
+    /// </para>
+    /// <para>
+    /// 边界：打开失败（无窗口）直接结束本次、不卡队列；会话取消时抛 <see cref="OperationCanceledException"/>
+    /// 由泵收尾，此时已打开的窗口交由 UI/场景拆卸关闭（会话取消通常与 UI 拆卸同时发生），本 presenter 不强关。
+    /// </para>
+    /// </summary>
+    public sealed class UIManagerPopupPresenter : IPopupPresenter
+    {
+        private readonly System.Func<PopupRequest, int> _windowIdResolver;
+
+        /// <summary>
+        /// 构造 UIManager 弹窗展示者。
+        /// </summary>
+        /// <param name="windowIdResolver">
+        /// 从请求解析目标窗口稳定 ID 的映射；null 时默认把 <see cref="PopupRequest.Key"/> 解析为 int。
+        /// 业务可传自定义映射（如从 <see cref="PopupRequest.Payload"/> 取 ID）。
+        /// </param>
+        public UIManagerPopupPresenter(System.Func<PopupRequest, int> windowIdResolver = null)
+        {
+            _windowIdResolver = windowIdResolver ?? DefaultResolve;
+        }
+
+        /// <inheritdoc/>
+        public async UniTask ShowAsync(PopupRequest request, CancellationToken cancellationToken)
+        {
+            int windowId = _windowIdResolver(request);
+            if (windowId <= 0)
+            {
+                Debug.LogWarning($"[Popup] UIManagerPopupPresenter 无法解析 windowId（Key={request.Key}），跳过该弹窗");
+                return;
+            }
+
+            UIManager ui = GameEntry.UI;
+            if (ui == null)
+            {
+                Debug.LogWarning("[Popup] UIManager 未就绪，跳过弹窗");
+                return;
+            }
+
+            var closed = new UniTaskCompletionSource();
+            // 先订阅再打开：避免窗口打开后瞬间关闭时错过 Closed 事件、导致队列永远等不到而卡死。
+            System.IDisposable subscription = ui.SubscribeWindowLifecycle(evt =>
+            {
+                if (evt.WindowId == windowId && evt.Phase == UIWindowPhase.Closed)
+                    closed.TrySetResult();
+            });
+
+            try
+            {
+                UIBaseCore window = await ui.OpenUIAsync(windowId, request.Payload);
+                if (window == null)
+                {
+                    // 打开失败：没有窗口就永远等不到 Closed，直接结束本次展示，不卡住队列。
+                    Debug.LogWarning($"[Popup] 窗口 {windowId} 打开失败，跳过");
+                    return;
+                }
+
+                // 等该窗口关闭（或会话取消）才返回，队列据此推进下一个弹窗。
+                await closed.Task.AttachExternalCancellation(cancellationToken);
+            }
+            finally
+            {
+                subscription.Dispose();
+            }
+        }
+
+        /// <summary>默认解析：把 <see cref="PopupRequest.Key"/> 当作窗口稳定 ID 字符串解析；失败返回 0。</summary>
+        private static int DefaultResolve(PopupRequest request)
+            => int.TryParse(request.Key, out int id) ? id : 0;
+    }
 }
 
 namespace Framework
@@ -236,7 +314,13 @@ namespace Framework
         private bool _pumping;
 
         /// <summary>
-        /// 构造弹窗队列模块。
+        /// 默认构造：用 <see cref="UIManagerPopupPresenter"/> 把弹窗接到框架自带的 UIManager 窗口系统。
+        /// 业务入队时 Key 传目标窗口稳定 ID 的字符串即可，零胶水。需自定义展示（非 UIManager 方案）走另一构造。
+        /// </summary>
+        public PopupQueueModule() : this(new UIManagerPopupPresenter()) { }
+
+        /// <summary>
+        /// 构造弹窗队列模块（自定义展示者）。
         /// </summary>
         /// <param name="presenter">业务实现的弹窗展示者（非 null）。</param>
         public PopupQueueModule(IPopupPresenter presenter)
