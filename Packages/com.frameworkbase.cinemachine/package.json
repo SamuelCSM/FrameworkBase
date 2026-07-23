@@ -1,0 +1,18 @@
+{
+  "name": "com.frameworkbase.cinemachine",
+  "version": "0.1.0",
+  "displayName": "FrameworkBase Camera — Cinemachine",
+  "description": "FrameworkBase 相机调度参考扩展包：把 Unity Cinemachine 的虚拟相机优先级切换 / Impulse 震屏接到主干的 ICameraDirector。\n\n骨架实现——不含 Cinemachine 包本身；对 Cinemachine 的调用锁在编译宏 FRAMEWORKBASE_CINEMACHINE 之后（工程装了 com.unity.cinemachine 时经 asmdef versionDefines 自动开启），未启用时退化为无操作以保证可编译。启用步骤见 README。",
+  "unity": "2022.3",
+  "dependencies": {
+    "com.frameworkbase.core": "0.8.0"
+  },
+  "keywords": [
+    "framework",
+    "camera",
+    "cinemachine"
+  ],
+  "author": {
+    "name": "SamuelCSM"
+  }
+}
