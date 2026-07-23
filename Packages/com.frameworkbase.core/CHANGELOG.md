@@ -7,6 +7,14 @@
 
 ### 新增
 
+- **运行时相机过渡驱动 `CameraTransitionDriver`**：此前相机层只有声明式静态取景 `SceneCameraRigBase`，
+  缺运行时运镜。借鉴 ALCameraController 每参数独立过渡的分解思路，按 FrameworkBase 风格重做：
+  纯归一化缓动核 `CameraEase`（Linear/SmoothStep/SmootherStep/EaseIn/EaseOut，纯数学不依赖 UnityEngine）
+  + dt 注入的 `CameraTransitionClock`（可脱离 PlayerLoop 单测）；驱动器提供位置/正交尺寸/视野角/朝向
+  四个互不影响可并行的通道（`MoveTo/ZoomOrthographicTo/FieldOfViewTo/RotateTo/FocusOn`），
+  duration≤0 瞬时到位、发起当帧即落值，运镜默认走非缩放时间与暂停解耦，"最新过渡覆盖本通道"
+  （不做 AL 的优先级栈——优先级属业务策略）。纯核 EditMode 9 例（缓动边界钳制/时钟推进钳制/负 dt 忽略）。
+
 - **Addressables 远端 bundle 布局审计（规则 11~13）**：`AddressablesValidationRules` 在既有重复隐式依赖
   （规则 9）、组更新粒度（规则 8）之上，补三条远端组 bundle 布局咨询规则——① 命名不含内容哈希
   （NoHash/FileNameHash）→ 内容热更后 CDN 可能按 URL 供旧字节（热更特有隐患，关联 ADR-005/009）；
