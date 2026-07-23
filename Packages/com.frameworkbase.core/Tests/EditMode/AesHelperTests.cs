@@ -80,13 +80,29 @@ namespace Framework.Tests
         [Test]
         public void 换密钥来源后_旧档无法解密()
         {
-            byte[] cipher = AesHelper.Encrypt("secret");
+            const string secret = "secret";
+            byte[] cipher = AesHelper.Encrypt(secret);
 
-            // 模拟换设备/换账号：主密钥来源变化 → 派生密钥变化 → 旧密文解密应失败
+            // 模拟换设备/换账号：主密钥来源变化 → 派生密钥变化 → 旧密文不可再解出原文
             AesHelper.SetKeyProvider(new FixedKeyProvider("a-different-secret"));
 
-            Assert.Throws<CryptographicException>(() => AesHelper.Decrypt(cipher),
-                "不同主密钥不应能解开旧密文（存档设备绑定语义）");
+            // 设备绑定要保证的是"旧档读不出原文"。断言不能是"必抛异常"——
+            // AES-CBC+PKCS7 用错 key 时约 255/256 概率 padding 校验失败而抛，但另有约 1/256
+            // 概率解出乱码而 padding 恰好合法；随机 IV 使这一概率每次运行独立摇骰子，
+            // 断言"必抛"会让 CI 偶发误挂（约 0.4%）。改为断言密码学上必然成立的性质：
+            // 换 key 后要么抛异常、要么解出的绝不是原文——两者都满足"旧档不可解"。
+            string recovered = null;
+            try
+            {
+                recovered = AesHelper.Decrypt(cipher);
+            }
+            catch (CryptographicException)
+            {
+                Assert.Pass("padding 校验失败，旧档不可解（换密钥语义成立）");
+            }
+
+            Assert.AreNotEqual(secret, recovered,
+                "换密钥来源后绝不能解出原文（存档设备绑定语义）");
         }
 
         [Test]

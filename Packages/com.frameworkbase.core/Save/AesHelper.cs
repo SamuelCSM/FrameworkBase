@@ -136,7 +136,8 @@ namespace Framework.Save
 
         /// <summary>
         /// 对字节数组计算裸 SHA-256 并返回小写十六进制字符串。
-        /// 仅保留用于兼容读取旧版（HMAC 之前）存档；新写入一律用 <see cref="HmacSha256Hex"/>。
+        /// 通用工具：裸摘要<b>无密钥</b>，不可当完整性 MAC 用（谁都能重算）——存档完整性一律走
+        /// <see cref="HmacSha256Hex"/>。SaveManager 已不再接受裸 SHA-256 存档；此方法仅供一般摘要用途。
         /// </summary>
         public static string Sha256Hex(byte[] data)
         {
