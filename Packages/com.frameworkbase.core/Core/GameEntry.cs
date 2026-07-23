@@ -29,6 +29,9 @@ namespace Framework.Core
         // 应用主状态机（Login ⇄ InGame）：登录、业务接管、登出拆卸、回登录全部由它串行编排。
         private AppFlow _appFlow;
         private CancellationTokenSource _appFlowCts;
+        // 启动下载阶段（LaunchFlow：Catalog/资源/代码补丁下载）的作用域取消源，早于 _appFlowCts 创建。
+        // 此前该阶段完全无令牌，应用退出时在途下载只能被弃置空转；有了它可在 OnDestroy 干净中止。
+        private CancellationTokenSource _bootCts;
 
         // ── Inspector 序列化字段 ──────────────────────────────────────────────
 
@@ -302,7 +305,9 @@ namespace Framework.Core
         /// </summary>
         private async UniTaskVoid RunLaunchAndLoginAsync(LoadingWindow loading, Transform systemRoot)
         {
-            LaunchFlowOutcome outcome = await LaunchFlow.RunAsync(loading);
+            // 启动作用域令牌贯穿整个下载阶段（Catalog → 资源 → 代码补丁），使退出/销毁能中止在途下载。
+            _bootCts = new CancellationTokenSource();
+            LaunchFlowOutcome outcome = await LaunchFlow.RunAsync(loading, _bootCts.Token);
             if (outcome != LaunchFlowOutcome.ReadyForLogin)
                 return;
 
@@ -755,6 +760,11 @@ namespace Framework.Core
             // Timer / Save 等 Manager 尚可用时先让业务保存并释放账号态资源。
             // 应用退出不经 AppFlow 循环（保留持久会话供冷启动恢复），直接走业务退出通知。
             NotifyBusinessExit("application_quit");
+
+            // 中止仍可能在途的启动下载阶段（Catalog/资源/代码补丁），令其 await 干净解绑。
+            try { _bootCts?.Cancel(); } catch (Exception ex) { Debug.LogException(ex); }
+            _bootCts?.Dispose();
+            _bootCts = null;
 
             // 停止应用主状态机循环：登录 / 业务入口 / 等登出的 await 经取消令牌干净解绑。
             try { _appFlowCts?.Cancel(); } catch (Exception ex) { Debug.LogException(ex); }

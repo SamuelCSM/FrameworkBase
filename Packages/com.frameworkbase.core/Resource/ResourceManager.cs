@@ -242,10 +242,14 @@ namespace Framework
         /// 下载当前 catalog 中所有远端资源包（全量预下载）。
         /// 不需要指定 label，自动覆盖所有分组。
         /// </summary>
-        public async UniTask<bool> DownloadAllRemoteDependenciesAsync(Action<float> onProgress = null)
+        public async UniTask<bool> DownloadAllRemoteDependenciesAsync(
+            Action<float> onProgress = null,
+            CancellationToken cancellationToken = default)
         {
             GameLog.Log("[ResourceManager] 开始全量下载远端资源依赖...");
 
+            // 句柄在 finally 统一释放，覆盖成功/失败/异常/取消四条出口（同 DownloadDependenciesAsync）。
+            AsyncOperationHandle handle = default;
             try
             {
                 var keys = new List<object>();
@@ -260,10 +264,11 @@ namespace Framework
                     return true;
                 }
 
-                var handle = Addressables.DownloadDependenciesAsync((IEnumerable<object>)keys, false);
+                handle = Addressables.DownloadDependenciesAsync((IEnumerable<object>)keys, false);
 
                 while (!handle.IsDone)
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     onProgress?.Invoke(handle.PercentComplete);
                     await UniTask.Yield();
                 }
@@ -271,19 +276,27 @@ namespace Framework
                 if (handle.Status != AsyncOperationStatus.Succeeded)
                 {
                     GameLog.Error($"[ResourceManager] 全量下载失败: {handle.OperationException?.Message}");
-                    Addressables.Release(handle);
                     return false;
                 }
 
                 onProgress?.Invoke(1f);
-                Addressables.Release(handle);
                 GameLog.Log("[ResourceManager] 全量远端资源下载完成");
                 return true;
+            }
+            catch (OperationCanceledException)
+            {
+                GameLog.Log("[ResourceManager] 全量远端资源下载被取消。");
+                return false;
             }
             catch (Exception e)
             {
                 GameLog.Error($"[ResourceManager] DownloadAllRemoteDependenciesAsync 异常: {e.Message}");
                 return false;
+            }
+            finally
+            {
+                if (handle.IsValid())
+                    Addressables.Release(handle);
             }
         }
 
@@ -295,17 +308,24 @@ namespace Framework
         public async UniTask<bool> DownloadDependenciesAsync(
             object key,
             Action<float> onProgress = null,
-            long totalBytes = 0)
+            long totalBytes = 0,
+            CancellationToken cancellationToken = default)
         {
             GameLog.Log($"[ResourceManager] 开始下载资源依赖 [{key}]...");
 
+            // 句柄在 finally 统一释放：覆盖成功、失败、异常、取消四条出口，避免旧实现 catch 路径漏释放句柄。
+            // default 句柄的 IsValid() 为 false，异常发生在创建之前时 finally 安全跳过。
+            AsyncOperationHandle handle = default;
             try
             {
-                var handle = Addressables.DownloadDependenciesAsync(key, false);
+                handle = Addressables.DownloadDependenciesAsync(key, false);
 
                 float lastReported = -1f;
                 while (!handle.IsDone)
                 {
+                    // 启动下载阶段可能很长：应用退出 / 强更跳转 / 用户重试时经令牌干净中止在途下载。
+                    cancellationToken.ThrowIfCancellationRequested();
+
                     float progress;
                     if (totalBytes > 0)
                     {
@@ -332,19 +352,28 @@ namespace Framework
                 if (handle.Status != AsyncOperationStatus.Succeeded)
                 {
                     GameLog.Error($"[ResourceManager] 下载依赖失败 [{key}]: {handle.OperationException?.Message}");
-                    Addressables.Release(handle);
                     return false;
                 }
 
                 onProgress?.Invoke(1f);
-                Addressables.Release(handle);
                 GameLog.Log($"[ResourceManager] 资源依赖下载完成 [{key}]");
                 return true;
+            }
+            catch (OperationCanceledException)
+            {
+                GameLog.Log($"[ResourceManager] 资源依赖下载被取消 [{key}]。");
+                return false;
             }
             catch (Exception e)
             {
                 GameLog.Error($"[ResourceManager] DownloadDependenciesAsync 异常 [{key}]: {e.Message}");
                 return false;
+            }
+            finally
+            {
+                // 释放下载句柄不会卸载已落缓存的 bundle，是必需的清理；不释放则句柄常驻泄漏。
+                if (handle.IsValid())
+                    Addressables.Release(handle);
             }
         }
 
