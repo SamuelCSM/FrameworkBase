@@ -7,6 +7,13 @@
 
 ### 新增
 
+- **预加载按设备档位限流并行 `ResourceManager.PreloadAssetsAsync`**：此前批量预加载是串行
+  `foreach await`（低端不安全地无上限也谈不上、高端白白丢吞吐）。现按 `DeviceTierService.Tier`
+  经纯映射 `DeviceTierResourceTuning.PreloadConcurrency`（Low=1 串行保内存 / Mid=3 / High=6）决定
+  同时在途的 Addressables 加载数：低端窄路削内存/IO 峰值、高端多路提吞吐；worker 共享游标领取地址，
+  同地址并发由既有句柄缓存去重兜底。新增 `PreloadConcurrencyOverride` 供压测或项目自有档位判断时钉死。
+  并发度纯映射 EditMode 覆盖（低端必串行、随档位单调不减）。
+
 - **资源热更闭环——远程 Catalog 纳入已验签发布身份（ADR-009）**：此前资源热更链断裂——
   `BuildRemoteCatalog=0` 且无代码打开，远程 catalog 从不产出（客户端 `CheckForCatalogUpdates`
   永远查不到更新）；即便产出，其完整性也只由 Addressables 无签名 `.hash` 守，不在 RSA 签名覆盖内。

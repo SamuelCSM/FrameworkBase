@@ -6,6 +6,7 @@ using UnityEngine.AddressableAssets;
 using UnityEngine.ResourceManagement.AsyncOperations;
 using UnityEngine.SceneManagement;
 using Cysharp.Threading.Tasks;
+using Framework.Performance;
 
 namespace Framework
 {
@@ -691,8 +692,36 @@ namespace Framework
         #region 资源预加载
 
         /// <summary>
-        /// 预加载资源列表
+        /// 预加载批量并发度覆盖：&gt;0 时优先于设备分级映射直接生效；≤0 回退按
+        /// <see cref="DeviceTierService.Tier"/> 经 <see cref="DeviceTierResourceTuning.PreloadConcurrency"/> 取值。
+        /// 用于压测或项目已有自己的档位判断时手动钉死并发度。
         /// </summary>
+        public int PreloadConcurrencyOverride { get; set; } = 0;
+
+        /// <summary>
+        /// 解析本次预加载的实际并发度：覆盖优先，否则按当前设备档位映射；
+        /// 收敛到 [1, itemCount]——超过任务数只会空转 worker，低于 1 退化为串行。
+        /// </summary>
+        /// <param name="itemCount">本次待加载资源数（&gt;0）。</param>
+        /// <returns>并发度，范围 [1, itemCount]。</returns>
+        private int ResolvePreloadConcurrency(int itemCount)
+        {
+            int degree = PreloadConcurrencyOverride > 0
+                ? PreloadConcurrencyOverride
+                : DeviceTierResourceTuning.PreloadConcurrency(DeviceTierService.Tier);
+
+            if (degree < 1) degree = 1;
+            if (degree > itemCount) degree = itemCount;
+            return degree;
+        }
+
+        /// <summary>
+        /// 预加载资源列表，按设备档位限流并行：低端窄路保内存、高端多路提吞吐。
+        /// 并发度由 <see cref="ResolvePreloadConcurrency"/> 决定（可经 <see cref="PreloadConcurrencyOverride"/> 覆盖）；
+        /// 同一地址的并发请求由 <see cref="LoadAssetAsync{T}(string)"/> 的缓存去重兜底，不会重复加载。
+        /// </summary>
+        /// <param name="addresses">待预加载地址列表。</param>
+        /// <param name="onProgress">进度回调（0~1），按已完成数递增，主线程回调。</param>
         public async UniTask PreloadAssetsAsync(List<string> addresses, Action<float> onProgress = null)
         {
             if (addresses == null || addresses.Count == 0)
@@ -702,16 +731,50 @@ namespace Framework
             }
 
             int totalCount = addresses.Count;
-            int loadedCount = 0;
+            int concurrency = ResolvePreloadConcurrency(totalCount);
 
-            foreach (var address in addresses)
+            if (concurrency <= 1)
             {
-                await LoadAssetAsync<UnityEngine.Object>(address);
-                loadedCount++;
-                onProgress?.Invoke((float)loadedCount / totalCount);
+                // 低端档或单资源：串行加载，内存峰值最小、无并发歧义（保持原语义）。
+                int loadedCount = 0;
+                foreach (var address in addresses)
+                {
+                    await LoadAssetAsync<UnityEngine.Object>(address);
+                    loadedCount++;
+                    onProgress?.Invoke((float)loadedCount / totalCount);
+                }
+            }
+            else
+            {
+                // 按设备档位限流的并行预加载：concurrency 个 worker 共享游标领取地址，
+                // 同时在途的 Addressables 加载不超过 concurrency，兼顾吞吐与内存/IO 峰值。
+                // UniTask 为主线程协作式调度：worker 仅在 await 处交错，游标领取（读 nextIndex→自增）
+                // 之间无 await、不会被抢占，故无需锁；真正并行的是底层 Addressables 异步操作。
+                int nextIndex = 0;
+                int completedCount = 0;
+
+                async UniTask RunWorkerAsync()
+                {
+                    while (true)
+                    {
+                        int i = nextIndex;
+                        if (i >= totalCount) return;
+                        nextIndex = i + 1;
+
+                        await LoadAssetAsync<UnityEngine.Object>(addresses[i]);
+
+                        completedCount++;
+                        onProgress?.Invoke((float)completedCount / totalCount);
+                    }
+                }
+
+                var workers = new List<UniTask>(concurrency);
+                for (int w = 0; w < concurrency; w++)
+                    workers.Add(RunWorkerAsync());
+                await UniTask.WhenAll(workers);
             }
 
-            GameLog.Log($"PreloadAssetsAsync: 预加载完成，共 {totalCount} 个资源");
+            GameLog.Log($"PreloadAssetsAsync: 预加载完成，共 {totalCount} 个资源（并发 {concurrency}）");
         }
 
         /// <summary>
