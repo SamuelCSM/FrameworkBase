@@ -7,6 +7,14 @@
 
 ### 新增
 
+- **弹窗/流程序列队列 L2 模块 `PopupQueueModule`**（沿用 ADR-008 既有模块扩展机制，不改分层/依赖方向/
+  公共契约，无需新 ADR）：借鉴 ALQueue 的序列消费思路，多来源弹窗请求不并发弹出，而是入队后一次只
+  展示一个、关闭后再放下一个，按优先级（同级 FIFO）决定顺序。纯核 `PopupQueue`（不依赖 UnityEngine、
+  可单测：一次一个/优先级降序/同级 FIFO/Key 去重择优/正在展示同 Key 丢弃）+ 业务实现的
+  `IPopupPresenter`（"展示至关闭才返回"的 async 契约）+ 模块以"泵"串行消费（单弹窗展示异常隔离不卡队列、
+  会话取消停止泵、账号退出清待展示队列）。访问点 `Popups.Service` 于 Phase 1 发布，`popup` 调试命令查队列
+  状态。刻意不做抢占（打断需保存/恢复现场，属业务策略）。纯核 EditMode 11 例。
+
 - **运行时相机过渡驱动 `CameraTransitionDriver`**：此前相机层只有声明式静态取景 `SceneCameraRigBase`，
   缺运行时运镜。借鉴 ALCameraController 每参数独立过渡的分解思路，按 FrameworkBase 风格重做：
   纯归一化缓动核 `CameraEase`（Linear/SmoothStep/SmootherStep/EaseIn/EaseOut，纯数学不依赖 UnityEngine）
