@@ -96,6 +96,11 @@ namespace Framework.Editor.Release
         // ── 中间产物（步骤间传递）─────────────────────────────────────────────
         /// <summary>代码补丁清单（复制热更 DLL 步骤产出）。</summary>
         public List<PatchFile> PatchFiles = new List<PatchFile>();
+        /// <summary>
+        /// 本次构建产出的远程 Catalog 内容身份（ADR-009）：由 BuildAddressables 回填、GenerateManifest 写入
+        /// 已验签清单。仅含资源更新时非 null。
+        /// </summary>
+        public ResourceCatalogFile ResourceCatalog;
         /// <summary>最终清单 JSON（生成清单步骤产出）。</summary>
         public string ManifestJson;
 

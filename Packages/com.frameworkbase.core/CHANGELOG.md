@@ -7,6 +7,18 @@
 
 ### 新增
 
+- **资源热更闭环——远程 Catalog 纳入已验签发布身份（ADR-009）**：此前资源热更链断裂——
+  `BuildRemoteCatalog=0` 且无代码打开，远程 catalog 从不产出（客户端 `CheckForCatalogUpdates`
+  永远查不到更新）；即便产出，其完整性也只由 Addressables 无签名 `.hash` 守，不在 RSA 签名覆盖内。
+  现补齐四段：① `UpdateInfo` 增签名覆盖的 `ResourceCatalog` 内容身份（FileName/Size/SHA-256），
+  `ValidateManifest` 在 `ResourceVersion` 增长时门控要求它、缺失即失败关闭；② 客户端应用远端
+  Catalog 前经 `CatalogUpdateFlow` 下载字节按已验签 Size/SHA-256 校验，不符即新终态
+  `IntegrityFailed`、绝不激活未签名的资源目录；③ 发布管线 `BuildAddressables` 临时开启
+  `BuildRemoteCatalog`（finally 恢复，工程资产保持 0）、定位产出的 `catalog_*.json` 回填内容身份；
+  ④ `GenerateManifest` 构建期门禁：含资源更新时清单必须携带该身份。纯代码更新与老项目零迁移
+  （`ResourceVersion` 未增长时该字段可空）。**注意**：客户端验签门的 Catalog 取字节路径与发布管线
+  的远程 catalog 产出需一次真机发布演练验证。
+
 - **配置驱动全局引导框架**：新增稳定整数 `GuideId / StepId / WindowId / TargetId`、通用
   `RuleService / TriggerService / ActionService`、事件驱动 `GuideRunner`、强类型断点存储以及 Target 挖孔表现。
   `UIWindow.xlsx + Guide.xlsx` 沿用标准 `xxxRef / xxxTable / config.db` 管线，关系表使用 `ConfigListBase`；
