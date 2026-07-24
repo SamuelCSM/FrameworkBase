@@ -72,7 +72,7 @@ namespace Framework
 
             if (_uiRootCanvas == null)
             {
-                Debug.LogError("[UIBootstrap] UIRoot Canvas 未赋值，请在 Inspector 中拖拽赋值");
+                GameLog.Error("[UIBootstrap] UIRoot Canvas 未赋值，请在 Inspector 中拖拽赋值");
                 return;
             }
 
@@ -99,13 +99,13 @@ namespace Framework
             EventSystem[] eventSystems = FindObjectsOfType<EventSystem>(true);
             if (eventSystems.Length > 1)
             {
-                Debug.LogError($"[UIBootstrap] 场景中存在 {eventSystems.Length} 个 EventSystem，请保留全局唯一实例。");
+                GameLog.Error($"[UIBootstrap] 场景中存在 {eventSystems.Length} 个 EventSystem，请保留全局唯一实例。");
             }
 
             if (_eventSystem == null && eventSystems.Length > 0)
             {
                 _eventSystem = eventSystems[0];
-                Debug.LogError("[UIBootstrap] EventSystem 未在 Inspector 显式配置，已临时绑定场景中的实例。请使用 Framework/Template/Setup Launch Scene 重建接线。");
+                GameLog.Error("[UIBootstrap] EventSystem 未在 Inspector 显式配置，已临时绑定场景中的实例。请使用 Framework/Template/Setup Launch Scene 重建接线。");
             }
 #endif
 
@@ -114,7 +114,7 @@ namespace Framework
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
                 _eventSystem = CreateDevelopmentEventSystem();
 #else
-                Debug.LogError("[UIBootstrap] 缺少 EventSystem，正式环境不会运行时创建。请在启动场景显式配置 EventSystem。");
+                GameLog.Error("[UIBootstrap] 缺少 EventSystem，正式环境不会运行时创建。请在启动场景显式配置 EventSystem。");
                 return;
 #endif
             }
@@ -128,9 +128,9 @@ namespace Framework
             {
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
                 _inputModule = _eventSystem.gameObject.AddComponent<StandaloneInputModule>();
-                Debug.LogError("[UIBootstrap] EventSystem 缺少输入模块，开发环境已临时添加 StandaloneInputModule。请修复场景配置。");
+                GameLog.Error("[UIBootstrap] EventSystem 缺少输入模块，开发环境已临时添加 StandaloneInputModule。请修复场景配置。");
 #else
-                Debug.LogError("[UIBootstrap] EventSystem 缺少输入模块，UGUI 将无法响应点击。");
+                GameLog.Error("[UIBootstrap] EventSystem 缺少输入模块，UGUI 将无法响应点击。");
                 return;
 #endif
             }
@@ -144,7 +144,7 @@ namespace Framework
             if (_eventSystem.transform.parent == null)
                 DontDestroyOnLoad(_eventSystem.gameObject);
             else if (_eventSystem.transform.root != transform.root)
-                Debug.LogWarning("[UIBootstrap] EventSystem 挂在其它根节点下，场景切换时可能被销毁；" +
+                GameLog.Warning("[UIBootstrap] EventSystem 挂在其它根节点下，场景切换时可能被销毁；" +
                                  "建议移到 UIBootstrap 下或作为独立根节点。");
         }
 
@@ -158,7 +158,7 @@ namespace Framework
             GameObject eventSystemObject = new GameObject("EventSystem_RuntimeFallback");
             EventSystem eventSystem = eventSystemObject.AddComponent<EventSystem>();
             eventSystemObject.AddComponent<StandaloneInputModule>();
-            Debug.LogError("[UIBootstrap] 缺少显式 EventSystem，开发环境已创建临时兜底节点。生产构建前必须修复启动场景配置。");
+            GameLog.Error("[UIBootstrap] 缺少显式 EventSystem，开发环境已创建临时兜底节点。生产构建前必须修复启动场景配置。");
             return eventSystem;
         }
 #endif

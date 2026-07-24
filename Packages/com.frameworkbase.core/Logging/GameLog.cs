@@ -505,6 +505,55 @@ namespace Framework
             }
         }
 
+        // ── 带 context 的重载 ────────────────────────────────────────────────
+        // MonoBehaviour 里 Debug.LogX(msg, this) 的 context 实参可在 Editor 里点日志高亮到对象。
+        // 提供对应重载，使这类调用迁移到 GameLog 时不丢该定位能力，同时纳入级别过滤与文件流水。
+
+        /// <summary>输出 Log 级别日志，并附带 Unity 上下文对象（Editor 点击日志可高亮该对象）。</summary>
+        public static void Log(string message, UnityEngine.Object context)
+        {
+            if (_logLevel > LogLevel.Log)
+                return;
+
+            string formattedMessage = FormatMessage(LogLevel.Log, message);
+            UnityEngine.Debug.Log(formattedMessage, context);
+
+            if (_enableFileLog)
+            {
+                WriteToFile(formattedMessage);
+            }
+        }
+
+        /// <summary>输出 Warning 级别日志，并附带 Unity 上下文对象（Editor 点击日志可高亮该对象）。</summary>
+        public static void Warning(string message, UnityEngine.Object context)
+        {
+            if (_logLevel > LogLevel.Warning)
+                return;
+
+            string formattedMessage = FormatMessage(LogLevel.Warning, message);
+            UnityEngine.Debug.LogWarning(formattedMessage, context);
+
+            if (_enableFileLog)
+            {
+                WriteToFile(formattedMessage);
+            }
+        }
+
+        /// <summary>输出 Error 级别日志，并附带 Unity 上下文对象（Editor 点击日志可高亮该对象）。</summary>
+        public static void Error(string message, UnityEngine.Object context)
+        {
+            if (_logLevel > LogLevel.Error)
+                return;
+
+            string formattedMessage = FormatMessageWithStack(LogLevel.Error, message, Environment.StackTrace);
+            UnityEngine.Debug.LogError(formattedMessage, context);
+
+            if (_enableFileLog)
+            {
+                WriteToFile(formattedMessage);
+            }
+        }
+
         /// <summary>
         /// 清理日志系统（应用退出时调用）：冲刷未落盘队列并关闭文件。
         /// </summary>

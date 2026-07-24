@@ -63,8 +63,8 @@ namespace Framework
             {
                 ObserverErrorSink = ex =>
                 {
-                    Debug.LogError("[Guide] 引导编排回调/执行器异常（已隔离）");
-                    if (ex != null) Debug.LogException(ex);
+                    GameLog.Error("[Guide] 引导编排回调/执行器异常（已隔离）");
+                    if (ex != null) GameLog.Exception(ex);
                 },
             };
             _runner.Initialize(_guideCatalogProvider());
@@ -76,7 +76,7 @@ namespace Framework
             _runner.StartListening();
             Guides.Runner = _runner;
             RegisterDebugCommands();
-            Debug.Log($"[Guide] 引导模块已启动，Guide={_runner.Catalog.Guides.Length}，Step={_runner.Catalog.Steps.Length}。");
+            GameLog.Log($"[Guide] 引导模块已启动，Guide={_runner.Catalog.Guides.Length}，Step={_runner.Catalog.Steps.Length}。");
             return UniTask.CompletedTask;
         }
 
@@ -198,15 +198,15 @@ namespace Framework
 
         private static void AttachDiagnostics(GuideRunner runner)
         {
-            runner.GuideCompleted += guideId => Debug.Log($"[Guide] GUIDE_COMPLETED id={guideId}");
+            runner.GuideCompleted += guideId => GameLog.Log($"[Guide] GUIDE_COMPLETED id={guideId}");
             runner.GuideCancelled += (guideId, reason) =>
-                Debug.LogWarning($"[Guide] GUIDE_CANCELLED id={guideId} reason={reason}");
+                GameLog.Warning($"[Guide] GUIDE_CANCELLED id={guideId} reason={reason}");
             runner.GuideFailed += (guideId, reason) =>
-                Debug.LogError($"[Guide] GUIDE_FAILED id={guideId} reason={reason}");
+                GameLog.Error($"[Guide] GUIDE_FAILED id={guideId} reason={reason}");
             // 超时单独打点：它几乎总是配置问题（CompleteTrigger 配错或目标被挡），
             // 与运行期异常混在一起会被淹没。线上按此条报警即可定位到具体步骤。
             runner.StepTimedOut += (guideId, stepId) =>
-                Debug.LogError($"[Guide] GUIDE_STEP_TIMEOUT id={guideId} step={stepId}");
+                GameLog.Error($"[Guide] GUIDE_STEP_TIMEOUT id={guideId} step={stepId}");
         }
 
         private sealed class GuideFocusTargetAction : IActionExecutor<GuideFocusTargetActionPayload>

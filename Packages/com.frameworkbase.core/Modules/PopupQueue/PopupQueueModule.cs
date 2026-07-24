@@ -235,14 +235,14 @@ namespace Framework.Popup
             int windowId = _windowIdResolver(request);
             if (windowId <= 0)
             {
-                Debug.LogWarning($"[Popup] UIManagerPopupPresenter 无法解析 windowId（Key={request.Key}），跳过该弹窗");
+                GameLog.Warning($"[Popup] UIManagerPopupPresenter 无法解析 windowId（Key={request.Key}），跳过该弹窗");
                 return;
             }
 
             UIManager ui = GameEntry.UI;
             if (ui == null)
             {
-                Debug.LogWarning("[Popup] UIManager 未就绪，跳过弹窗");
+                GameLog.Warning("[Popup] UIManager 未就绪，跳过弹窗");
                 return;
             }
 
@@ -260,7 +260,7 @@ namespace Framework.Popup
                 if (window == null)
                 {
                     // 打开失败：没有窗口就永远等不到 Closed，直接结束本次展示，不卡住队列。
-                    Debug.LogWarning($"[Popup] 窗口 {windowId} 打开失败，跳过");
+                    GameLog.Warning($"[Popup] 窗口 {windowId} 打开失败，跳过");
                     return;
                 }
 
@@ -341,7 +341,7 @@ namespace Framework
         public override UniTask StartAsync()
         {
             RegisterDebugCommands();
-            Debug.Log("[Popup] 弹窗队列模块已启动。");
+            GameLog.Log("[Popup] 弹窗队列模块已启动。");
             return UniTask.CompletedTask;
         }
 
@@ -381,8 +381,8 @@ namespace Framework
                     catch (Exception ex)
                     {
                         // 单个弹窗展示异常隔离：记录后继续下一个，不让坏弹窗卡死队列
-                        Debug.LogError($"[Popup] 弹窗展示异常（已隔离）Key={req.Key}");
-                        Debug.LogException(ex);
+                        GameLog.Error($"[Popup] 弹窗展示异常（已隔离）Key={req.Key}");
+                        GameLog.Exception(ex);
                     }
 
                     _queue.CompleteCurrent();
@@ -421,7 +421,7 @@ namespace Framework
         public override void Dispose()
         {
             try { _cts?.Cancel(); }
-            catch (Exception ex) { Debug.LogException(ex); }
+            catch (Exception ex) { GameLog.Exception(ex); }
             _cts?.Dispose();
             _cts = null;
 

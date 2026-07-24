@@ -242,11 +242,11 @@ namespace Framework
 
                 if (retryCount > maxRetryCount)
                 {
-                    Debug.LogError($"重试{maxRetryCount}次后仍然失败: {ex.Message}");
+                    GameLog.Error($"重试{maxRetryCount}次后仍然失败: {ex.Message}");
                     throw;
                 }
 
-                Debug.LogWarning($"任务执行失败，{retryDelaySeconds}秒后进行第{retryCount}次重试: {ex.Message}");
+                GameLog.Warning($"任务执行失败，{retryDelaySeconds}秒后进行第{retryCount}次重试: {ex.Message}");
                 await UniTask.Delay(Mathf.RoundToInt(retryDelaySeconds * 1000), cancellationToken: cancellationToken);
             }
         }
@@ -278,11 +278,11 @@ namespace Framework
 
                 if (retryCount > maxRetryCount)
                 {
-                    Debug.LogError($"重试{maxRetryCount}次后仍然失败: {ex.Message}");
+                    GameLog.Error($"重试{maxRetryCount}次后仍然失败: {ex.Message}");
                     throw;
                 }
 
-                Debug.LogWarning($"任务执行失败，{retryDelaySeconds}秒后进行第{retryCount}次重试: {ex.Message}");
+                GameLog.Warning($"任务执行失败，{retryDelaySeconds}秒后进行第{retryCount}次重试: {ex.Message}");
                 await UniTask.Delay(Mathf.RoundToInt(retryDelaySeconds * 1000), cancellationToken: cancellationToken);
             }
         }

@@ -1,3 +1,4 @@
+using Framework;
 using HotUpdate.Clicker;
 using UnityEngine;
 
@@ -26,7 +27,7 @@ namespace HotUpdate.Entry
         /// </summary>
         public void Start()
         {
-            Debug.Log("[HotfixEntry] 框架参考热更入口已启动。");
+            GameLog.Log("[HotfixEntry] 框架参考热更入口已启动。");
 
             // 热更模式下 HotUpdate 程序集经 HybridCLR 运行时加载，
             // ClickerBootstrap 的 [RuntimeInitializeOnLoadMethod] 不会触发；

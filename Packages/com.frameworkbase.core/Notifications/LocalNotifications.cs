@@ -23,13 +23,13 @@ namespace Framework.Notifications
     {
         public void ScheduleAll(IReadOnlyList<LocalNotificationRequest> requests)
         {
-            Debug.Log($"[LocalNotifications] （日志兜底）排程 {requests.Count} 条：" +
+            GameLog.Log($"[LocalNotifications] （日志兜底）排程 {requests.Count} 条：" +
                       (requests.Count > 0 ? $"最早 [{requests[0].Id}] {requests[0].FireAt:yyyy-MM-dd HH:mm zzz}" : "空"));
         }
 
         public void CancelAll()
         {
-            Debug.Log("[LocalNotifications] （日志兜底）取消全部本地通知。");
+            GameLog.Log("[LocalNotifications] （日志兜底）取消全部本地通知。");
         }
     }
 
@@ -68,7 +68,7 @@ namespace Framework.Notifications
             }
             catch (Exception ex)
             {
-                Debug.LogError($"[LocalNotifications] 后端排程异常（已隔离）：{ex.Message}");
+                GameLog.Error($"[LocalNotifications] 后端排程异常（已隔离）：{ex.Message}");
             }
         }
     }

@@ -28,7 +28,7 @@ namespace Framework.UI
             {
                 // 未跑脚手架或非 Windows 环境（如 CI 容器）：中文显示为方框但不影响功能。
                 // 用 Log 而非 Warning：这是可选的开发期体验增强，不应污染"零 Warning"验收与 CI 日志。
-                Debug.Log("[DevCjkFontFallback] 未找到开发期 CJK 回退字体，中文将显示为方框。" +
+                GameLog.Log("[DevCjkFontFallback] 未找到开发期 CJK 回退字体，中文将显示为方框。" +
                           "跑一次 Framework → Template → Setup Launch Scene 可修复。");
                 return;
             }
@@ -37,7 +37,7 @@ namespace Framework.UI
             if (fallbacks != null && !fallbacks.Contains(fontAsset))
             {
                 fallbacks.Add(fontAsset);
-                Debug.Log($"[DevCjkFontFallback] 已挂载开发期 CJK 回退字体：{fontAsset.name}");
+                GameLog.Log($"[DevCjkFontFallback] 已挂载开发期 CJK 回退字体：{fontAsset.name}");
             }
         }
     }

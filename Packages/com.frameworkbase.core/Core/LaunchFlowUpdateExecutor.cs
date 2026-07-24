@@ -153,7 +153,7 @@ namespace Framework.Core
             if (!resourceUpdated)
             {
                 loading.SetProgress(0.65f);
-                Debug.Log("[LaunchFlow] Step 4  资源版本一致，跳过");
+                GameLog.Log("[LaunchFlow] Step 4  资源版本一致，跳过");
                 return new ResourceUpdateResult { Success = true, ResourceUpdated = false, ErrorCode = "", Message = "" };
             }
 
@@ -163,11 +163,11 @@ namespace Framework.Core
             // ── Step 4a：Catalog 检查 + 更新 ────────────────────────────────
             CatalogUpdateResult catalogResult =
                 await GameEntry.Resource.CheckAndUpdateCatalogsAsync(cancellationToken, expectedCatalog);
-            Debug.Log($"[LaunchFlow] Step 4a  Catalog 结果: {catalogResult}");
+            GameLog.Log($"[LaunchFlow] Step 4a  Catalog 结果: {catalogResult}");
             if (!catalogResult.Succeeded)
             {
                 // 检查失败 ≠ 没有更新：此时继续走下载/提交会把失败固化成"已是最新版本"。
-                Debug.LogError($"[LaunchFlow] Step 4a  Catalog 检查/更新失败，中止本次资源更新: {catalogResult}");
+                GameLog.Error($"[LaunchFlow] Step 4a  Catalog 检查/更新失败，中止本次资源更新: {catalogResult}");
                 return EvaluateResourceUpdate(catalogResult, null, null);
             }
 
@@ -176,17 +176,17 @@ namespace Framework.Core
             DownloadSizeResult sizeResult = await GameEntry.Resource.TryGetDownloadSizeAsync(RemoteLabel, cancellationToken);
             if (!sizeResult.Succeeded)
             {
-                Debug.LogError($"[LaunchFlow] Step 4b  下载尺寸查询失败，中止本次资源更新: {sizeResult}");
+                GameLog.Error($"[LaunchFlow] Step 4b  下载尺寸查询失败，中止本次资源更新: {sizeResult}");
                 return EvaluateResourceUpdate(catalogResult, sizeResult, null);
             }
 
             long totalBytes = sizeResult.Bytes;
-            Debug.Log($"[LaunchFlow] Step 4b  待下载: {totalBytes / 1024f / 1024f:0.##} MB");
+            GameLog.Log($"[LaunchFlow] Step 4b  待下载: {totalBytes / 1024f / 1024f:0.##} MB");
 
             if (totalBytes <= 0)
             {
                 loading.SetProgress(0.65f);
-                Debug.Log("[LaunchFlow] Step 4  所有 bundle 已是最新，无需下载");
+                GameLog.Log("[LaunchFlow] Step 4  所有 bundle 已是最新，无需下载");
                 return EvaluateResourceUpdate(catalogResult, sizeResult, null);
             }
 
@@ -209,9 +209,9 @@ namespace Framework.Core
             loading.HideDownload();
 
             if (!ok)
-                Debug.LogError("[LaunchFlow] Step 4  资源下载失败");
+                GameLog.Error("[LaunchFlow] Step 4  资源下载失败");
             else
-                Debug.Log("[LaunchFlow] Step 4  资源下载完成");
+                GameLog.Log("[LaunchFlow] Step 4  资源下载完成");
             return EvaluateResourceUpdate(catalogResult, sizeResult, ok);
         }
 
@@ -226,13 +226,13 @@ namespace Framework.Core
             if (!ShouldUpdateCode(serverVersion, localVersion))
             {
                 loading.SetProgress(0.8f);
-                Debug.Log("[LaunchFlow] Step 5  代码版本一致，跳过");
+                GameLog.Log("[LaunchFlow] Step 5  代码版本一致，跳过");
                 return false;
             }
 
             if (string.IsNullOrEmpty(updateServerUrl))
             {
-                Debug.LogError("[LaunchFlow] Step 5  CodeVersion 已变更但未配置 UpdateServerUrl");
+                GameLog.Error("[LaunchFlow] Step 5  CodeVersion 已变更但未配置 UpdateServerUrl");
                 return false;
             }
 
@@ -246,11 +246,11 @@ namespace Framework.Core
 
             if (!ok)
             {
-                Debug.LogError("[LaunchFlow] Step 5  代码补丁下载失败");
+                GameLog.Error("[LaunchFlow] Step 5  代码补丁下载失败");
                 return false;
             }
 
-            Debug.Log("[LaunchFlow] Step 5  代码补丁下载完成");
+            GameLog.Log("[LaunchFlow] Step 5  代码补丁下载完成");
             return true;
         }
 
@@ -260,7 +260,7 @@ namespace Framework.Core
             if (serverVersion == null || serverVersion.Type != HotUpdate.UpdateType.FullUpdate)
                 return false;
 
-            Debug.LogWarning("[LaunchFlow] Step 6  需要整包更新");
+            GameLog.Warning("[LaunchFlow] Step 6  需要整包更新");
             loading.ShowForceUpdate(
                 string.Format(
                     Language.GetOrDefault("#1_launch_force_update", "发现新版本 {0}，需要前往应用商店更新后才能继续游戏。"),
@@ -277,9 +277,9 @@ namespace Framework.Core
             loading.SetProgress(0.82f);
             bool configReady = await GameEntry.RefData.EnsureDatabaseReadyAsync();
             if (!configReady)
-                Debug.LogWarning("[LaunchFlow] Step 6b  配置数据库未就绪，后续读取配置时可能失败");
+                GameLog.Warning("[LaunchFlow] Step 6b  配置数据库未就绪，后续读取配置时可能失败");
             else
-                Debug.Log("[LaunchFlow] Step 6b  配置数据库已就绪");
+                GameLog.Log("[LaunchFlow] Step 6b  配置数据库已就绪");
 
             return configReady;
         }
@@ -300,7 +300,7 @@ namespace Framework.Core
 
             if (!installResult.Succeeded)
             {
-                Debug.LogError($"[LaunchFlow] Step 6c  配置数据库安装失败，中止启动: {installResult}");
+                GameLog.Error($"[LaunchFlow] Step 6c  配置数据库安装失败，中止启动: {installResult}");
                 return new ConfigApplyResult
                 {
                     Success = false,
@@ -310,7 +310,7 @@ namespace Framework.Core
                 };
             }
 
-            Debug.Log(installResult.DatabaseChanged
+            GameLog.Log(installResult.DatabaseChanged
                 ? "[LaunchFlow] Step 6c  热更配置数据库已应用（备份保留至启动确认）"
                 : "[LaunchFlow] Step 6c  本次发行不包含热更配置数据库，继续使用当前配置");
 

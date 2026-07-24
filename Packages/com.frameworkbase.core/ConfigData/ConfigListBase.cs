@@ -48,7 +48,7 @@ namespace Framework.Data
                 throw new ArgumentNullException(nameof(tableName));
             if (_isLoaded)
             {
-                Debug.LogWarning($"[ConfigListBase] 配置表 {tableName} 已加载，跳过重复加载");
+                GameLog.Warning($"[ConfigListBase] 配置表 {tableName} 已加载，跳过重复加载");
                 return;
             }
 
@@ -61,7 +61,7 @@ namespace Framework.Data
             }
 
             _isLoaded = true;
-            Debug.Log($"[ConfigListBase] 配置表 {tableName} 加载完成，共 {_items.Count} 行");
+            GameLog.Log($"[ConfigListBase] 配置表 {tableName} 加载完成，共 {_items.Count} 行");
         }
 
         /// <summary>返回全部配置行的副本，避免业务侧改写内部缓存结构。</summary>

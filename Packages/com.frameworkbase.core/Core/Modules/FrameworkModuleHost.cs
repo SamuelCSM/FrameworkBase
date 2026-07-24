@@ -249,9 +249,9 @@ namespace Framework.Core
                 try { sink(phase, module, ex); return; }
                 catch { /* 出口自身异常不得再抛 */ }
             }
-            Debug.LogError($"[FrameworkModuleHost] 模块 {module?.GetType().Name} 在 {phase} 抛异常"
+            GameLog.Error($"[FrameworkModuleHost] 模块 {module?.GetType().Name} 在 {phase} 抛异常"
                 + (isolated ? "（已隔离）" : "（启动阶段，模块已标记失败并向上抛出）"));
-            Debug.LogException(ex);
+            GameLog.Exception(ex);
         }
     }
 }
