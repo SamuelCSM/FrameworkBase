@@ -1,0 +1,23 @@
+{
+    "name": "Framework.Integrations.CinemachineCamera",
+    "rootNamespace": "Framework.Integrations.Camera",
+    "references": [
+        "Framework",
+        "Cinemachine"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [
+        {
+            "name": "com.unity.cinemachine",
+            "expression": "",
+            "define": "FRAMEWORKBASE_CINEMACHINE"
+        }
+    ],
+    "noEngineReferences": false
+}

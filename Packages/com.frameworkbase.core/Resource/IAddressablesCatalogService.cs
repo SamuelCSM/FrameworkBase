@@ -47,6 +47,15 @@ namespace Framework
         UniTask UpdateCatalogsAsync(IReadOnlyList<string> catalogIds, CancellationToken cancellationToken);
 
         /// <summary>
+        /// 下载指定 Catalog 的原始字节，供应用前对已验签内容身份（Size/SHA-256）校验（ADR-009）。
+        /// 只取字节、不激活；下载失败以异常终止（由 <see cref="CatalogUpdateFlow"/> 归类为完整性失败）。
+        /// </summary>
+        /// <param name="catalogId">Catalog ID（来自 <see cref="CheckForCatalogUpdatesAsync"/>，远端 Catalog 通常为其加载 URL）。</param>
+        /// <param name="cancellationToken">取消令牌。</param>
+        /// <returns>Catalog 文件原始字节。</returns>
+        UniTask<byte[]> DownloadRemoteCatalogBytesAsync(string catalogId, CancellationToken cancellationToken);
+
+        /// <summary>
         /// 查询指定 key（Address / Label）需要下载的字节数。
         /// key 在 Catalog 中不存在（InvalidKeyException）视为 0 字节（无需下载）；
         /// 其余失败必须以异常终止，禁止吞成 0——"查询失败"与"无需下载"是两个不同结果。

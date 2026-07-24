@@ -124,6 +124,9 @@ namespace Framework.Tests
             public ISdkPurchaseService Purchase => null;
             public ISdkPushService Push => null;
             public ISdkPrivacyService Privacy => null;
+            public ISdkAdService Ad => null;
+            public ISdkComplianceService Compliance => null;
+            public ISdkShareService Share => null;
 
             public UniTask<SdkResult> InitializeAsync() => UniTask.FromResult(SdkResult.Ok());
 

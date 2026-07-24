@@ -93,6 +93,9 @@ namespace Framework.Editor.Release
                 var profileSettings = settings.profileSettings;
                 string oldBuildPath = profileSettings.GetValueByName(profileId, AddressableAssetSettings.kRemoteBuildPath);
                 string oldLoadPath = profileSettings.GetValueByName(profileId, AddressableAssetSettings.kRemoteLoadPath);
+                // ADR-009：远程 Catalog 构建开关只在发布步骤内临时置真，finally 恢复——避免本地日常构建常开、
+                // 也避免 AddressableAssetSettings.asset 长期变更引冲突（工程资产里保持 BuildRemoteCatalog=0）。
+                bool oldBuildRemoteCatalog = settings.BuildRemoteCatalog;
                 string stagedBuildPath = Path.Combine(ctx.ServerDataDir, "addressables", "[BuildTarget]")
                     .Replace('\\', '/');
                 string stagedLoadPath = ctx.Profile.BaseUrl.TrimEnd('/') + "/addressables/[BuildTarget]";
@@ -102,6 +105,9 @@ namespace Framework.Editor.Release
                     // 构建期临时覆盖远程路径，使资源产物进入本次统一 staging；finally 恢复 Profile，避免环境 URL 污染工程资产。
                     profileSettings.SetValue(profileId, AddressableAssetSettings.kRemoteBuildPath, stagedBuildPath);
                     profileSettings.SetValue(profileId, AddressableAssetSettings.kRemoteLoadPath, stagedLoadPath);
+                    // ADR-009：必须产出远程 catalog，客户端才能 CheckForCatalogUpdates 检测到更新并对其验签；
+                    // 此前该开关为 0，资源热更链断裂（catalog 被烘进包、运行时永远查不到远程更新）。
+                    settings.BuildRemoteCatalog = true;
                     AddressableAssetSettings.BuildPlayerContent(out AddressablesPlayerBuildResult result);
                     if (!string.IsNullOrEmpty(result.Error))
                         throw new Exception($"Addressables Build 失败：{result.Error}");
@@ -110,6 +116,7 @@ namespace Framework.Editor.Release
                 {
                     profileSettings.SetValue(profileId, AddressableAssetSettings.kRemoteBuildPath, oldBuildPath);
                     profileSettings.SetValue(profileId, AddressableAssetSettings.kRemoteLoadPath, oldLoadPath);
+                    settings.BuildRemoteCatalog = oldBuildRemoteCatalog;
                     EditorUtility.SetDirty(settings);
                     AssetDatabase.SaveAssets();
                 }
@@ -122,12 +129,42 @@ namespace Framework.Editor.Release
                     throw new Exception($"Addressables 构建产物目录不存在或为空：{stagedOutput}");
                 ctx.Log($"      Addressables Build 完成 → {stagedOutput}");
 
+                // ADR-009：定位产出的远程 catalog_*.json，把内容身份写入上下文，供 GenerateManifest 纳入已验签清单。
+                ctx.ResourceCatalog = CaptureRemoteCatalogIdentity(stagedOutput, ctx);
+
                 // 旧窗口额外输出路径仅作本地联调兼容；正式发布由 AtomicPublishArtifacts 使用 Profile.UploadRoot 提交。
                 if (!string.IsNullOrEmpty(ctx.BundleOutputDir))
                 {
                     CopyDirectory(stagedOutput, ctx.BundleOutputDir);
                     ctx.Log($"      bundle 已同步到兼容目录 → {ctx.BundleOutputDir}");
                 }
+            }
+
+            /// <summary>
+            /// 从 Addressables 构建产物中定位唯一的远程 catalog_*.json，计算其内容身份（ADR-009）。
+            /// 找不到或存在多个都失败关闭——身份必须唯一确定，否则客户端无法据签名清单锁定该验哪个文件。
+            /// </summary>
+            private static ResourceCatalogFile CaptureRemoteCatalogIdentity(string stagedOutput, ReleaseContext ctx)
+            {
+                string[] catalogs = Directory.GetFiles(stagedOutput, "catalog_*.json", SearchOption.AllDirectories);
+                if (catalogs.Length == 0)
+                    throw new Exception(
+                        $"启用远程 Catalog 构建后未在产物中找到 catalog_*.json：{stagedOutput}。" +
+                        "请确认存在标记为远程的 Addressables 组，且 BuildRemoteCatalog 已生效。");
+                if (catalogs.Length > 1)
+                    throw new Exception(
+                        $"产物中存在多个远程 catalog_*.json（{catalogs.Length} 个），无法确定唯一资源目录身份：" +
+                        string.Join(", ", catalogs));
+
+                string catalogPath = catalogs[0];
+                var identity = new ResourceCatalogFile
+                {
+                    FileName = Path.GetFileName(catalogPath),
+                    Size = new FileInfo(catalogPath).Length,
+                    SHA256 = ComputeSHA256(catalogPath),
+                };
+                ctx.Log($"      远程 Catalog 身份：{identity.FileName} 大小={identity.Size}B SHA256={identity.SHA256}");
+                return identity;
             }
 
             private static void CopyDirectory(string source, string destination)
@@ -216,6 +253,13 @@ namespace Framework.Editor.Release
 
             public void Execute(ReleaseContext ctx)
             {
+                // ADR-009 构建期门禁：计划含资源更新时，清单必须携带 BuildAddressables 回填的远程 Catalog 身份，
+                // 否则客户端无从验签、资源热更闭环不成立。缺失即失败关闭（多为未产出远程 catalog）。
+                if (ctx.PublishResource && ctx.ResourceCatalog == null)
+                    throw new Exception(
+                        "计划包含资源更新，但缺少远程 Catalog 内容身份。请确认 BuildAddressables 已启用远程 " +
+                        "Catalog 构建并成功回填身份（存在标记为远程的 Addressables 组）。");
+
                 long now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
                 ctx.ManifestJson = ReleaseManifestWriter.ToJson(new UpdateInfo
                 {
@@ -239,6 +283,9 @@ namespace Framework.Editor.Release
                     MinCompatibleVersion = ctx.MinCompatibleVersion,
                     Description = ctx.Description ?? string.Empty,
                     PatchFiles = ctx.PatchFiles,
+                    // ADR-009：资源更新时随包写入远程 Catalog 内容身份（随 UpdateInfo 一并被 RSA 签名）；
+                    // 纯代码更新时为 null，客户端 ValidateManifest 只在 ResourceVersion 增长时要求它。
+                    ResourceCatalog = ctx.ResourceCatalog,
                     UpdateUrl = ctx.ForceUpdate ? (ctx.UpdateUrl ?? string.Empty) : string.Empty,
                     GrayPercent = ctx.GrayPercent
                 });

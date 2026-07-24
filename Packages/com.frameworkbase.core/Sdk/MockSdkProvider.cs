@@ -14,6 +14,9 @@ namespace Framework.Sdk
         private readonly MockPurchase _purchase = new MockPurchase();
         private readonly MockPush _push = new MockPush();
         private readonly MockPrivacy _privacy = new MockPrivacy();
+        private readonly MockAd _ad = new MockAd();
+        private readonly MockCompliance _compliance = new MockCompliance();
+        private readonly MockShare _share = new MockShare();
 
         public string ChannelName => "mock";
 
@@ -21,6 +24,9 @@ namespace Framework.Sdk
         public ISdkPurchaseService Purchase => _purchase;
         public ISdkPushService Push => _push;
         public ISdkPrivacyService Privacy => _privacy;
+        public ISdkAdService Ad => _ad;
+        public ISdkComplianceService Compliance => _compliance;
+        public ISdkShareService Share => _share;
 
         public UniTask<SdkResult> InitializeAsync()
         {
@@ -126,6 +132,72 @@ namespace Framework.Sdk
             public UniTask<SdkResult> ShowPrivacyPolicyAsync()
             {
                 GameLog.Log("[MockSdkProvider] Mock 展示隐私协议（no-op）");
+                return UniTask.FromResult(SdkResult.Ok());
+            }
+        }
+
+        // ── 广告 ─────────────────────────────────────────────────────────────
+
+        private sealed class MockAd : ISdkAdService
+        {
+            public UniTask<SdkResult> PreloadAsync(SdkAdType type, string placementId)
+                => UniTask.FromResult(SdkResult.Ok());
+
+            public bool IsReady(SdkAdType type, string placementId) => true;
+
+            public UniTask<SdkResult<SdkAdShowResult>> ShowAsync(SdkAdType type, string placementId)
+            {
+                // 醒目告警：Mock 广告直接"看满"，正式包出现此日志即广告渠道未接入，激励发奖会被伪造。
+                GameLog.Warning($"[MockSdkProvider] Mock 广告直接完成 type={type} placement={placementId}（假发奖，禁止上线）");
+                var data = new SdkAdShowResult
+                {
+                    PlacementId = placementId,
+                    Rewarded = type == SdkAdType.Rewarded, // 激励视频 mock 恒发奖
+                    Skipped = false,
+                };
+                return UniTask.FromResult(SdkResult<SdkAdShowResult>.Ok(data));
+            }
+        }
+
+        // ── 合规（实名 + 防沉迷）─────────────────────────────────────────────
+
+        private sealed class MockCompliance : ISdkComplianceService
+        {
+            public event Action<SdkPlaytimeVerdict> OnPlaytimeVerdictChanged
+            {
+                add { }
+                remove { }
+            }
+
+            // Mock 恒为已实名成年人、不限时——开发期不被防沉迷挡住；正式包接真实渠道后由其裁决。
+            public UniTask<SdkResult<SdkRealNameStatus>> QueryRealNameAsync()
+                => UniTask.FromResult(SdkResult<SdkRealNameStatus>.Ok(
+                    new SdkRealNameStatus { State = SdkRealNameState.Adult, Age = 30 }));
+
+            public UniTask<SdkResult<SdkRealNameStatus>> ShowRealNameAuthAsync()
+            {
+                GameLog.Log("[MockSdkProvider] Mock 实名认证（直接视为已实名成年人）");
+                return UniTask.FromResult(SdkResult<SdkRealNameStatus>.Ok(
+                    new SdkRealNameStatus { State = SdkRealNameState.Adult, Age = 30 }));
+            }
+
+            public UniTask<SdkResult<SdkPlaytimeVerdict>> QueryPlaytimeAsync()
+                => UniTask.FromResult(SdkResult<SdkPlaytimeVerdict>.Ok(
+                    new SdkPlaytimeVerdict { State = SdkPlaytimeState.Allowed, RemainingSeconds = -1 }));
+
+            public UniTask<SdkResult> ReportPlaytimeHeartbeatAsync(int elapsedSeconds)
+                => UniTask.FromResult(SdkResult.Ok());
+        }
+
+        // ── 分享 ─────────────────────────────────────────────────────────────
+
+        private sealed class MockShare : ISdkShareService
+        {
+            public bool IsChannelAvailable(SdkShareChannel channel) => true;
+
+            public UniTask<SdkResult> ShareAsync(SdkShareChannel channel, SdkShareContent content)
+            {
+                GameLog.Log($"[MockSdkProvider] Mock 分享 channel={channel} type={content?.Type}（no-op）");
                 return UniTask.FromResult(SdkResult.Ok());
             }
         }

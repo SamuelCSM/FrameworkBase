@@ -7,6 +7,82 @@
 
 ### 新增
 
+- **特效池化管理 `VfxManager`（opt-in，唯一"引擎能力"缺口补齐）**：架在框架既有 `IGameObjectProvider`
+  池化取还之上，补三件缺口——① 按时长/粒子系统自动回收；② 跟随目标；③ 按 `DeviceTier` 的同屏并发上限
+  削峰（新增纯映射 `DeviceTierResourceTuning.MaxConcurrentEffects`：Low=16/Mid=32/High=64，超上限即丢弃，
+  表现降级优先于低端卡顿/OOM）。纯核 `VfxScheduler`（预算准入 + 按时长过期 + 手动项不过期，不碰
+  GameObject，EditMode 5 例）+ MonoBehaviour 适配（取还/跟随/粒子时长探测）。`PlayAsync` 返回句柄，
+  持续特效（Duration&lt;0）经 `Stop` 收尾。刻意不进 GameEntry 管理清单（特效偏表现、按需接入），
+  经 `VfxManager.Create` 创建、`VfxManager.Manager` 访问。
+
+- **SDK 分享缝 `ISdkShareService`**（补齐商业化最后一块）：`ISdkProvider` 增第七项能力——系统面板/微信/QQ/
+  微博等目标（`SdkShareChannel`），文本/图片/链接内容（`SdkShareContent` + `SdkShareContentType`），
+  `IsChannelAvailable` 预检目标可用性 + `ShareAsync`。`SdkManager.Share` + `SupportsShare` 暴露，
+  `MockSdkProvider` 兜底。沿用渠道缝模式，真实现进渠道扩展包。
+
+- **SDK 实名/防沉迷合规缝 `ISdkComplianceService`**（大陆商业上线法规强制项）：`ISdkProvider` 增第六项能力
+  ——查实名/拉起实名（`SdkRealNameStatus` + `SdkRealNameState`）、查防沉迷时长裁决（`SdkPlaytimeVerdict` +
+  `SdkPlaytimeState`：可玩/限时/禁玩 + 剩余秒数 + 合规文案）、上报在线时长心跳、收渠道主动下发的裁决变更。
+  **框架不硬编码任何法规规则**（宵禁时段/时长上限随政策变，由渠道或游戏服计算），只 relay 裁决与合规文案。
+  `SdkManager.Compliance` + `SupportsCompliance` 暴露，`MockSdkProvider` 兜底（Mock 恒已实名成年人、不限时）。
+  周期心跳与封玩门控见 `AntiAddictionGate`。
+
+- **防沉迷门控编排 `AntiAddictionGate`**（架在合规缝之上的框架增值层）：把渠道缝之外该框架统一做的三件事
+  收口——周期上报在线时长心跳 + 拉最新裁决、订阅渠道主动下发的裁决变更、裁决状态变化时抛
+  `RestrictionChanged` 供业务封玩/解封。所有裁决来源汇流到纯核 `ApplyVerdict`（状态变化才抛、同状态去重、
+  查询失败维持现状不误封误放），封玩表现与法规规则不进框架。EditMode 6 例。
+
+- **SDK 广告缝 `ISdkAdService`**（大厂商业化对标补缺）：`ISdkProvider` 增第五项能力，激励视频/插屏
+  （`PreloadAsync`/`IsReady`/`ShowAsync`），`SdkManager.Ad` + `SupportsAd` 暴露，`MockSdkProvider` 兜底
+  （Mock 恒"看满发奖"并醒目告警防误上线）。**铁律写进契约**：激励发奖必须由服务端校验广告平台服务器
+  回调后到账，客户端 `Rewarded` 仅即时反馈。沿用现有渠道缝模式，真实现进渠道扩展包。
+
+- **运行时相机调度缝 `ICameraDirector` + `Cameras` 访问点**（框架核心零具体相机方案依赖）：只定义业务对镜头的
+  指令面（`Activate(id)` 激活命名镜头 / `Shake` 震屏 / `ActiveCameraId` / `IsRegistered`），把"用什么实现"
+  （Cinemachine / 自研 / 无）留给可选扩展包或项目层——与 PrimeTween(ADR-007)、崩溃后端、云存档同一模式
+  （主干接口+默认兜底+实现进扩展包）。默认 `NullCameraDirector` 无操作兜底，保证业务经 `Cameras.Director`
+  调用永不 NullReference、也不强迫项目接相机方案；扩展/项目经 `Cameras.Register` 注入实现。命名镜头的登记
+  属实现细节不进契约，Cinemachine blend 语义不泄漏进主干。Cinemachine 实现见独立可选包
+  `com.frameworkbase.cinemachine`（骨架，需装 Cinemachine 后启用）。EditMode 4 例。
+
+- **弹窗/流程序列队列 L2 模块 `PopupQueueModule`**（沿用 ADR-008 既有模块扩展机制，不改分层/依赖方向/
+  公共契约，无需新 ADR）：借鉴 ALQueue 的序列消费思路，多来源弹窗请求不并发弹出，而是入队后一次只
+  展示一个、关闭后再放下一个，按优先级（同级 FIFO）决定顺序。纯核 `PopupQueue`（不依赖 UnityEngine、
+  可单测：一次一个/优先级降序/同级 FIFO/Key 去重择优/正在展示同 Key 丢弃）+ 业务实现的
+  `IPopupPresenter`（"展示至关闭才返回"的 async 契约）+ 模块以"泵"串行消费（单弹窗展示异常隔离不卡队列、
+  会话取消停止泵、账号退出清待展示队列）。访问点 `Popups.Service` 于 Phase 1 发布，`popup` 调试命令查队列
+  状态。刻意不做抢占（打断需保存/恢复现场，属业务策略）。纯核 EditMode 11 例。
+  **默认接框架自带 UI 框架**：新增 `UIManagerPopupPresenter`（模块无参构造即用它），把弹窗队列长在
+  `UIManager` 上——业务入队 Key 传窗口稳定 ID 字符串，presenter 先订阅生命周期再 `OpenUIAsync(id)` 打开、
+  等 `Closed` 事件推进下一个；打开失败不卡队列。业务零胶水，非 UIManager 方案仍可走自定义 presenter 构造。
+
+- **Addressables 远端 bundle 布局审计（规则 11~13）**：`AddressablesValidationRules` 在既有重复隐式依赖
+  （规则 9）、组更新粒度（规则 8）之上，补三条远端组 bundle 布局咨询规则——① 命名不含内容哈希
+  （NoHash/FileNameHash）→ 内容热更后 CDN 可能按 URL 供旧字节（热更特有隐患，关联 ADR-005/009）；
+  ② 未压缩 → 下载体积翻数倍；③ PackTogether 且条目超阈值 → 改一个资源重下整包、补丁粒度过粗
+  （与按体积的组超限互补）。模型加与 Addressables API 解耦的 `BundlePackingKind/BundleNamingKind/
+  BundleCompressionKind`（采集层从 `BundledAssetGroupSchema` 映射，规则层不碰 Addressables）。均为
+  Warning、不阻断构建，随既有 `AddressablesValidator` 门禁在 CiGate 里输出。EditMode 4 例。
+
+- **预加载按设备档位限流并行 `ResourceManager.PreloadAssetsAsync`**：此前批量预加载是串行
+  `foreach await`（低端不安全地无上限也谈不上、高端白白丢吞吐）。现按 `DeviceTierService.Tier`
+  经纯映射 `DeviceTierResourceTuning.PreloadConcurrency`（Low=1 串行保内存 / Mid=3 / High=6）决定
+  同时在途的 Addressables 加载数：低端窄路削内存/IO 峰值、高端多路提吞吐；worker 共享游标领取地址，
+  同地址并发由既有句柄缓存去重兜底。新增 `PreloadConcurrencyOverride` 供压测或项目自有档位判断时钉死。
+  并发度纯映射 EditMode 覆盖（低端必串行、随档位单调不减）。
+
+- **资源热更闭环——远程 Catalog 纳入已验签发布身份（ADR-009）**：此前资源热更链断裂——
+  `BuildRemoteCatalog=0` 且无代码打开，远程 catalog 从不产出（客户端 `CheckForCatalogUpdates`
+  永远查不到更新）；即便产出，其完整性也只由 Addressables 无签名 `.hash` 守，不在 RSA 签名覆盖内。
+  现补齐四段：① `UpdateInfo` 增签名覆盖的 `ResourceCatalog` 内容身份（FileName/Size/SHA-256），
+  `ValidateManifest` 在 `ResourceVersion` 增长时门控要求它、缺失即失败关闭；② 客户端应用远端
+  Catalog 前经 `CatalogUpdateFlow` 下载字节按已验签 Size/SHA-256 校验，不符即新终态
+  `IntegrityFailed`、绝不激活未签名的资源目录；③ 发布管线 `BuildAddressables` 临时开启
+  `BuildRemoteCatalog`（finally 恢复，工程资产保持 0）、定位产出的 `catalog_*.json` 回填内容身份；
+  ④ `GenerateManifest` 构建期门禁：含资源更新时清单必须携带该身份。纯代码更新与老项目零迁移
+  （`ResourceVersion` 未增长时该字段可空）。**注意**：客户端验签门的 Catalog 取字节路径与发布管线
+  的远程 catalog 产出需一次真机发布演练验证。
+
 - **配置驱动全局引导框架**：新增稳定整数 `GuideId / StepId / WindowId / TargetId`、通用
   `RuleService / TriggerService / ActionService`、事件驱动 `GuideRunner`、强类型断点存储以及 Target 挖孔表现。
   `UIWindow.xlsx + Guide.xlsx` 沿用标准 `xxxRef / xxxTable / config.db` 管线，关系表使用 `ConfigListBase`；
@@ -163,6 +239,16 @@
 - ConfigManager 首装路径去噪：初始化时持久化数据库尚不存在属正常序列（LaunchFlow 随后从首包安装），该提示从 Warning 降为普通日志；「安装后仍无可用库」保持 Warning/Error。此前该噪声被验收器清库路径不对（未删真实的 `{persistentDataPath}/config.db`）掩盖，真实首装设备每次都会打出一条告警。
 - AudioManager 改用 `AssetLease<AudioClip>` 记录每次播放所有权；自然结束、Stop/StopAll、Shutdown、加载取消/失败均幂等归还，且代际安全 Handle 阻止池化 AudioSource 被旧引用误操作。
 - `.gitignore` 补齐 Addressables 内容构建生成的 `Assets/AddressableAssetsData/Windows.meta`（目录已忽略、其文件夹 meta 此前遗漏，资源发布后残留未跟踪文件）。
+- **ResourceManager 并发/同步失败句柄泄漏**：命中共享句柄的等待者在加载失败时只减引用、不释放底层
+  Addressables 句柄，与创建者的 `RollbackLoad` 回收路径不一致；并发加载同一地址且失败、由等待者最后把
+  引用减到 0 时（缓存已被创建者移除），句柄无人释放。新增 `RollbackSharedReference` 统一"谁减到 0 谁
+  释放"。同步 `LoadAsset` 两处一并修：命中在途句柄改阻塞完成再取值且仅成功才增引用（原实现在途读到 null
+  却已增引用，引用超计）；新句柄加载失败改就地释放（原实现失败句柄既不入缓存也不释放）。
+- **启动下载阶段句柄释放兜底 + 取消令牌贯穿**：`DownloadDependenciesAsync` /
+  `DownloadAllRemoteDependenciesAsync` 的句柄改在 `finally` 统一释放（原 `catch` 路径漏释放，异常时泄漏），
+  并支持循环内取消。启动作用域取消令牌（GameEntry 新增 `_bootCts`，早于既有 `_appFlowCts`）经
+  LaunchFlow → 更新执行器逐层下传到 Catalog/资源/代码补丁下载，使应用退出/销毁能干净中止在途下载——
+  此前启动下载阶段完全无令牌可用。
 
 ### 变更
 
@@ -186,6 +272,12 @@
   对齐、字体入库后，`ci.yml` 资源门禁恢复 `-strictFonts` 严格模式（缺字重新阻断，撤销 e0b19e2 的临时降级）。新增
   `Framework/Localization/Build CJK Fallback SDF` 菜单与 batchmode 入口 `CjkFallbackFontBuilder.BuildForBatch`
   从子集 OTF 重建动态 SDF 资产。**注意**：字体入包后 Android 包体增长，需按门禁提示滚动 build-size 基线。
+- **热更低层入口 `HotUpdateManager.DownloadPatchAsync` 收 `internal`（破坏性，孵化期）**：该重载按调用方给定
+  `PatchFile.Url` 单源下载，绕过可信 CDN 内容身份路由（无 `TrustedContentIdentity` 绑定、无"URL 属主更新根"
+  校验、无多 CDN 故障熔断，见 ADR-005），仅按 Size/SHA-256 校验完整性但无法证明字段来自已验签清单。从公共
+  API 面移除以防业务误用（ADR-003 补遗方向），仅保留给框架内部与存储类单测（`InternalsVisibleTo` 已覆盖）。
+  正式代码补丁一律走 `DownloadCodePatchAsync`（从 `AppConfig` 构建 `TrustedCdnRouteSet`、按内容身份下载、
+  Host 不参与信任判定）。无生产调用方，业务侧零迁移。
 
 ## [0.16.0] - 2026-07-09
 

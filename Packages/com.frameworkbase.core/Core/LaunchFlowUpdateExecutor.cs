@@ -1,3 +1,4 @@
+using System.Threading;
 using Cysharp.Threading.Tasks;
 using Framework.UI;
 using UnityEngine;
@@ -145,7 +146,9 @@ namespace Framework.Core
         /// 失败传播契约：Catalog 检查失败、Catalog 更新失败、取消、尺寸查询失败、下载失败
         /// 任一发生都返回 Success=false，LaunchFlow 据此中止启动并禁止提交 ResourceVersion。
         /// </summary>
-        public static async UniTask<ResourceUpdateResult> ExecuteResourceUpdateAsync(LoadingWindow loading, bool resourceUpdated)
+        public static async UniTask<ResourceUpdateResult> ExecuteResourceUpdateAsync(
+            LoadingWindow loading, bool resourceUpdated, CancellationToken cancellationToken = default,
+            HotUpdate.ResourceCatalogFile expectedCatalog = null)
         {
             if (!resourceUpdated)
             {
@@ -158,7 +161,8 @@ namespace Framework.Core
             loading.SetProgress(0.25f);
 
             // ── Step 4a：Catalog 检查 + 更新 ────────────────────────────────
-            CatalogUpdateResult catalogResult = await GameEntry.Resource.CheckAndUpdateCatalogsAsync();
+            CatalogUpdateResult catalogResult =
+                await GameEntry.Resource.CheckAndUpdateCatalogsAsync(cancellationToken, expectedCatalog);
             Debug.Log($"[LaunchFlow] Step 4a  Catalog 结果: {catalogResult}");
             if (!catalogResult.Succeeded)
             {
@@ -169,7 +173,7 @@ namespace Framework.Core
 
             // ── Step 4b：待下载尺寸查询 ─────────────────────────────────────
             const string RemoteLabel = "remote";
-            DownloadSizeResult sizeResult = await GameEntry.Resource.TryGetDownloadSizeAsync(RemoteLabel);
+            DownloadSizeResult sizeResult = await GameEntry.Resource.TryGetDownloadSizeAsync(RemoteLabel, cancellationToken);
             if (!sizeResult.Succeeded)
             {
                 Debug.LogError($"[LaunchFlow] Step 4b  下载尺寸查询失败，中止本次资源更新: {sizeResult}");
@@ -199,7 +203,8 @@ namespace Framework.Core
                         Mathf.Lerp(0.3f, 0.65f, progress),
                         downloaded, totalBytes);
                 },
-                totalBytes);
+                totalBytes,
+                cancellationToken);
 
             loading.HideDownload();
 
@@ -215,7 +220,8 @@ namespace Framework.Core
             LoadingWindow loading,
             HotUpdate.UpdateInfo serverVersion,
             HotUpdate.UpdateInfo localVersion,
-            string updateServerUrl)
+            string updateServerUrl,
+            CancellationToken cancellationToken = default)
         {
             if (!ShouldUpdateCode(serverVersion, localVersion))
             {
@@ -235,7 +241,8 @@ namespace Framework.Core
                 serverVersion,
                 localVersion,
                 updateServerUrl,
-                progress => loading.SetProgress(Mathf.Lerp(0.65f, 0.8f, progress)));
+                progress => loading.SetProgress(Mathf.Lerp(0.65f, 0.8f, progress)),
+                cancellationToken);
 
             if (!ok)
             {

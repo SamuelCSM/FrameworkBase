@@ -89,6 +89,14 @@ namespace Framework.HotUpdate
         public List<PatchFile> PatchFiles = new List<PatchFile>();
 
         /// <summary>
+        /// 资源远程 Catalog 的内容身份（ADR-009）。<see cref="ResourceVersion"/> 相对上一版增长时**必须**提供，
+        /// 使客户端在应用远程 Catalog 前能对下载到的 catalog 字节按已验签 Size/SHA-256 校验，把资源目录纳入
+        /// 与代码补丁同级的签名真实性保护，而非只依赖 Addressables 自带的无签名 <c>.hash</c>。
+        /// 纯代码更新或资源版本未增长时留空（老项目零迁移）。随 <see cref="UpdateInfo"/> 整体一并签名。
+        /// </summary>
+        public ResourceCatalogFile ResourceCatalog;
+
+        /// <summary>
         /// 面向用户或运营后台的版本说明；不得参与安全决策。
         /// </summary>
         public string Description;
@@ -143,6 +151,34 @@ namespace Framework.HotUpdate
         /// 旧清单兼容字段。新发布流程不得只生成 MD5，正式安全准入也不得以 MD5 代替 SHA-256。
         /// </summary>
         public string MD5;
+    }
+
+    /// <summary>
+    /// 资源远程 Catalog 的内容身份契约（ADR-009）。
+    /// <para>
+    /// <see cref="FileName"/> 必须是无目录分隔符和 <c>..</c> 的安全 <c>.json</c> 叶子文件名
+    /// （Addressables 产出的 <c>catalog_*.json</c>）；<see cref="Size"/> 与 <see cref="SHA256"/>
+    /// 由已签名 <see cref="UpdateInfo"/> 覆盖，客户端下载 Catalog 后据此校验，匹配才允许应用。
+    /// </para>
+    /// </summary>
+    [Serializable]
+    public class ResourceCatalogFile
+    {
+        /// <summary>
+        /// 远程 Catalog 的叶子文件名（相对 Addressables 远程加载根），例如 catalog_2026....json；
+        /// 不得包含相对路径或绝对路径。
+        /// </summary>
+        public string FileName;
+
+        /// <summary>
+        /// 期望 Catalog 文件长度（字节），用于发现截断与错误响应体。
+        /// </summary>
+        public long Size;
+
+        /// <summary>
+        /// Catalog 文件 SHA-256 摘要，十六进制编码；应用远程 Catalog 前的完整性/真实性依据。
+        /// </summary>
+        public string SHA256;
     }
 
     /// <summary>

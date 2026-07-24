@@ -424,10 +424,19 @@ namespace Framework.HotUpdate
         }
 
         /// <summary>
-        /// 下载补丁列表。
+        /// 低层补丁下载入口（<b>internal，仅供框架内部与测试使用</b>）：直接按调用方给定的
+        /// <see cref="PatchFile.Url"/> 单源下载，<b>不走可信 CDN 内容身份路由</b>（无 <see cref="TrustedContentIdentity"/>
+        /// 绑定、无"URL 属于主更新根"校验、无多 CDN 故障熔断回退，见 ADR-005）。仅逐文件按已给 Size/SHA-256
+        /// 校验完整性，但无法证明这些字段来自已验签清单。
+        /// <para>
+        /// 业务/热更代码<b>禁止</b>调用本入口——正式代码补丁必须走 <see cref="DownloadCodePatchAsync"/>：
+        /// 它从 <c>AppConfig</c> 构建 <see cref="TrustedCdnRouteSet"/> 并以内容身份下载，Host 不参与信任判定。
+        /// 本重载收 internal 是把"绕过可信路由"从公共 API 面移除（ADR-003 补遗方向），仅保留给存储/容量类
+        /// 单测复用其安装事务路径。
+        /// </para>
         /// </summary>
         /// <returns>是否全部下载并校验成功。</returns>
-        public async UniTask<bool> DownloadPatchAsync(
+        internal async UniTask<bool> DownloadPatchAsync(
             UpdateInfo updateInfo,
             IReadOnlyList<PatchFile> patchFiles,
             Action<float> onProgress = null,

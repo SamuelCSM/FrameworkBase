@@ -678,3 +678,72 @@ Executor，也能自带 Payload 工厂，新增模块只改自己的 Bootstrap**
 **放弃了什么**：没有为运行时侧引入类似 `TypeCache` 的自动发现（HybridCLR 下跨程序集反射扫描有归属坑，
 且 ADR-008 本就要求 L3 显式维护模块清单）——运行时保持"显式登记"，只把登记点从"别人的文件"改到
 "自己的 Bootstrap"。号段也没有借这次改动强行迁移，避免在 Unity 占锁、无法重导 `config.db` 时动配表。
+
+## ADR-009：资源热更闭环——远程 Catalog 纳入已验签发布身份（2026-07-23）
+
+**状态**：已决策，分步实施（本条为方案定稿；契约与校验先行，构建管线与客户端消费接线需真机发布演练验证，见文末「实施路线」）。
+
+**背景**：代码热更（`CodeVersion` + `PatchFiles`）这条链是闭合的——`PatchFile` 的 `Size`/`SHA-256`
+随 `UpdateInfo`（version.json）一并 RSA-SHA256 签名，客户端下载后逐文件对已验签摘要校验（见
+`UpdateSecurity.ValidateCompleteCodePatchSet` / `FileVerifier`）。但**资源热更**（`ResourceVersion` +
+Addressables 远程 Catalog）这条链实际是断的，核实到三处：
+
+1. **远程 Catalog 根本没被构建**：`AddressableAssetSettings.asset` 的 `m_BuildRemoteCatalog: 0`，
+   全仓 `grep` 无任何代码打开它；发布步骤 `HotUpdateReleaseSteps.BuildAddressables` 只临时覆盖
+   `kRemoteBuildPath/kRemoteLoadPath` 再 `BuildPlayerContent`，**不建远程 catalog**。运行时
+   `CatalogUpdateFlow` 调 `Addressables.CheckForCatalogUpdates` 永远查不到远程 catalog——资源热更空转。
+2. **Catalog 不在签名身份内**：`UpdateInfo` 只签了 `ResourceVersion`（一个数字）与代码 `PatchFiles`，
+   没有任何字段描述资源 Catalog 的内容身份。即便建了远程 catalog，其完整性也只由 Addressables 自带的
+   **无签名 `.hash`** 保护——与热更"下载即将被加载的远程内容必须过签名尺子"（ADR-005）的安全基线不一致。
+3. **客户端不消费发布台账**：`WriteReleaseLedger` 记了全产物 SHA-256，但客户端只信 Addressables 的
+   catalog 机制，不核对台账。
+
+**否决的方案——只靠 Addressables 自带 `.hash`（即"先通功能"档）**：把 `BuildRemoteCatalog` 打开、
+让资源热更能跑，但 Catalog 完整性仍只由无签名 `.hash` 守。否决理由：`.hash` 是**变更检测**不是**真实性**
+凭证，任何能改写 CDN 上 catalog+hash 的一方（边缘节点被劫持、对象存储配置错误、中间人）都能让客户端
+接受并加载一个未经发布方签名的资源目录，进而把玩家指向任意 bundle。这正是 ADR-005 要堵的 Host≠内容身份
+缺口在资源侧的翻版。资源 catalog 与代码补丁同属"将被加载执行/消费的远程内容"，必须同等对待。
+
+**决策**：**远程 Catalog 的内容身份纳入已验签的 `UpdateInfo`，客户端消费前先对下载到的 catalog 字节
+验签身份、失败关闭；发布管线负责构建远程 catalog 并把其真实身份写进清单。**
+
+1. **契约扩展（签名自动覆盖）**：`UpdateInfo` 新增可选字段 `ResourceCatalog`（`ResourceCatalogFile`
+   类型：`FileName` 安全叶子名 + `Size` + `SHA-256`）。因 `UpdateInfo` 整体 JSON 被 RSA 签名、且
+   `ReleaseManifestWriter.ToJson` 是发布/客户端共用的唯一序列化入口（同类型同序列化器），加字段即两侧
+   自动跟上、自动进签名覆盖，无需第二套签名清单——与 ADR-006「不引入第二套签名清单」一致。
+2. **版本门控要求身份**：`UpdateSecurity.ValidateManifest` 增一条与代码侧对称的准入——`appCompare==0 &&
+   server.ResourceVersion > local.ResourceVersion` 时**必须**携带通过 `ValidateResourceCatalogFile`
+   的 `ResourceCatalog`；缺失或非法即拒绝清单（失败关闭）。`ResourceVersion` 未增长时该字段可空
+   （老项目/纯代码更新零迁移）。
+3. **客户端下载—验签—放行门**（Addressables 无"应用前验签"钩子，故加一道独立门）：资源下载前，
+   客户端按 `RemoteLoadPath` + `ResourceCatalog.FileName` 自行拉取 catalog 字节，`FileVerifier` 对
+   已验签 `Size`/`SHA-256` 校验；**仅当匹配**才继续 `UpdateCatalogs` 应用。catalog 是小文件、多下一次
+   可接受；不匹配即中止本次资源更新、绝不提交 `ResourceVersion`（复用现有失败传播契约）。
+4. **发布管线建远程 catalog 并回填身份**：`BuildAddressables` 步骤在 `BuildPlayerContent` 前置
+   `settings.BuildRemoteCatalog = true`（`finally` 恢复，避免污染工程资产），构建后定位产出的
+   `catalog_*.json`，计算 `Size`/`SHA-256` 写入本次 `UpdateInfo.ResourceCatalog`；再由既有签名步骤签。
+5. **构建期门禁**：`HotUpdateSecurityBuildCheck` 增规则——计划含资源更新（`ResourceVersion` 增长）时
+   清单必须携带合法 `ResourceCatalog` 且其文件真实存在于 staging，与运行时 `ValidateResourceCatalogFile`
+   共用校验，杜绝"版本号涨了、身份没回填"的发布。
+
+**为什么客户端要"多下一次 catalog 自己验"而不是改造 Addressables**：`Addressables.UpdateCatalogs`
+下载与应用是原子的、无应用前回调钩子。要么侵入 Addressables 内部（脆、跨版本易碎、离线不可测），要么
+在其之外加一道**下载—验签—放行**门。后者零侵入、与现有 `CatalogUpdateFlow` 的失败关闭语义同构、且
+catalog 是小文件，代价可忽略。选后者。
+
+**放弃了什么**：
+- 不做行级/差量 catalog 校验（catalog 是一致性域整体，整文件身份即原子单元，与 ADR-006 片模型一致）。
+- 不默认在**工程资产**里常开 `BuildRemoteCatalog`（只在发布步骤内临时置真 + `finally` 恢复），避免本地
+  日常构建被远程 catalog 语义影响、也避免 `.asset` 长期变更引冲突。
+- 不引第二套签名清单/公钥环（复用 `UpdateInfo` 签名与现有公钥轮换机制）。
+
+**后果与迁移**：`UpdateInfo` 加一个可选字段，纯代码更新与老项目零迁移（`ResourceVersion` 不增长即不要求）；
+资源热更首次真正闭合需一次真机发布演练验证（构建产出 catalog→回填身份→签名→客户端拉取验签→应用）。
+契约与校验（第 1、2 步）纯逻辑可 EditMode 测；构建管线与客户端接线（第 3、4、5 步）须发布演练验证。
+
+**实施路线（每步独立提交 + 门禁，可回退）**：
+1. 契约 + 校验：`UpdateInfo.ResourceCatalog` + `UpdateSecurity.ValidateResourceCatalogFile` +
+   `ValidateManifest` 门控 + `ReleaseManifestWriter` 校验 + EditMode 测（**离线可验**，本轮）。
+2. 客户端下载—验签—放行门：接入 `CatalogUpdateFlow` / `ResourceManager`（**需发布演练**）。
+3. 发布管线建远程 catalog + 回填身份（**需发布演练**）。
+4. 构建期门禁 `HotUpdateSecurityBuildCheck` 扩规则（随第 3 步）。

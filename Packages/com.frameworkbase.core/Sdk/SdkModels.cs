@@ -27,6 +27,24 @@ namespace Framework.Sdk
         /// <summary>商品不存在或不可购买（后台未配置 / 已下架）。</summary>
         ProductUnavailable = 6,
 
+        /// <summary>广告未加载就绪（需先 Preload 再 Show）。</summary>
+        AdNotReady = 7,
+
+        /// <summary>广告无填充（广告平台当前无可展示广告，非错误，通常静默或走保底奖励）。</summary>
+        AdNoFill = 8,
+
+        /// <summary>激励视频未达发奖条件（用户提前关闭/跳过），不发奖。</summary>
+        RewardNotEarned = 9,
+
+        /// <summary>需先完成实名认证（未实名被拦）。</summary>
+        RealNameRequired = 10,
+
+        /// <summary>防沉迷时长限制中（宵禁时段 / 时长用尽），当前禁玩。</summary>
+        PlaytimeRestricted = 11,
+
+        /// <summary>分享目标不可用（目标 App 未安装 / 渠道未配置）。</summary>
+        ShareTargetUnavailable = 12,
+
         /// <summary>其余未归类错误——详情看 ChannelCode/Message。</summary>
         Unknown = 100
     }
@@ -110,5 +128,143 @@ namespace Framework.Sdk
 
         /// <summary>购买时透传的 developerPayload（回带对账）。</summary>
         public string DeveloperPayload;
+    }
+
+    /// <summary>广告类型。</summary>
+    public enum SdkAdType
+    {
+        /// <summary>激励视频：看满时长发奖，展示结果 <see cref="SdkAdShowResult.Rewarded"/> 表示是否达成发奖条件。</summary>
+        Rewarded = 0,
+
+        /// <summary>插屏广告：全屏展示、无奖励（关卡间/结算页常用）。</summary>
+        Interstitial = 1,
+    }
+
+    /// <summary>广告展示结果。</summary>
+    public class SdkAdShowResult
+    {
+        /// <summary>广告位 ID。</summary>
+        public string PlacementId;
+
+        /// <summary>
+        /// （激励视频）是否达成发奖条件（看满时长）。插屏恒 false。
+        /// <b>仅供即时反馈</b>——真正发奖必须由服务端校验广告平台回调后到账，不得以本字段为发奖依据。
+        /// </summary>
+        public bool Rewarded;
+
+        /// <summary>用户是否提前跳过/关闭。</summary>
+        public bool Skipped;
+    }
+
+    /// <summary>实名认证状态。</summary>
+    public enum SdkRealNameState
+    {
+        /// <summary>未知（未查询 / 渠道未返回）。</summary>
+        Unknown = 0,
+
+        /// <summary>未实名。</summary>
+        NotAuthenticated = 1,
+
+        /// <summary>已实名成年人。</summary>
+        Adult = 2,
+
+        /// <summary>已实名未成年人（受防沉迷时长/时段管控）。</summary>
+        Minor = 3,
+    }
+
+    /// <summary>实名认证结果。</summary>
+    public class SdkRealNameStatus
+    {
+        /// <summary>实名状态。</summary>
+        public SdkRealNameState State;
+
+        /// <summary>年龄（岁，0=未知）；未成年分档管控（如 &lt;8 / 8-16 / 16-18）可据此。</summary>
+        public int Age;
+    }
+
+    /// <summary>防沉迷时长裁决状态。</summary>
+    public enum SdkPlaytimeState
+    {
+        /// <summary>可正常游玩（成年人 / 未触发限制）。</summary>
+        Allowed = 0,
+
+        /// <summary>限时内可玩：<see cref="SdkPlaytimeVerdict.RemainingSeconds"/> 为本时段剩余可玩秒数。</summary>
+        Restricted = 1,
+
+        /// <summary>当前禁玩（宵禁时段 / 已用尽时长 / 未实名被拦）。</summary>
+        Blocked = 2,
+    }
+
+    /// <summary>
+    /// 防沉迷时长裁决。由渠道 / 游戏服依实名信息与法规计算——<b>框架不硬编码任何规则</b>
+    /// （宵禁时段、时长上限随政策变），只原样透传裁决与合规文案。
+    /// </summary>
+    public class SdkPlaytimeVerdict
+    {
+        /// <summary>裁决状态。</summary>
+        public SdkPlaytimeState State;
+
+        /// <summary>本时段剩余可玩秒数；<see cref="SdkPlaytimeState.Allowed"/> 时为 -1（不限），Blocked 时为 0。</summary>
+        public int RemainingSeconds = -1;
+
+        /// <summary>需向玩家展示的合规文案（渠道 / 法规原文，框架原样透传，不自拟）。</summary>
+        public string NoticeMessage;
+    }
+
+    /// <summary>分享目标。</summary>
+    public enum SdkShareChannel
+    {
+        /// <summary>系统分享面板（iOS UIActivityViewController / Android Chooser），由用户选目标。</summary>
+        System = 0,
+
+        /// <summary>微信好友会话。</summary>
+        WeChatSession = 1,
+
+        /// <summary>微信朋友圈。</summary>
+        WeChatTimeline = 2,
+
+        /// <summary>QQ 好友。</summary>
+        QQ = 3,
+
+        /// <summary>QQ 空间。</summary>
+        QZone = 4,
+
+        /// <summary>新浪微博。</summary>
+        Weibo = 5,
+    }
+
+    /// <summary>分享内容类型。</summary>
+    public enum SdkShareContentType
+    {
+        /// <summary>纯文本。</summary>
+        Text = 0,
+
+        /// <summary>图片（如战绩截图），走 <see cref="SdkShareContent.ImagePath"/>。</summary>
+        Image = 1,
+
+        /// <summary>网页链接（带标题/缩略图），走 <see cref="SdkShareContent.LinkUrl"/>。</summary>
+        Link = 2,
+    }
+
+    /// <summary>分享内容（按 <see cref="Type"/> 取对应字段；未用字段可空）。</summary>
+    public class SdkShareContent
+    {
+        /// <summary>内容类型。</summary>
+        public SdkShareContentType Type;
+
+        /// <summary>标题（Link 分享的卡片标题）。</summary>
+        public string Title;
+
+        /// <summary>文本 / 描述（Text 分享的正文，或 Link 卡片摘要）。</summary>
+        public string Text;
+
+        /// <summary>本地图片路径（Image 分享，如运行时截图落盘路径）。</summary>
+        public string ImagePath;
+
+        /// <summary>链接 URL（Link 分享）。</summary>
+        public string LinkUrl;
+
+        /// <summary>链接缩略图本地路径（Link 分享，可空）。</summary>
+        public string ThumbPath;
     }
 }

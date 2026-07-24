@@ -38,6 +38,40 @@ namespace Framework.Editor
         public bool IsScene;
     }
 
+    /// <summary>
+    /// Bundle 打包模式（框架侧枚举，与 Addressables API 解耦——采集层映射，规则层只吃这个）。
+    /// Unknown 表示未采集/不适用，规则一律跳过，故不会误触未设该字段的合成模型（如单测）。
+    /// </summary>
+    public enum BundlePackingKind
+    {
+        Unknown = 0,
+        PackTogether,
+        PackSeparately,
+        PackTogetherByLabel,
+    }
+
+    /// <summary>
+    /// Bundle 命名风格（框架侧枚举）。只有 AppendHash / OnlyHash 嵌的是**内容**哈希，
+    /// 内容变则文件名变、CDN 按 URL 天然失效；NoHash 无哈希、FileNameHash 只是文件名哈希，都不随内容变。
+    /// </summary>
+    public enum BundleNamingKind
+    {
+        Unknown = 0,
+        AppendHash,
+        OnlyHash,
+        FileNameHash,
+        NoHash,
+    }
+
+    /// <summary>Bundle 压缩模式（框架侧枚举）。</summary>
+    public enum BundleCompressionKind
+    {
+        Unknown = 0,
+        Uncompressed,
+        LZ4,
+        LZMA,
+    }
+
     /// <summary>分组模型。</summary>
     public sealed class AddressablesGroupModel
     {
@@ -49,6 +83,15 @@ namespace Framework.Editor
         /// <summary>BuildPath / LoadPath 的 Profile 变量名（与阈值中的期望值比对）。</summary>
         public string BuildPathName = "";
         public string LoadPathName = "";
+
+        /// <summary>Bundle 打包模式（默认 Unknown，规则跳过；采集层从 schema 填充）。</summary>
+        public BundlePackingKind Packing = BundlePackingKind.Unknown;
+
+        /// <summary>Bundle 命名风格（默认 Unknown，规则跳过；采集层从 schema 填充）。</summary>
+        public BundleNamingKind Naming = BundleNamingKind.Unknown;
+
+        /// <summary>Bundle 压缩模式（默认 Unknown，规则跳过；采集层从 schema 填充）。</summary>
+        public BundleCompressionKind Compression = BundleCompressionKind.Unknown;
 
         public List<AddressablesEntryModel> Entries = new List<AddressablesEntryModel>();
     }
@@ -82,6 +125,12 @@ namespace Framework.Editor
 
         /// <summary>单组源资产总体积告警阈值。超过意味着该组更新粒度过粗，改一个资源玩家要重下一大包。</summary>
         public long MaxGroupSourceBytes = 256L * 1024 * 1024;
+
+        /// <summary>
+        /// 远端 PackTogether 组的条目数告警阈值。超过它 → 打成一个大 bundle，改任一资源都要重下整包
+        /// （与按体积的组超限互补：多个小文件体积不大但粒度同样粗）。
+        /// </summary>
+        public int MaxPackTogetherRemoteEntries = 25;
 
         /// <summary>本地组白名单：仅这些组允许（且必须）走 Local 路径随包内置，其余一律 Remote。</summary>
         public HashSet<string> LocalGroups = new HashSet<string> { "Framework", "Default Local Group" };
@@ -207,6 +256,49 @@ namespace Framework.Editor
                 Add(issues, AddressablesIssueSeverity.Warning, "GroupOverBudget",
                     $"组 [{group.Name}] 源资产总体积 {FormatMb(groupTotal)} 超过阈值 {FormatMb(th.MaxGroupSourceBytes)}，" +
                     "建议按功能/更新频率拆分子目录成组，避免改一个资源玩家重下一大包");
+            }
+
+            // 规则 11~13：远端组 bundle 布局审计（本地组随包内置、不涉及 CDN/补丁粒度，跳过）
+            if (!shouldBeLocal)
+                ValidateRemoteBundleLayout(group, th, issues);
+        }
+
+        /// <summary>
+        /// 远端组 bundle 布局审计（仅远端组）：命名内容哈希、压缩、打包粒度三项。
+        /// 均为 Warning——布局是权衡项而非硬错，不阻断构建，与组超限/重复依赖同级只作咨询。
+        /// 字段为 Unknown（未采集/合成模型）时逐条跳过，不误触。
+        /// </summary>
+        private static void ValidateRemoteBundleLayout(
+            AddressablesGroupModel group,
+            AddressablesValidationThresholds th,
+            List<AddressablesValidationIssue> issues)
+        {
+            // 规则 11：远端 bundle 命名须嵌内容哈希，否则内容热更后文件名不变，
+            // CDN/HTTP 边缘缓存可能按 URL 命中旧字节，把玩家卡在旧资源上（热更特有隐患，关联 ADR-005/009）。
+            // 只有 AppendHash / OnlyHash 嵌内容哈希；NoHash 无哈希、FileNameHash 是文件名哈希都不随内容变。
+            if (group.Naming == BundleNamingKind.NoHash || group.Naming == BundleNamingKind.FileNameHash)
+            {
+                Add(issues, AddressablesIssueSeverity.Warning, "RemoteBundleNamingNoContentHash",
+                    $"远端组 [{group.Name}] Bundle 命名为 {group.Naming}，文件名不随内容变——" +
+                    "内容热更后 CDN/缓存可能按 URL 供旧字节。改用 Append Hash / Use Hash of AssetBundle。");
+            }
+
+            // 规则 12：远端 bundle 未压缩 → 白白多传数倍字节，CDN 流量与玩家下载都受累。
+            if (group.Compression == BundleCompressionKind.Uncompressed)
+            {
+                Add(issues, AddressablesIssueSeverity.Warning, "RemoteBundleUncompressed",
+                    $"远端组 [{group.Name}] Bundle 未压缩，下载体积是 LZ4 的数倍。远端组建议 LZ4（按需解压、体积均衡）。");
+            }
+
+            // 规则 13：PackTogether + 条目多 → 改任一资源都要重下整包，补丁粒度过粗。
+            // 与按体积的组超限（规则 8）互补：多个小文件体积不大但粒度同样粗。
+            if (group.Packing == BundlePackingKind.PackTogether &&
+                group.Entries.Count > th.MaxPackTogetherRemoteEntries)
+            {
+                Add(issues, AddressablesIssueSeverity.Warning, "CoarsePatchGranularity",
+                    $"远端组 [{group.Name}] 打包模式 PackTogether 且含 {group.Entries.Count} 个条目" +
+                    $"（阈值 {th.MaxPackTogetherRemoteEntries}）——改任一资源玩家需重下整包。" +
+                    "按更新频率拆组或改 Pack Separately 细化补丁粒度。");
             }
         }
 

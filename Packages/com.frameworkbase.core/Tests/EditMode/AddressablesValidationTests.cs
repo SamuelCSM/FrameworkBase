@@ -263,6 +263,101 @@ namespace Framework.Tests
                 "同组内共享依赖只会进同一个 bundle，一份拷贝，不算重复");
         }
 
+        // ── 远端 bundle 布局审计（规则 11~13）───────────────────────────────
+
+        [Test]
+        public void 远端命名无内容哈希_报Warning_本地组与哈希命名放行()
+        {
+            var model = new AddressablesValidationModel();
+            var noHash = RemoteGroup("NoHash");
+            noHash.Naming = BundleNamingKind.NoHash;
+            noHash.Entries.Add(Entry("Assets/ResourcesOut/NoHash/a.prefab", "NoHash/a"));
+            var fileNameHash = RemoteGroup("FileNameHash");
+            fileNameHash.Naming = BundleNamingKind.FileNameHash;
+            fileNameHash.Entries.Add(Entry("Assets/ResourcesOut/FileNameHash/b.prefab", "FileNameHash/b"));
+            var appendHash = RemoteGroup("AppendHash");
+            appendHash.Naming = BundleNamingKind.AppendHash;
+            appendHash.Entries.Add(Entry("Assets/ResourcesOut/AppendHash/c.prefab", "AppendHash/c"));
+            // 本地组即便 NoHash 也不报（随包内置，不涉及 CDN）
+            var local = LocalGroup();
+            local.Naming = BundleNamingKind.NoHash;
+            var e = Entry("Assets/f.prefab", "f", remoteLabel: false);
+            e.ExpectedAddress = null;
+            local.Entries.Add(e);
+            model.Groups.Add(noHash);
+            model.Groups.Add(fileNameHash);
+            model.Groups.Add(appendHash);
+            model.Groups.Add(local);
+
+            var issues = OfRule(AddressablesValidationRules.Validate(model, _th), "RemoteBundleNamingNoContentHash");
+
+            Assert.AreEqual(2, issues.Count, "NoHash 与 FileNameHash 两个远端组各报一条，AppendHash 与本地组放行");
+            Assert.IsTrue(issues.All(i => i.Severity == AddressablesIssueSeverity.Warning));
+        }
+
+        [Test]
+        public void 远端未压缩_报Warning_压缩组放行()
+        {
+            var model = new AddressablesValidationModel();
+            var raw = RemoteGroup("Raw");
+            raw.Compression = BundleCompressionKind.Uncompressed;
+            raw.Entries.Add(Entry("Assets/ResourcesOut/Raw/a.prefab", "Raw/a"));
+            var lz4 = RemoteGroup("Lz4");
+            lz4.Compression = BundleCompressionKind.LZ4;
+            lz4.Entries.Add(Entry("Assets/ResourcesOut/Lz4/b.prefab", "Lz4/b"));
+            model.Groups.Add(raw);
+            model.Groups.Add(lz4);
+
+            var issues = OfRule(AddressablesValidationRules.Validate(model, _th), "RemoteBundleUncompressed");
+
+            Assert.AreEqual(1, issues.Count);
+            StringAssert.Contains("Raw", issues[0].Message);
+        }
+
+        [Test]
+        public void PackTogether条目超阈值_报补丁粒度粗_分离打包放行()
+        {
+            _th.MaxPackTogetherRemoteEntries = 3;
+
+            var model = new AddressablesValidationModel();
+            var together = RemoteGroup("Together");
+            together.Packing = BundlePackingKind.PackTogether;
+            for (int i = 0; i < 5; i++)
+                together.Entries.Add(Entry($"Assets/ResourcesOut/Together/a{i}.prefab", $"Together/a{i}"));
+
+            // 同样多条目但 PackSeparately → 每条一包，粒度细，不报
+            var separately = RemoteGroup("Separately");
+            separately.Packing = BundlePackingKind.PackSeparately;
+            for (int i = 0; i < 5; i++)
+                separately.Entries.Add(Entry($"Assets/ResourcesOut/Separately/b{i}.prefab", $"Separately/b{i}"));
+
+            model.Groups.Add(together);
+            model.Groups.Add(separately);
+
+            var issues = OfRule(AddressablesValidationRules.Validate(model, _th), "CoarsePatchGranularity");
+
+            Assert.AreEqual(1, issues.Count, "只有 PackTogether 且条目超阈值才报");
+            StringAssert.Contains("Together", issues[0].Message);
+        }
+
+        [Test]
+        public void bundle布局字段未采集_不误触任何布局规则()
+        {
+            // Packing/Naming/Compression 全 Unknown（合成模型未设）→ 三条规则都应跳过
+            var model = new AddressablesValidationModel();
+            var g = RemoteGroup("Default");
+            for (int i = 0; i < 100; i++) // 条目再多，Packing 未知也不判粒度
+                g.Entries.Add(Entry($"Assets/ResourcesOut/Default/a{i}.prefab", $"Default/a{i}"));
+            model.Groups.Add(g);
+            foreach (var e in g.Entries) model.AddressableAssetPaths.Add(e.AssetPath);
+
+            var issues = AddressablesValidationRules.Validate(model, _th);
+
+            Assert.IsEmpty(OfRule(issues, "RemoteBundleNamingNoContentHash"));
+            Assert.IsEmpty(OfRule(issues, "RemoteBundleUncompressed"));
+            Assert.IsEmpty(OfRule(issues, "CoarsePatchGranularity"));
+        }
+
         // ── 漂移检测 ─────────────────────────────────────────────────────────
 
         [Test]

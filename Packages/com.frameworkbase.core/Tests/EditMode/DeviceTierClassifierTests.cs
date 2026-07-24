@@ -72,5 +72,37 @@ namespace Framework.Tests
             Assert.AreEqual(DeviceTier.High, DeviceTierClassifier.Classify(new DeviceProfile(4096, 2048, 8), thresholds),
                 "高端线降到 4GB 后 4GB 判高端");
         }
+
+        [Test]
+        public void 预加载并发度_低端串行_高端多路()
+        {
+            // 低端必须退化为串行（=1），这是内存安全的底线，不能被调优拉高
+            Assert.AreEqual(1, DeviceTierResourceTuning.PreloadConcurrency(DeviceTier.Low), "低端必须串行保内存峰值");
+            Assert.AreEqual(3, DeviceTierResourceTuning.PreloadConcurrency(DeviceTier.Mid));
+            Assert.AreEqual(6, DeviceTierResourceTuning.PreloadConcurrency(DeviceTier.High));
+        }
+
+        [Test]
+        public void 预加载并发度_随档位单调不减()
+        {
+            // 档位越高并发不应更低，否则限流方向反了
+            int low = DeviceTierResourceTuning.PreloadConcurrency(DeviceTier.Low);
+            int mid = DeviceTierResourceTuning.PreloadConcurrency(DeviceTier.Mid);
+            int high = DeviceTierResourceTuning.PreloadConcurrency(DeviceTier.High);
+            Assert.LessOrEqual(low, mid, "中端并发不应低于低端");
+            Assert.LessOrEqual(mid, high, "高端并发不应低于中端");
+            Assert.GreaterOrEqual(low, 1, "并发度恒 ≥1，保证至少串行");
+        }
+
+        [Test]
+        public void 特效并发上限_低端削峰_随档位单调不减()
+        {
+            int low = DeviceTierResourceTuning.MaxConcurrentEffects(DeviceTier.Low);
+            int mid = DeviceTierResourceTuning.MaxConcurrentEffects(DeviceTier.Mid);
+            int high = DeviceTierResourceTuning.MaxConcurrentEffects(DeviceTier.High);
+            Assert.LessOrEqual(low, mid, "中端特效上限不应低于低端");
+            Assert.LessOrEqual(mid, high, "高端特效上限不应低于中端");
+            Assert.GreaterOrEqual(low, 1, "上限恒 ≥1");
+        }
     }
 }

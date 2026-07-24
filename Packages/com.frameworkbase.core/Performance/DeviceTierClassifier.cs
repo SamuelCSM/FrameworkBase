@@ -94,4 +94,51 @@ namespace Framework.Performance
             return high ? DeviceTier.High : DeviceTier.Mid;
         }
     }
+
+    /// <summary>
+    /// 设备分级 → 资源加载调优参数映射（纯逻辑，可单测）。
+    /// 低端窄路优先保内存安全、削 IO/解压峰值；高端多路提吞吐。
+    /// 这里只给保守默认，项目可经 <see cref="ResourceManager.PreloadConcurrencyOverride"/> 覆盖。
+    /// 真正的校准依据同样是 perf_window 大盘按档位分组后的实测表现，而非拍脑袋。
+    /// </summary>
+    public static class DeviceTierResourceTuning
+    {
+        /// <summary>
+        /// 批量预加载的建议并发度（同时在途的 Addressables 加载操作数）。
+        /// Low=1（串行，最小内存峰值、最稳）、Mid=3、High=6。返回值恒 ≥1。
+        /// </summary>
+        /// <param name="tier">当前设备档位。</param>
+        /// <returns>并发度（≥1）。</returns>
+        public static int PreloadConcurrency(DeviceTier tier)
+        {
+            switch (tier)
+            {
+                case DeviceTier.Low:
+                    return 1;
+                case DeviceTier.High:
+                    return 6;
+                default:
+                    return 3;
+            }
+        }
+
+        /// <summary>
+        /// 同屏特效并发上限（池化特效同时存活数）。Low=16 削峰保低端内存/填充率，Mid=32，High=64。返回 ≥1。
+        /// 超上限的新特效被丢弃——表现降级（少几个特效）远优于低端机卡顿/OOM。
+        /// </summary>
+        /// <param name="tier">当前设备档位。</param>
+        /// <returns>并发上限（≥1）。</returns>
+        public static int MaxConcurrentEffects(DeviceTier tier)
+        {
+            switch (tier)
+            {
+                case DeviceTier.Low:
+                    return 16;
+                case DeviceTier.High:
+                    return 64;
+                default:
+                    return 32;
+            }
+        }
+    }
 }

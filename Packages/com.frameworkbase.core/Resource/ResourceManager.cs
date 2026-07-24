@@ -6,6 +6,7 @@ using UnityEngine.AddressableAssets;
 using UnityEngine.ResourceManagement.AsyncOperations;
 using UnityEngine.SceneManagement;
 using Cysharp.Threading.Tasks;
+using Framework.Performance;
 
 namespace Framework
 {
@@ -127,10 +128,14 @@ namespace Framework
         /// </para>
         /// </summary>
         /// <param name="cancellationToken">启动流程取消令牌；取消返回 Canceled 终态而非抛异常。</param>
-        public async UniTask<CatalogUpdateResult> CheckAndUpdateCatalogsAsync(CancellationToken cancellationToken = default)
+        /// <param name="expectedCatalog">已验签清单声明的资源 Catalog 内容身份（ADR-009）；非 null 时应用前验签，
+        /// 失败关闭。资源版本未增长（纯代码更新/老项目）传 null，保持原行为。</param>
+        public async UniTask<CatalogUpdateResult> CheckAndUpdateCatalogsAsync(
+            CancellationToken cancellationToken = default,
+            HotUpdate.ResourceCatalogFile expectedCatalog = null)
         {
             GameLog.Log("[ResourceManager] 检查 Catalog 更新...");
-            CatalogUpdateResult result = await CatalogFlow.CheckAndUpdateAsync(cancellationToken);
+            CatalogUpdateResult result = await CatalogFlow.CheckAndUpdateAsync(cancellationToken, expectedCatalog);
             if (result.Status == CatalogUpdateStatus.UpToDate)
             {
                 GameLog.Log("[ResourceManager] Catalog 已是最新（Editor Play Mode 下属正常，" +
@@ -242,10 +247,14 @@ namespace Framework
         /// 下载当前 catalog 中所有远端资源包（全量预下载）。
         /// 不需要指定 label，自动覆盖所有分组。
         /// </summary>
-        public async UniTask<bool> DownloadAllRemoteDependenciesAsync(Action<float> onProgress = null)
+        public async UniTask<bool> DownloadAllRemoteDependenciesAsync(
+            Action<float> onProgress = null,
+            CancellationToken cancellationToken = default)
         {
             GameLog.Log("[ResourceManager] 开始全量下载远端资源依赖...");
 
+            // 句柄在 finally 统一释放，覆盖成功/失败/异常/取消四条出口（同 DownloadDependenciesAsync）。
+            AsyncOperationHandle handle = default;
             try
             {
                 var keys = new List<object>();
@@ -260,10 +269,11 @@ namespace Framework
                     return true;
                 }
 
-                var handle = Addressables.DownloadDependenciesAsync((IEnumerable<object>)keys, false);
+                handle = Addressables.DownloadDependenciesAsync((IEnumerable<object>)keys, false);
 
                 while (!handle.IsDone)
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     onProgress?.Invoke(handle.PercentComplete);
                     await UniTask.Yield();
                 }
@@ -271,19 +281,27 @@ namespace Framework
                 if (handle.Status != AsyncOperationStatus.Succeeded)
                 {
                     GameLog.Error($"[ResourceManager] 全量下载失败: {handle.OperationException?.Message}");
-                    Addressables.Release(handle);
                     return false;
                 }
 
                 onProgress?.Invoke(1f);
-                Addressables.Release(handle);
                 GameLog.Log("[ResourceManager] 全量远端资源下载完成");
                 return true;
+            }
+            catch (OperationCanceledException)
+            {
+                GameLog.Log("[ResourceManager] 全量远端资源下载被取消。");
+                return false;
             }
             catch (Exception e)
             {
                 GameLog.Error($"[ResourceManager] DownloadAllRemoteDependenciesAsync 异常: {e.Message}");
                 return false;
+            }
+            finally
+            {
+                if (handle.IsValid())
+                    Addressables.Release(handle);
             }
         }
 
@@ -295,17 +313,24 @@ namespace Framework
         public async UniTask<bool> DownloadDependenciesAsync(
             object key,
             Action<float> onProgress = null,
-            long totalBytes = 0)
+            long totalBytes = 0,
+            CancellationToken cancellationToken = default)
         {
             GameLog.Log($"[ResourceManager] 开始下载资源依赖 [{key}]...");
 
+            // 句柄在 finally 统一释放：覆盖成功、失败、异常、取消四条出口，避免旧实现 catch 路径漏释放句柄。
+            // default 句柄的 IsValid() 为 false，异常发生在创建之前时 finally 安全跳过。
+            AsyncOperationHandle handle = default;
             try
             {
-                var handle = Addressables.DownloadDependenciesAsync(key, false);
+                handle = Addressables.DownloadDependenciesAsync(key, false);
 
                 float lastReported = -1f;
                 while (!handle.IsDone)
                 {
+                    // 启动下载阶段可能很长：应用退出 / 强更跳转 / 用户重试时经令牌干净中止在途下载。
+                    cancellationToken.ThrowIfCancellationRequested();
+
                     float progress;
                     if (totalBytes > 0)
                     {
@@ -332,19 +357,28 @@ namespace Framework
                 if (handle.Status != AsyncOperationStatus.Succeeded)
                 {
                     GameLog.Error($"[ResourceManager] 下载依赖失败 [{key}]: {handle.OperationException?.Message}");
-                    Addressables.Release(handle);
                     return false;
                 }
 
                 onProgress?.Invoke(1f);
-                Addressables.Release(handle);
                 GameLog.Log($"[ResourceManager] 资源依赖下载完成 [{key}]");
                 return true;
+            }
+            catch (OperationCanceledException)
+            {
+                GameLog.Log($"[ResourceManager] 资源依赖下载被取消 [{key}]。");
+                return false;
             }
             catch (Exception e)
             {
                 GameLog.Error($"[ResourceManager] DownloadDependenciesAsync 异常 [{key}]: {e.Message}");
                 return false;
+            }
+            finally
+            {
+                // 释放下载句柄不会卸载已落缓存的 bundle，是必需的清理；不释放则句柄常驻泄漏。
+                if (handle.IsValid())
+                    Addressables.Release(handle);
             }
         }
 
@@ -419,7 +453,9 @@ namespace Framework
                     AddReference(address);
                     if (!cachedHandle.IsDone) await cachedHandle.Task;
                     T cached = cachedHandle.Result as T;
-                    if (cached == null) RemoveReference(address); // 共享句柄加载失败，回滚本次计数
+                    // 共享句柄加载失败：与创建者的 RollbackLoad 一致地回滚——谁把引用减到 0 谁释放底层句柄。
+                    // 修复"创建者已移缓存并把引用减到非零、命中者随后减到 0 却只减引用不释放"的并发失败句柄泄漏。
+                    if (cached == null) RollbackSharedReference(address, cachedHandle);
                     return cached;
                 }
 
@@ -477,7 +513,8 @@ namespace Framework
                     }
                     onProgress?.Invoke(1f);
                     T cached = cachedHandle.Result as T;
-                    if (cached == null) RemoveReference(address); // 共享句柄加载失败，回滚本次计数
+                    // 共享句柄加载失败：同上，交由 RollbackSharedReference 统一回收，避免并发失败漏释放句柄。
+                    if (cached == null) RollbackSharedReference(address, cachedHandle);
                     return cached;
                 }
 
@@ -534,12 +571,20 @@ namespace Framework
             // 检查缓存
             if (_handleCache.TryGetValue(address, out var cachedHandle))
             {
+                // 命中的共享句柄可能仍在途（由某次 LoadAssetAsync 创建但未完成）：同步 API 无法 await，
+                // 只能阻塞其完成再取值。原实现直接读 Result，在途时得到 null 却已 AddReference，造成引用超计泄漏。
+                T cached = cachedHandle.IsDone
+                    ? cachedHandle.Result as T
+                    : cachedHandle.WaitForCompletion() as T;
+                // 仅在拿到可用资源时才计一次引用；共享句柄失败不为其增引用（回收交由创建者路径）。
+                if (cached == null)
+                    return null;
                 AddReference(address);
-                return cachedHandle.Result as T;
+                return cached;
             }
 
             GameLog.Warning($"LoadAsset: 资源未预加载，建议使用 LoadAssetAsync - {address}");
-            
+
             // 同步加载（会阻塞主线程，不推荐）
             var handle = Addressables.LoadAssetAsync<T>(address);
             T asset = handle.WaitForCompletion();
@@ -548,6 +593,12 @@ namespace Framework
             {
                 _handleCache[address] = handle;
                 AddReference(address);
+            }
+            else
+            {
+                // 加载失败：句柄不入缓存，必须就地释放，否则同步失败路径会永久泄漏该句柄。
+                if (handle.IsValid())
+                    Addressables.Release(handle);
             }
 
             return asset;
@@ -641,8 +692,36 @@ namespace Framework
         #region 资源预加载
 
         /// <summary>
-        /// 预加载资源列表
+        /// 预加载批量并发度覆盖：&gt;0 时优先于设备分级映射直接生效；≤0 回退按
+        /// <see cref="DeviceTierService.Tier"/> 经 <see cref="DeviceTierResourceTuning.PreloadConcurrency"/> 取值。
+        /// 用于压测或项目已有自己的档位判断时手动钉死并发度。
         /// </summary>
+        public int PreloadConcurrencyOverride { get; set; } = 0;
+
+        /// <summary>
+        /// 解析本次预加载的实际并发度：覆盖优先，否则按当前设备档位映射；
+        /// 收敛到 [1, itemCount]——超过任务数只会空转 worker，低于 1 退化为串行。
+        /// </summary>
+        /// <param name="itemCount">本次待加载资源数（&gt;0）。</param>
+        /// <returns>并发度，范围 [1, itemCount]。</returns>
+        private int ResolvePreloadConcurrency(int itemCount)
+        {
+            int degree = PreloadConcurrencyOverride > 0
+                ? PreloadConcurrencyOverride
+                : DeviceTierResourceTuning.PreloadConcurrency(DeviceTierService.Tier);
+
+            if (degree < 1) degree = 1;
+            if (degree > itemCount) degree = itemCount;
+            return degree;
+        }
+
+        /// <summary>
+        /// 预加载资源列表，按设备档位限流并行：低端窄路保内存、高端多路提吞吐。
+        /// 并发度由 <see cref="ResolvePreloadConcurrency"/> 决定（可经 <see cref="PreloadConcurrencyOverride"/> 覆盖）；
+        /// 同一地址的并发请求由 <see cref="LoadAssetAsync{T}(string)"/> 的缓存去重兜底，不会重复加载。
+        /// </summary>
+        /// <param name="addresses">待预加载地址列表。</param>
+        /// <param name="onProgress">进度回调（0~1），按已完成数递增，主线程回调。</param>
         public async UniTask PreloadAssetsAsync(List<string> addresses, Action<float> onProgress = null)
         {
             if (addresses == null || addresses.Count == 0)
@@ -652,16 +731,50 @@ namespace Framework
             }
 
             int totalCount = addresses.Count;
-            int loadedCount = 0;
+            int concurrency = ResolvePreloadConcurrency(totalCount);
 
-            foreach (var address in addresses)
+            if (concurrency <= 1)
             {
-                await LoadAssetAsync<UnityEngine.Object>(address);
-                loadedCount++;
-                onProgress?.Invoke((float)loadedCount / totalCount);
+                // 低端档或单资源：串行加载，内存峰值最小、无并发歧义（保持原语义）。
+                int loadedCount = 0;
+                foreach (var address in addresses)
+                {
+                    await LoadAssetAsync<UnityEngine.Object>(address);
+                    loadedCount++;
+                    onProgress?.Invoke((float)loadedCount / totalCount);
+                }
+            }
+            else
+            {
+                // 按设备档位限流的并行预加载：concurrency 个 worker 共享游标领取地址，
+                // 同时在途的 Addressables 加载不超过 concurrency，兼顾吞吐与内存/IO 峰值。
+                // UniTask 为主线程协作式调度：worker 仅在 await 处交错，游标领取（读 nextIndex→自增）
+                // 之间无 await、不会被抢占，故无需锁；真正并行的是底层 Addressables 异步操作。
+                int nextIndex = 0;
+                int completedCount = 0;
+
+                async UniTask RunWorkerAsync()
+                {
+                    while (true)
+                    {
+                        int i = nextIndex;
+                        if (i >= totalCount) return;
+                        nextIndex = i + 1;
+
+                        await LoadAssetAsync<UnityEngine.Object>(addresses[i]);
+
+                        completedCount++;
+                        onProgress?.Invoke((float)completedCount / totalCount);
+                    }
+                }
+
+                var workers = new List<UniTask>(concurrency);
+                for (int w = 0; w < concurrency; w++)
+                    workers.Add(RunWorkerAsync());
+                await UniTask.WhenAll(workers);
             }
 
-            GameLog.Log($"PreloadAssetsAsync: 预加载完成，共 {totalCount} 个资源");
+            GameLog.Log($"PreloadAssetsAsync: 预加载完成，共 {totalCount} 个资源（并发 {concurrency}）");
         }
 
         /// <summary>
@@ -851,6 +964,36 @@ namespace Framework
             if (noRefsLeft && handle.IsValid())
             {
                 Addressables.Release(handle);
+            }
+        }
+
+        /// <summary>
+        /// 命中共享句柄却未取得可用资源（加载失败）时的回收，与 <see cref="RollbackLoad"/> 语义统一：
+        /// 谁把引用减到 0，谁负责移除缓存并释放底层句柄。修复并发失败下"创建者已移缓存、命中者减到 0
+        /// 却只减引用不释放句柄"的泄漏。必须传入调用方自己 await 的句柄，因为缓存此刻可能已被创建者回滚移除，
+        /// 从缓存重新查会取不到而漏释放。
+        /// </summary>
+        /// <param name="address">资源地址。</param>
+        /// <param name="sharedHandle">调用方等待过的共享句柄。</param>
+        private void RollbackSharedReference(string address, AsyncOperationHandle sharedHandle)
+        {
+            bool noRefsLeft = RemoveReference(address);
+            if (!noRefsLeft)
+            {
+                return;
+            }
+
+            // 本次调用把引用清零：缓存可能仍指向该失败句柄（无人回滚过），也可能已被创建者移除，
+            // 或已被新一轮加载替换成别的句柄。仅当仍指向同一句柄时才由此处移除，避免误删新句柄的缓存项。
+            if (_handleCache.TryGetValue(address, out var cached) && cached.Equals(sharedHandle))
+            {
+                _handleCache.Remove(address);
+            }
+
+            // 释放与缓存是否命中无关：只要本次把引用清零且句柄有效，就必须归还，避免并发失败漏释放。
+            if (sharedHandle.IsValid())
+            {
+                Addressables.Release(sharedHandle);
             }
         }
 

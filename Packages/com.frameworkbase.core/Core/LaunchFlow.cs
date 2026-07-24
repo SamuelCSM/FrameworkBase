@@ -1,4 +1,5 @@
 using System;
+using System.Threading;
 using Cysharp.Threading.Tasks;
 using Framework.Input;
 using Framework.UI;
@@ -59,11 +60,11 @@ namespace Framework.Core
         /// 执行完整启动流程（带重试循环）。
         /// 失败时 LoadingWindow 显示重试面板，玩家点击重试后重新执行所有步骤。
         /// </summary>
-        public static async UniTask<LaunchFlowOutcome> RunAsync(LoadingWindow loading)
+        public static async UniTask<LaunchFlowOutcome> RunAsync(LoadingWindow loading, CancellationToken cancellationToken = default)
         {
             while (true)
             {
-                LaunchFlowOutcome outcome = await RunStepsAsync(loading);
+                LaunchFlowOutcome outcome = await RunStepsAsync(loading, cancellationToken);
                 if (outcome != LaunchFlowOutcome.Failed)
                     return outcome;
 
@@ -82,7 +83,7 @@ namespace Framework.Core
 
         // ── 9 步启动序列 ──────────────────────────────────────────────────────
 
-        private static async UniTask<LaunchFlowOutcome> RunStepsAsync(LoadingWindow loading)
+        private static async UniTask<LaunchFlowOutcome> RunStepsAsync(LoadingWindow loading, CancellationToken cancellationToken = default)
         {
             Debug.Log("[LaunchFlow] ========== 游戏启动流程开始 ==========");
             var runMetric = LaunchTelemetryHelper.BeginRunMetric();
@@ -254,7 +255,10 @@ namespace Framework.Core
                 }
 
                 var step4 = LaunchTelemetryHelper.BeginPhaseMetric(runMetric, LaunchPhase.ResourceUpdate, "step04_resource_update");
-                var resourceUpdateResult = await LaunchFlowUpdateExecutor.ExecuteResourceUpdateAsync(loading, resourceUpdated);
+                // serverVersion 已过验签 + 字段级准入（CheckUpdateAsync），其 ResourceCatalog 身份可信；
+                // 传给资源更新执行器，供应用远端 Catalog 前验签（ADR-009）。
+                var resourceUpdateResult = await LaunchFlowUpdateExecutor.ExecuteResourceUpdateAsync(
+                    loading, resourceUpdated, cancellationToken, serverVersion?.ResourceCatalog);
                 if (!resourceUpdateResult.Success)
                 {
                     // 失败关闭：Catalog 失败 / 尺寸查询失败 / 下载失败都中止启动，绝不提交 ResourceVersion。
@@ -281,7 +285,7 @@ namespace Framework.Core
                 // ── Step 5: 代码热更 ──────────────────────────────
                 var step5 = LaunchTelemetryHelper.BeginPhaseMetric(runMetric, LaunchPhase.CodeUpdate, "step05_code_update");
                 bool codeUpdated = await LaunchFlowUpdateExecutor.ExecuteCodeUpdateAsync(
-                    loading, serverVersion, localVersion, updateUrl);
+                    loading, serverVersion, localVersion, updateUrl, cancellationToken);
                 if (LaunchFlowUpdateExecutor.ShouldUpdateCode(serverVersion, localVersion) && !codeUpdated)
                 {
                     AbortPendingContent("code_download_failed");

@@ -14,6 +14,14 @@
       "dependencies": {},
       "hash": "e5acc106ee196bc5a32fb14cdf2987b0f96d11e0"
     },
+    "com.frameworkbase.cinemachine": {
+      "version": "file:com.frameworkbase.cinemachine",
+      "depth": 0,
+      "source": "embedded",
+      "dependencies": {
+        "com.frameworkbase.core": "0.8.0"
+      }
+    },
     "com.frameworkbase.core": {
       "version": "file:com.frameworkbase.core",
       "depth": 0,

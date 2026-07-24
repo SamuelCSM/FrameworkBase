@@ -36,6 +36,12 @@ namespace Framework
         /// 视为失败关闭，与 CheckFailed 同样禁止继续。
         /// </summary>
         Invalid = 5,
+
+        /// <summary>
+        /// 远端 Catalog 与已验签清单声明的内容身份（Size/SHA-256）不一致，或无法定位到匹配身份的待更新
+        /// Catalog（ADR-009）。视为失败关闭：绝不应用一个未经发布方签名背书的资源目录。
+        /// </summary>
+        IntegrityFailed = 6,
     }
 
     /// <summary>
@@ -63,6 +69,9 @@ namespace Framework
 
         /// <summary>底层返回值不符合契约（Succeeded 但结果为 null 等）。</summary>
         public const string InvalidResult = "catalog_invalid_result";
+
+        /// <summary>远端 Catalog 与已验签清单声明的内容身份不一致，或无法定位匹配身份的待更新 Catalog。</summary>
+        public const string IntegrityFailed = "catalog_integrity_failed";
     }
 
     /// <summary>

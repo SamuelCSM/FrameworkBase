@@ -35,6 +35,15 @@ namespace Framework.Sdk
 
         /// <summary>隐私合规能力；渠道不支持时为 null。</summary>
         ISdkPrivacyService Privacy { get; }
+
+        /// <summary>广告能力（激励视频 / 插屏）；渠道不支持时为 null。</summary>
+        ISdkAdService Ad { get; }
+
+        /// <summary>合规能力（实名 + 防沉迷）；渠道不支持时为 null。</summary>
+        ISdkComplianceService Compliance { get; }
+
+        /// <summary>分享能力（系统面板 / 微信 / QQ / 微博）；渠道不支持时为 null。</summary>
+        ISdkShareService Share { get; }
     }
 
     /// <summary>
@@ -105,5 +114,74 @@ namespace Framework.Sdk
 
         /// <summary>展示隐私协议 / 用户协议页（渠道内置或跳转 URL）。</summary>
         UniTask<SdkResult> ShowPrivacyPolicyAsync();
+    }
+
+    /// <summary>
+    /// 渠道广告能力（激励视频 / 插屏）。
+    /// 约定：激励视频须先 <see cref="PreloadAsync"/> 预加载，<see cref="IsReady"/> 就绪后再
+    /// <see cref="ShowAsync"/>；展示后 <see cref="SdkAdShowResult.Rewarded"/> 为 true 才可发奖。
+    /// <b>铁律：发奖必须由服务端校验广告平台的服务器回调后到账，客户端结果仅用于即时反馈</b>
+    /// ——否则激励视频发奖会被轻易伪造。
+    /// </summary>
+    public interface ISdkAdService
+    {
+        /// <summary>预加载指定广告位（激励视频加载耗时，须提前预热）。</summary>
+        /// <param name="type">广告类型。</param>
+        /// <param name="placementId">广告位 ID（广告平台后台配置）。</param>
+        UniTask<SdkResult> PreloadAsync(SdkAdType type, string placementId);
+
+        /// <summary>该广告位当前是否已就绪可展示（未就绪时 <see cref="ShowAsync"/> 返回 <see cref="SdkErrorCode.AdNotReady"/>）。</summary>
+        bool IsReady(SdkAdType type, string placementId);
+
+        /// <summary>
+        /// 展示广告，用户关闭后返回。激励视频看满时 <see cref="SdkAdShowResult.Rewarded"/> 为 true；
+        /// 用户跳过则 <see cref="SdkErrorCode.RewardNotEarned"/>；无填充则 <see cref="SdkErrorCode.AdNoFill"/>。
+        /// </summary>
+        UniTask<SdkResult<SdkAdShowResult>> ShowAsync(SdkAdType type, string placementId);
+    }
+
+    /// <summary>
+    /// 渠道合规能力：实名认证 + 防沉迷时长管控（大陆商业上线法规强制）。
+    /// 框架<b>不硬编码任何法规规则</b>（宵禁时段 / 时长上限随政策变，由渠道或游戏服计算），
+    /// 只定义"查实名 / 拉起实名 / 查时长裁决 / 报时长心跳 / 收裁决变更"的缝；
+    /// 周期心跳与封玩门控编排见 <see cref="AntiAddictionGate"/>。
+    /// </summary>
+    public interface ISdkComplianceService
+    {
+        /// <summary>查询当前渠道账号的实名状态。</summary>
+        UniTask<SdkResult<SdkRealNameStatus>> QueryRealNameAsync();
+
+        /// <summary>拉起渠道实名认证界面（渠道内置流程），完成后返回最新实名状态。</summary>
+        UniTask<SdkResult<SdkRealNameStatus>> ShowRealNameAuthAsync();
+
+        /// <summary>查询当前防沉迷时长裁决（是否可玩 / 剩余秒数 / 合规文案）。</summary>
+        UniTask<SdkResult<SdkPlaytimeVerdict>> QueryPlaytimeAsync();
+
+        /// <summary>
+        /// 上报在线时长心跳（部分渠道要求定期上报累计在线时长，渠道据此更新裁决）。
+        /// </summary>
+        /// <param name="elapsedSeconds">距上次上报的在线秒数。</param>
+        UniTask<SdkResult> ReportPlaytimeHeartbeatAsync(int elapsedSeconds);
+
+        /// <summary>
+        /// 渠道主动下发的裁决变更（如到达宵禁点强制下线）；<see cref="AntiAddictionGate"/> 订阅并即时封玩。
+        /// </summary>
+        event Action<SdkPlaytimeVerdict> OnPlaytimeVerdictChanged;
+    }
+
+    /// <summary>
+    /// 渠道分享能力（系统面板 / 微信 / QQ / 微博等）。
+    /// 分享目标可能不可用（如未装微信）——<see cref="ShareAsync"/> 前用 <see cref="IsChannelAvailable"/> 预检，
+    /// 或对返回 <see cref="SdkErrorCode.ShareTargetUnavailable"/> 兜底（如回退系统面板）。
+    /// </summary>
+    public interface ISdkShareService
+    {
+        /// <summary>该分享目标当前是否可用（目标 App 已安装且渠道已配置）。</summary>
+        bool IsChannelAvailable(SdkShareChannel channel);
+
+        /// <summary>
+        /// 分享到指定目标，用户完成 / 取消后返回。取消返回 <see cref="SdkErrorCode.UserCancelled"/>（静默处理）。
+        /// </summary>
+        UniTask<SdkResult> ShareAsync(SdkShareChannel channel, SdkShareContent content);
     }
 }
