@@ -98,9 +98,8 @@ namespace Framework
         private readonly ProtocolLogPolicy _protocolLogPolicy = new ProtocolLogPolicy(IsHeartbeatMessage);
 
         // ── 心跳 ─────────────────────────────────────────────────────────────
-        private float _heartbeatInterval    = 30f;
-        private float _heartbeatTimer       = 0f;
-        private bool  _enableHeartbeat      = true;
+        /// <summary>心跳时序状态机（间隔/超时/序号）。纯类，判定与 IO 分离——发包 / 校时仍由本类执行。</summary>
+        private readonly HeartbeatMonitor _heartbeat = new HeartbeatMonitor();
 
         /// <summary>框架心跳固定使用的主协议号。</summary>
         private const byte HeartbeatMainId = MessageModule.System;
@@ -108,16 +107,10 @@ namespace Framework
         /// <summary>框架心跳固定使用的子协议号，请求和响应同号，通过方向区分。</summary>
         private const byte HeartbeatSubId = 1;
 
-        /// <summary>心跳协议体内的自增序号，用于服务端回显后定位请求/响应对应关系。</summary>
-        private int _heartbeatSequenceId = 0;
-
         // ── 心跳超时检测 ──────────────────────────────────────────────────────
         // 用 Epoch 而非 bool 跨线程传递"收到数据"信号，旧连接迟到数据不得通过前台探活。
-        private int           _dataReceivedEpoch;
-        private float         _timeSinceLastData = 0f;
-        // 默认 = 心跳间隔 × 2.5，即连续 2.5 个心跳周期没有回应则判定超时
-        private float _heartbeatTimeoutSeconds = 75f;
-        private bool  _heartbeatTimeoutEnabled = true;
+        // 收数据的清零动作在主线程消费后转达给 _heartbeat.OnDataReceived()。
+        private int _dataReceivedEpoch;
 
         // ── 重连 ─────────────────────────────────────────────────────────────
         private bool    _enableAutoReconnect    = true;
@@ -255,7 +248,7 @@ namespace Framework
             int receivedEpoch = Interlocked.Exchange(ref _dataReceivedEpoch, 0);
             if (receivedEpoch == _client.ConnectionEpoch)
             {
-                _timeSinceLastData = 0f;
+                _heartbeat.OnDataReceived();
                 if (_foregroundProbePending && receivedEpoch == _foregroundProbeEpoch)
                 {
                     CancelForegroundProbe();
@@ -276,29 +269,18 @@ namespace Framework
                 }
             }
 
-            // ── 心跳超时检测 ──────────────────────────────────────────────
-            if (_heartbeatTimeoutEnabled && !_foregroundProbePending)
+            // ── 心跳时序推进（超时检测 + 定时发送）────────────────────────
+            HeartbeatAction heartbeatAction = _heartbeat.Advance(deltaTime, _foregroundProbePending);
+            if (heartbeatAction == HeartbeatAction.TimedOut)
             {
-                _timeSinceLastData += deltaTime;
-                if (_timeSinceLastData > _heartbeatTimeoutSeconds)
-                {
-                    GameLog.Warning($"[NetworkManager] 心跳超时 ({_heartbeatTimeoutSeconds:0}s 未收到数据)，主动断开重连");
-                    _timeSinceLastData = 0f;
-                    // 直接断 TCP，不走公开 Disconnect()（公开方法会关闭自动重连）
-                    _client.Disconnect();
-                    return;
-                }
+                GameLog.Warning($"[NetworkManager] 心跳超时 ({_heartbeat.TimeoutSeconds:0}s 未收到数据)，主动断开重连");
+                // 直接断 TCP，不走公开 Disconnect()（公开方法会关闭自动重连）
+                _client.Disconnect();
+                return;
             }
-
-            // ── 定时发送心跳包 ────────────────────────────────────────────
-            if (_enableHeartbeat)
+            if (heartbeatAction == HeartbeatAction.Send)
             {
-                _heartbeatTimer += deltaTime;
-                if (_heartbeatTimer >= _heartbeatInterval)
-                {
-                    _heartbeatTimer = 0f;
-                    SendHeartbeat();
-                }
+                SendHeartbeat();
             }
         }
 
@@ -432,8 +414,7 @@ namespace Framework
             _foregroundProbeEpoch = _client.ConnectionEpoch;
             _foregroundProbeElapsed = 0f;
             _foregroundProbePending = true;
-            _heartbeatTimer = 0f;
-            _timeSinceLastData = 0f;
+            _heartbeat.OnConnected(); // 探活前清零心跳/超时计时，避免探活期误判
             if (SendHeartbeat()) return;
 
             CancelForegroundProbe();
@@ -733,15 +714,10 @@ namespace Framework
 
         // ── 配置接口 ─────────────────────────────────────────────────────────
 
-        public void SetHeartbeatInterval(float interval)
-        {
-            if (interval <= 0) return;
-            _heartbeatInterval        = interval;
-            _heartbeatTimeoutSeconds  = interval * 2.5f;
-        }
+        public void SetHeartbeatInterval(float interval) => _heartbeat.SetInterval(interval);
 
-        public void EnableHeartbeat(bool enable)        => _enableHeartbeat = enable;
-        public void EnableHeartbeatTimeout(bool enable) => _heartbeatTimeoutEnabled = enable;
+        public void EnableHeartbeat(bool enable)        => _heartbeat.SetSendEnabled(enable);
+        public void EnableHeartbeatTimeout(bool enable) => _heartbeat.SetTimeoutEnabled(enable);
         public void EnableAutoReconnect(bool enable)
         {
             _enableAutoReconnect = enable;
@@ -1058,8 +1034,7 @@ namespace Framework
             _mainThreadConnectionActive = true;
 
             // 传输层已连接：无论首连还是重连都重置心跳计时，避免刚连上就误判超时。
-            _heartbeatTimer    = 0f;
-            _timeSinceLastData = 0f;
+            _heartbeat.OnConnected();
 
             // 重连流程中：传输层连上 ≠ 会话已恢复。此时不清 _isReconnecting、不对外广播 OnConnected，
             // 统一交由 TryReconnectAsync 在"重新鉴权成功"后宣告重连成功（OnReconnectSucceeded）。
@@ -1297,13 +1272,8 @@ namespace Framework
 
             try
             {
-                if (_heartbeatSequenceId == int.MaxValue)
-                {
-                    _heartbeatSequenceId = 0;
-                }
-
                 long clientTime = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-                INetMessage request = _heartbeatMessageFactory(clientTime, ++_heartbeatSequenceId);
+                INetMessage request = _heartbeatMessageFactory(clientTime, _heartbeat.NextSequenceId());
                 _lastHeartbeatSentLocalMs = clientTime; // 供响应到达时做服务器校时采样配对
 
                 byte[] payload = ProtobufUtil.Serialize(request);
