@@ -94,14 +94,8 @@ namespace Framework
         /// <summary>全局错误码拦截器。返回 true 表示已处理，错误响应不会继续下发业务。</summary>
         private Func<int, bool> _globalErrorInterceptor;
 
-        /// <summary>是否启用协议收发日志，默认开启方便联调定位网络问题。</summary>
-        private bool _enableProtocolLog = true;
-
-        /// <summary>是否打印心跳协议日志，默认关闭，避免低信息量高频协议刷屏。</summary>
-        private bool _enableHeartbeatProtocolLog = false;
-
-        /// <summary>协议日志屏蔽表，Key 为完整协议 ID，用于按 mainId/subId 过滤指定协议。</summary>
-        private readonly HashSet<ushort> _ignoredProtocolLogMessageIds = new HashSet<ushort>();
+        /// <summary>协议日志准入策略（总开关 + 心跳独立开关 + 屏蔽表）。字段初始化以保证 OnInit 前调用也可用。</summary>
+        private readonly ProtocolLogPolicy _protocolLogPolicy = new ProtocolLogPolicy(IsHeartbeatMessage);
 
         // ── 心跳 ─────────────────────────────────────────────────────────────
         private float _heartbeatInterval    = 30f;
@@ -760,41 +754,32 @@ namespace Framework
         /// 启用或关闭控制台协议收发日志。
         /// </summary>
         /// <param name="enable">true 表示打印 SEND/RECV 协议日志，false 表示关闭。</param>
-        public void EnableProtocolLog(bool enable) => _enableProtocolLog = enable;
+        public void EnableProtocolLog(bool enable) => _protocolLogPolicy.SetEnabled(enable);
 
         /// <summary>
         /// 启用或关闭心跳协议日志。默认关闭，避免心跳请求/响应刷屏。
         /// </summary>
         /// <param name="enable">true 表示打印心跳协议日志，false 表示屏蔽。</param>
-        public void EnableHeartbeatProtocolLog(bool enable) => _enableHeartbeatProtocolLog = enable;
+        public void EnableHeartbeatProtocolLog(bool enable) => _protocolLogPolicy.SetHeartbeatEnabled(enable);
 
         /// <summary>
         /// 屏蔽指定协议号的收发日志。
         /// </summary>
         /// <param name="mainId">主消息 ID。</param>
         /// <param name="subId">子消息 ID。</param>
-        public void IgnoreProtocolLog(byte mainId, byte subId)
-        {
-            _ignoredProtocolLogMessageIds.Add(MessagePacket.CombineMessageId(mainId, subId));
-        }
+        public void IgnoreProtocolLog(byte mainId, byte subId) => _protocolLogPolicy.Ignore(mainId, subId);
 
         /// <summary>
         /// 恢复指定协议号的收发日志。
         /// </summary>
         /// <param name="mainId">主消息 ID。</param>
         /// <param name="subId">子消息 ID。</param>
-        public void UnignoreProtocolLog(byte mainId, byte subId)
-        {
-            _ignoredProtocolLogMessageIds.Remove(MessagePacket.CombineMessageId(mainId, subId));
-        }
+        public void UnignoreProtocolLog(byte mainId, byte subId) => _protocolLogPolicy.Unignore(mainId, subId);
 
         /// <summary>
         /// 清空协议日志屏蔽表，不影响心跳协议日志的独立开关。
         /// </summary>
-        public void ClearIgnoredProtocolLogs()
-        {
-            _ignoredProtocolLogMessageIds.Clear();
-        }
+        public void ClearIgnoredProtocolLogs() => _protocolLogPolicy.ClearIgnored();
 
         /// <summary>
         /// 注入重连后的应用层重新鉴权钩子。由组合根（GameEntry）在鉴权管理器就绪后调用，
@@ -1221,7 +1206,7 @@ namespace Framework
         /// <param name="mainId">主消息 ID。</param>
         /// <param name="subId">子消息 ID。</param>
         /// <returns>属于当前心跳请求或响应协议时返回 true。</returns>
-        private bool IsHeartbeatMessage(byte mainId, byte subId)
+        private static bool IsHeartbeatMessage(byte mainId, byte subId)
         {
             return mainId == HeartbeatMainId && subId == HeartbeatSubId;
         }
@@ -1296,21 +1281,7 @@ namespace Framework
         /// <param name="mainId">主消息 ID。</param>
         /// <param name="subId">子消息 ID。</param>
         /// <returns>需要打印时返回 true。</returns>
-        private bool ShouldLogProtocol(byte mainId, byte subId)
-        {
-            if (!_enableProtocolLog)
-            {
-                return false;
-            }
-
-            if (!_enableHeartbeatProtocolLog && IsHeartbeatMessage(mainId, subId))
-            {
-                return false;
-            }
-
-            ushort messageId = MessagePacket.CombineMessageId(mainId, subId);
-            return !_ignoredProtocolLogMessageIds.Contains(messageId);
-        }
+        private bool ShouldLogProtocol(byte mainId, byte subId) => _protocolLogPolicy.ShouldLog(mainId, subId);
 
         private bool SendHeartbeat()
         {
