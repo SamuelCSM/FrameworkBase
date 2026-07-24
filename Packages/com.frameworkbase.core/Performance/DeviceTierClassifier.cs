@@ -121,5 +121,24 @@ namespace Framework.Performance
                     return 3;
             }
         }
+
+        /// <summary>
+        /// 同屏特效并发上限（池化特效同时存活数）。Low=16 削峰保低端内存/填充率，Mid=32，High=64。返回 ≥1。
+        /// 超上限的新特效被丢弃——表现降级（少几个特效）远优于低端机卡顿/OOM。
+        /// </summary>
+        /// <param name="tier">当前设备档位。</param>
+        /// <returns>并发上限（≥1）。</returns>
+        public static int MaxConcurrentEffects(DeviceTier tier)
+        {
+            switch (tier)
+            {
+                case DeviceTier.Low:
+                    return 16;
+                case DeviceTier.High:
+                    return 64;
+                default:
+                    return 32;
+            }
+        }
     }
 }

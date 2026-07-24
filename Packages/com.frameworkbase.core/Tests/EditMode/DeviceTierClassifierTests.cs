@@ -93,5 +93,16 @@ namespace Framework.Tests
             Assert.LessOrEqual(mid, high, "高端并发不应低于中端");
             Assert.GreaterOrEqual(low, 1, "并发度恒 ≥1，保证至少串行");
         }
+
+        [Test]
+        public void 特效并发上限_低端削峰_随档位单调不减()
+        {
+            int low = DeviceTierResourceTuning.MaxConcurrentEffects(DeviceTier.Low);
+            int mid = DeviceTierResourceTuning.MaxConcurrentEffects(DeviceTier.Mid);
+            int high = DeviceTierResourceTuning.MaxConcurrentEffects(DeviceTier.High);
+            Assert.LessOrEqual(low, mid, "中端特效上限不应低于低端");
+            Assert.LessOrEqual(mid, high, "高端特效上限不应低于中端");
+            Assert.GreaterOrEqual(low, 1, "上限恒 ≥1");
+        }
     }
 }

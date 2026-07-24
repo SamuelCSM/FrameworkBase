@@ -7,6 +7,14 @@
 
 ### 新增
 
+- **特效池化管理 `VfxManager`（opt-in，唯一"引擎能力"缺口补齐）**：架在框架既有 `IGameObjectProvider`
+  池化取还之上，补三件缺口——① 按时长/粒子系统自动回收；② 跟随目标；③ 按 `DeviceTier` 的同屏并发上限
+  削峰（新增纯映射 `DeviceTierResourceTuning.MaxConcurrentEffects`：Low=16/Mid=32/High=64，超上限即丢弃，
+  表现降级优先于低端卡顿/OOM）。纯核 `VfxScheduler`（预算准入 + 按时长过期 + 手动项不过期，不碰
+  GameObject，EditMode 5 例）+ MonoBehaviour 适配（取还/跟随/粒子时长探测）。`PlayAsync` 返回句柄，
+  持续特效（Duration&lt;0）经 `Stop` 收尾。刻意不进 GameEntry 管理清单（特效偏表现、按需接入），
+  经 `VfxManager.Create` 创建、`VfxManager.Manager` 访问。
+
 - **SDK 分享缝 `ISdkShareService`**（补齐商业化最后一块）：`ISdkProvider` 增第七项能力——系统面板/微信/QQ/
   微博等目标（`SdkShareChannel`），文本/图片/链接内容（`SdkShareContent` + `SdkShareContentType`），
   `IsChannelAvailable` 预检目标可用性 + `ShareAsync`。`SdkManager.Share` + `SupportsShare` 暴露，
