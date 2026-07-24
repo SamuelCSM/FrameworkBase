@@ -52,9 +52,26 @@ namespace Framework
 
         private void LateUpdate()
         {
+            KeepOnTop();
             // 有孔（聚焦态）就必须持续维护：目标既可能移动，也可能中途被销毁/隐藏而需退化兜底。
             if (_hasHole || _focusTarget != null)
                 UpdateHole();
+        }
+
+        /// <summary>
+        /// 每帧确保遮罩仍处在同层最后：引导期间可能有更晚打开的弹窗插到同层后方盖住挖孔，
+        /// 使「孔」与真实 z 序错位却无从察觉（看门狗只能发现「卡住」，发现不了「层错」）。
+        /// 仅在被顶下去时才重排，避免每帧无谓触发 Canvas 层级重建。
+        /// </summary>
+        private void KeepOnTop()
+        {
+            Transform self = transform;
+            Transform parent = self.parent;
+            if (parent == null)
+                return;
+            int last = parent.childCount - 1;
+            if (self.GetSiblingIndex() != last)
+                self.SetAsLastSibling();
         }
 
         /// <summary>
