@@ -41,6 +41,9 @@ namespace Framework.Sdk
 
         /// <summary>合规能力（实名 + 防沉迷）；渠道不支持时为 null。</summary>
         ISdkComplianceService Compliance { get; }
+
+        /// <summary>分享能力（系统面板 / 微信 / QQ / 微博）；渠道不支持时为 null。</summary>
+        ISdkShareService Share { get; }
     }
 
     /// <summary>
@@ -164,5 +167,21 @@ namespace Framework.Sdk
         /// 渠道主动下发的裁决变更（如到达宵禁点强制下线）；<see cref="AntiAddictionGate"/> 订阅并即时封玩。
         /// </summary>
         event Action<SdkPlaytimeVerdict> OnPlaytimeVerdictChanged;
+    }
+
+    /// <summary>
+    /// 渠道分享能力（系统面板 / 微信 / QQ / 微博等）。
+    /// 分享目标可能不可用（如未装微信）——<see cref="ShareAsync"/> 前用 <see cref="IsChannelAvailable"/> 预检，
+    /// 或对返回 <see cref="SdkErrorCode.ShareTargetUnavailable"/> 兜底（如回退系统面板）。
+    /// </summary>
+    public interface ISdkShareService
+    {
+        /// <summary>该分享目标当前是否可用（目标 App 已安装且渠道已配置）。</summary>
+        bool IsChannelAvailable(SdkShareChannel channel);
+
+        /// <summary>
+        /// 分享到指定目标，用户完成 / 取消后返回。取消返回 <see cref="SdkErrorCode.UserCancelled"/>（静默处理）。
+        /// </summary>
+        UniTask<SdkResult> ShareAsync(SdkShareChannel channel, SdkShareContent content);
     }
 }

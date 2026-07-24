@@ -56,12 +56,16 @@ namespace Framework.Sdk
         /// <summary>合规能力（实名 + 防沉迷）；当前渠道不支持时为 null。</summary>
         public ISdkComplianceService Compliance => ProviderOrMock().Compliance;
 
+        /// <summary>分享能力；当前渠道不支持时为 null。</summary>
+        public ISdkShareService Share => ProviderOrMock().Share;
+
         public bool SupportsAccount    => ProviderOrMock().Account    != null;
         public bool SupportsPurchase   => ProviderOrMock().Purchase   != null;
         public bool SupportsPush       => ProviderOrMock().Push       != null;
         public bool SupportsPrivacy    => ProviderOrMock().Privacy    != null;
         public bool SupportsAd         => ProviderOrMock().Ad         != null;
         public bool SupportsCompliance => ProviderOrMock().Compliance != null;
+        public bool SupportsShare      => ProviderOrMock().Share      != null;
 
         /// <summary>
         /// 注册渠道实现。必须在 <see cref="InitializeAsync"/> 之前调用；

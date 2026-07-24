@@ -16,6 +16,7 @@ namespace Framework.Sdk
         private readonly MockPrivacy _privacy = new MockPrivacy();
         private readonly MockAd _ad = new MockAd();
         private readonly MockCompliance _compliance = new MockCompliance();
+        private readonly MockShare _share = new MockShare();
 
         public string ChannelName => "mock";
 
@@ -25,6 +26,7 @@ namespace Framework.Sdk
         public ISdkPrivacyService Privacy => _privacy;
         public ISdkAdService Ad => _ad;
         public ISdkComplianceService Compliance => _compliance;
+        public ISdkShareService Share => _share;
 
         public UniTask<SdkResult> InitializeAsync()
         {
@@ -185,6 +187,19 @@ namespace Framework.Sdk
 
             public UniTask<SdkResult> ReportPlaytimeHeartbeatAsync(int elapsedSeconds)
                 => UniTask.FromResult(SdkResult.Ok());
+        }
+
+        // ── 分享 ─────────────────────────────────────────────────────────────
+
+        private sealed class MockShare : ISdkShareService
+        {
+            public bool IsChannelAvailable(SdkShareChannel channel) => true;
+
+            public UniTask<SdkResult> ShareAsync(SdkShareChannel channel, SdkShareContent content)
+            {
+                GameLog.Log($"[MockSdkProvider] Mock 分享 channel={channel} type={content?.Type}（no-op）");
+                return UniTask.FromResult(SdkResult.Ok());
+            }
         }
     }
 }

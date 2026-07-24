@@ -42,6 +42,9 @@ namespace Framework.Sdk
         /// <summary>防沉迷时长限制中（宵禁时段 / 时长用尽），当前禁玩。</summary>
         PlaytimeRestricted = 11,
 
+        /// <summary>分享目标不可用（目标 App 未安装 / 渠道未配置）。</summary>
+        ShareTargetUnavailable = 12,
+
         /// <summary>其余未归类错误——详情看 ChannelCode/Message。</summary>
         Unknown = 100
     }
@@ -206,5 +209,62 @@ namespace Framework.Sdk
 
         /// <summary>需向玩家展示的合规文案（渠道 / 法规原文，框架原样透传，不自拟）。</summary>
         public string NoticeMessage;
+    }
+
+    /// <summary>分享目标。</summary>
+    public enum SdkShareChannel
+    {
+        /// <summary>系统分享面板（iOS UIActivityViewController / Android Chooser），由用户选目标。</summary>
+        System = 0,
+
+        /// <summary>微信好友会话。</summary>
+        WeChatSession = 1,
+
+        /// <summary>微信朋友圈。</summary>
+        WeChatTimeline = 2,
+
+        /// <summary>QQ 好友。</summary>
+        QQ = 3,
+
+        /// <summary>QQ 空间。</summary>
+        QZone = 4,
+
+        /// <summary>新浪微博。</summary>
+        Weibo = 5,
+    }
+
+    /// <summary>分享内容类型。</summary>
+    public enum SdkShareContentType
+    {
+        /// <summary>纯文本。</summary>
+        Text = 0,
+
+        /// <summary>图片（如战绩截图），走 <see cref="SdkShareContent.ImagePath"/>。</summary>
+        Image = 1,
+
+        /// <summary>网页链接（带标题/缩略图），走 <see cref="SdkShareContent.LinkUrl"/>。</summary>
+        Link = 2,
+    }
+
+    /// <summary>分享内容（按 <see cref="Type"/> 取对应字段；未用字段可空）。</summary>
+    public class SdkShareContent
+    {
+        /// <summary>内容类型。</summary>
+        public SdkShareContentType Type;
+
+        /// <summary>标题（Link 分享的卡片标题）。</summary>
+        public string Title;
+
+        /// <summary>文本 / 描述（Text 分享的正文，或 Link 卡片摘要）。</summary>
+        public string Text;
+
+        /// <summary>本地图片路径（Image 分享，如运行时截图落盘路径）。</summary>
+        public string ImagePath;
+
+        /// <summary>链接 URL（Link 分享）。</summary>
+        public string LinkUrl;
+
+        /// <summary>链接缩略图本地路径（Link 分享，可空）。</summary>
+        public string ThumbPath;
     }
 }

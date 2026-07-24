@@ -7,6 +7,11 @@
 
 ### 新增
 
+- **SDK 分享缝 `ISdkShareService`**（补齐商业化最后一块）：`ISdkProvider` 增第七项能力——系统面板/微信/QQ/
+  微博等目标（`SdkShareChannel`），文本/图片/链接内容（`SdkShareContent` + `SdkShareContentType`），
+  `IsChannelAvailable` 预检目标可用性 + `ShareAsync`。`SdkManager.Share` + `SupportsShare` 暴露，
+  `MockSdkProvider` 兜底。沿用渠道缝模式，真实现进渠道扩展包。
+
 - **SDK 实名/防沉迷合规缝 `ISdkComplianceService`**（大陆商业上线法规强制项）：`ISdkProvider` 增第六项能力
   ——查实名/拉起实名（`SdkRealNameStatus` + `SdkRealNameState`）、查防沉迷时长裁决（`SdkPlaytimeVerdict` +
   `SdkPlaytimeState`：可玩/限时/禁玩 + 剩余秒数 + 合规文案）、上报在线时长心跳、收渠道主动下发的裁决变更。
