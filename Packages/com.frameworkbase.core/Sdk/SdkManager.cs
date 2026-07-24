@@ -50,10 +50,14 @@ namespace Framework.Sdk
         /// <summary>隐私合规能力；当前渠道不支持时为 null。</summary>
         public ISdkPrivacyService Privacy => ProviderOrMock().Privacy;
 
+        /// <summary>广告能力（激励视频 / 插屏）；当前渠道不支持时为 null。</summary>
+        public ISdkAdService Ad => ProviderOrMock().Ad;
+
         public bool SupportsAccount  => ProviderOrMock().Account  != null;
         public bool SupportsPurchase => ProviderOrMock().Purchase != null;
         public bool SupportsPush     => ProviderOrMock().Push     != null;
         public bool SupportsPrivacy  => ProviderOrMock().Privacy  != null;
+        public bool SupportsAd       => ProviderOrMock().Ad       != null;
 
         /// <summary>
         /// 注册渠道实现。必须在 <see cref="InitializeAsync"/> 之前调用；

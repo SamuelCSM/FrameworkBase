@@ -35,6 +35,9 @@ namespace Framework.Sdk
 
         /// <summary>隐私合规能力；渠道不支持时为 null。</summary>
         ISdkPrivacyService Privacy { get; }
+
+        /// <summary>广告能力（激励视频 / 插屏）；渠道不支持时为 null。</summary>
+        ISdkAdService Ad { get; }
     }
 
     /// <summary>
@@ -105,5 +108,29 @@ namespace Framework.Sdk
 
         /// <summary>展示隐私协议 / 用户协议页（渠道内置或跳转 URL）。</summary>
         UniTask<SdkResult> ShowPrivacyPolicyAsync();
+    }
+
+    /// <summary>
+    /// 渠道广告能力（激励视频 / 插屏）。
+    /// 约定：激励视频须先 <see cref="PreloadAsync"/> 预加载，<see cref="IsReady"/> 就绪后再
+    /// <see cref="ShowAsync"/>；展示后 <see cref="SdkAdShowResult.Rewarded"/> 为 true 才可发奖。
+    /// <b>铁律：发奖必须由服务端校验广告平台的服务器回调后到账，客户端结果仅用于即时反馈</b>
+    /// ——否则激励视频发奖会被轻易伪造。
+    /// </summary>
+    public interface ISdkAdService
+    {
+        /// <summary>预加载指定广告位（激励视频加载耗时，须提前预热）。</summary>
+        /// <param name="type">广告类型。</param>
+        /// <param name="placementId">广告位 ID（广告平台后台配置）。</param>
+        UniTask<SdkResult> PreloadAsync(SdkAdType type, string placementId);
+
+        /// <summary>该广告位当前是否已就绪可展示（未就绪时 <see cref="ShowAsync"/> 返回 <see cref="SdkErrorCode.AdNotReady"/>）。</summary>
+        bool IsReady(SdkAdType type, string placementId);
+
+        /// <summary>
+        /// 展示广告，用户关闭后返回。激励视频看满时 <see cref="SdkAdShowResult.Rewarded"/> 为 true；
+        /// 用户跳过则 <see cref="SdkErrorCode.RewardNotEarned"/>；无填充则 <see cref="SdkErrorCode.AdNoFill"/>。
+        /// </summary>
+        UniTask<SdkResult<SdkAdShowResult>> ShowAsync(SdkAdType type, string placementId);
     }
 }

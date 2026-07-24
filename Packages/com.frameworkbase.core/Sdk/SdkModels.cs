@@ -27,6 +27,15 @@ namespace Framework.Sdk
         /// <summary>商品不存在或不可购买（后台未配置 / 已下架）。</summary>
         ProductUnavailable = 6,
 
+        /// <summary>广告未加载就绪（需先 Preload 再 Show）。</summary>
+        AdNotReady = 7,
+
+        /// <summary>广告无填充（广告平台当前无可展示广告，非错误，通常静默或走保底奖励）。</summary>
+        AdNoFill = 8,
+
+        /// <summary>激励视频未达发奖条件（用户提前关闭/跳过），不发奖。</summary>
+        RewardNotEarned = 9,
+
         /// <summary>其余未归类错误——详情看 ChannelCode/Message。</summary>
         Unknown = 100
     }
@@ -110,5 +119,31 @@ namespace Framework.Sdk
 
         /// <summary>购买时透传的 developerPayload（回带对账）。</summary>
         public string DeveloperPayload;
+    }
+
+    /// <summary>广告类型。</summary>
+    public enum SdkAdType
+    {
+        /// <summary>激励视频：看满时长发奖，展示结果 <see cref="SdkAdShowResult.Rewarded"/> 表示是否达成发奖条件。</summary>
+        Rewarded = 0,
+
+        /// <summary>插屏广告：全屏展示、无奖励（关卡间/结算页常用）。</summary>
+        Interstitial = 1,
+    }
+
+    /// <summary>广告展示结果。</summary>
+    public class SdkAdShowResult
+    {
+        /// <summary>广告位 ID。</summary>
+        public string PlacementId;
+
+        /// <summary>
+        /// （激励视频）是否达成发奖条件（看满时长）。插屏恒 false。
+        /// <b>仅供即时反馈</b>——真正发奖必须由服务端校验广告平台回调后到账，不得以本字段为发奖依据。
+        /// </summary>
+        public bool Rewarded;
+
+        /// <summary>用户是否提前跳过/关闭。</summary>
+        public bool Skipped;
     }
 }

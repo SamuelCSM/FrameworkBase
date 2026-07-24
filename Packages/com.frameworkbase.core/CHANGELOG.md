@@ -7,6 +7,11 @@
 
 ### 新增
 
+- **SDK 广告缝 `ISdkAdService`**（大厂商业化对标补缺）：`ISdkProvider` 增第五项能力，激励视频/插屏
+  （`PreloadAsync`/`IsReady`/`ShowAsync`），`SdkManager.Ad` + `SupportsAd` 暴露，`MockSdkProvider` 兜底
+  （Mock 恒"看满发奖"并醒目告警防误上线）。**铁律写进契约**：激励发奖必须由服务端校验广告平台服务器
+  回调后到账，客户端 `Rewarded` 仅即时反馈。沿用现有渠道缝模式，真实现进渠道扩展包。
+
 - **运行时相机调度缝 `ICameraDirector` + `Cameras` 访问点**（框架核心零具体相机方案依赖）：只定义业务对镜头的
   指令面（`Activate(id)` 激活命名镜头 / `Shake` 震屏 / `ActiveCameraId` / `IsRegistered`），把"用什么实现"
   （Cinemachine / 自研 / 无）留给可选扩展包或项目层——与 PrimeTween(ADR-007)、崩溃后端、云存档同一模式

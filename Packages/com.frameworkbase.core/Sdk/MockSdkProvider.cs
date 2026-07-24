@@ -14,6 +14,7 @@ namespace Framework.Sdk
         private readonly MockPurchase _purchase = new MockPurchase();
         private readonly MockPush _push = new MockPush();
         private readonly MockPrivacy _privacy = new MockPrivacy();
+        private readonly MockAd _ad = new MockAd();
 
         public string ChannelName => "mock";
 
@@ -21,6 +22,7 @@ namespace Framework.Sdk
         public ISdkPurchaseService Purchase => _purchase;
         public ISdkPushService Push => _push;
         public ISdkPrivacyService Privacy => _privacy;
+        public ISdkAdService Ad => _ad;
 
         public UniTask<SdkResult> InitializeAsync()
         {
@@ -127,6 +129,29 @@ namespace Framework.Sdk
             {
                 GameLog.Log("[MockSdkProvider] Mock 展示隐私协议（no-op）");
                 return UniTask.FromResult(SdkResult.Ok());
+            }
+        }
+
+        // ── 广告 ─────────────────────────────────────────────────────────────
+
+        private sealed class MockAd : ISdkAdService
+        {
+            public UniTask<SdkResult> PreloadAsync(SdkAdType type, string placementId)
+                => UniTask.FromResult(SdkResult.Ok());
+
+            public bool IsReady(SdkAdType type, string placementId) => true;
+
+            public UniTask<SdkResult<SdkAdShowResult>> ShowAsync(SdkAdType type, string placementId)
+            {
+                // 醒目告警：Mock 广告直接"看满"，正式包出现此日志即广告渠道未接入，激励发奖会被伪造。
+                GameLog.Warning($"[MockSdkProvider] Mock 广告直接完成 type={type} placement={placementId}（假发奖，禁止上线）");
+                var data = new SdkAdShowResult
+                {
+                    PlacementId = placementId,
+                    Rewarded = type == SdkAdType.Rewarded, // 激励视频 mock 恒发奖
+                    Skipped = false,
+                };
+                return UniTask.FromResult(SdkResult<SdkAdShowResult>.Ok(data));
             }
         }
     }
