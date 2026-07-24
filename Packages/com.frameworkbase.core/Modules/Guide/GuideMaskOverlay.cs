@@ -24,6 +24,7 @@ namespace Framework
 
         private RectTransform _focusTarget;
         private Rect _holeRect;
+        private Rect _targetRect;
         private bool _hasHole;
         private readonly Vector3[] _cornersBuffer = new Vector3[4];
 
@@ -55,7 +56,10 @@ namespace Framework
                 UpdateHole();
         }
 
-        /// <summary>把目标世界包围盒换算到本地坐标并外扩 padding；有变化才重建网格。</summary>
+        /// <summary>
+        /// 把目标世界包围盒换算到本地坐标：得到本体矩形（<see cref="_targetRect"/>，点击穿透以此为准）
+        /// 与外扩 padding 后的压暗孔（<see cref="_holeRect"/>，仅决定视觉）。二者任一变化才重建网格。
+        /// </summary>
         private void UpdateHole()
         {
             if (_focusTarget == null)
@@ -71,12 +75,16 @@ namespace Framework
                 max = Vector2.Max(max, local);
             }
 
+            // 本体矩形不含 padding：穿透区必须严格贴合真实控件。padding 只用于放大视觉孔，
+            // 若把它并入穿透区，padding 环内的点击会漏到目标背后的控件——既不推进也无反馈。
+            var target = Rect.MinMaxRect(min.x, min.y, max.x, max.y);
             var hole = Rect.MinMaxRect(
                 min.x - _holePadding, min.y - _holePadding,
                 max.x + _holePadding, max.y + _holePadding);
 
-            if (_hasHole && hole == _holeRect)
+            if (_hasHole && hole == _holeRect && target == _targetRect)
                 return;
+            _targetRect = target;
             _holeRect = hole;
             _hasHole = true;
             SetVerticesDirty();
@@ -133,7 +141,8 @@ namespace Framework
                     rectTransform, screenPoint, eventCamera, out Vector2 local))
                 return true;
 
-            return !_holeRect.Contains(local);
+            // 穿透区钳到本体矩形而非视觉孔（含 padding），避免 padding 环成为点击死区。
+            return !_targetRect.Contains(local);
         }
 
         public void OnPointerClick(PointerEventData eventData)

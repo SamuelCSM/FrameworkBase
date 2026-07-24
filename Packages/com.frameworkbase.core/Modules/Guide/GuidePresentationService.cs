@@ -19,6 +19,9 @@ namespace Framework
 
         public bool IsVisible => _overlayObject != null;
 
+        /// <summary>孔外压暗区被点击时转发（供业务叠加「请点击高亮处」抖动等反馈，表现不进框架）。</summary>
+        public event Action DimClicked;
+
         public bool TryFocus(int targetId, object scope, float padding, float dimAlpha)
         {
             if (!_targets.TryResolve(targetId, scope, out UITarget target)) return false;
@@ -31,10 +34,14 @@ namespace Framework
 
         public void Clear()
         {
+            if (_overlay != null) _overlay.DimClicked -= RaiseDimClicked;
             if (_overlayObject != null) UnityEngine.Object.Destroy(_overlayObject);
             _overlayObject = null;
             _overlay = null;
         }
+
+        /// <summary>转发当前遮罩的孔外点击；遮罩销毁重建后订阅会重新挂到新实例上。</summary>
+        private void RaiseDimClicked() => DimClicked?.Invoke();
 
         public void Dispose() => Clear();
 
@@ -57,6 +64,8 @@ namespace Framework
             rect.offsetMax = Vector2.zero;
             _overlay = _overlayObject.GetComponent<GuideMaskOverlay>();
             _overlay.raycastTarget = true;
+            // 把遮罩的孔外点击转发到服务层，否则该事件无人可订阅、OnPointerClick 形同死链。
+            _overlay.DimClicked += RaiseDimClicked;
         }
     }
 }
