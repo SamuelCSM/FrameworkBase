@@ -806,7 +806,7 @@ namespace Framework
                     continue;
                 }
 
-                object parsedValue = ParseGeneralValue(row.Value, property.PropertyType);
+                object parsedValue = GeneralConfigValueParser.Parse(row.Value, property.PropertyType);
                 property.SetValue(config, parsedValue);
             }
 
@@ -838,96 +838,6 @@ namespace Framework
             }
 
             return map;
-        }
-
-        /// <summary>
-        /// 将 general 表 Value 文本转换为生成配置类属性需要的运行时类型。
-        /// </summary>
-        private object ParseGeneralValue(string value, Type targetType)
-        {
-            Type actualType = Nullable.GetUnderlyingType(targetType) ?? targetType;
-
-            if (string.IsNullOrWhiteSpace(value))
-            {
-                return actualType.IsValueType ? Activator.CreateInstance(actualType) : null;
-            }
-
-            if (actualType == typeof(string))
-            {
-                return value;
-            }
-
-            if (actualType == typeof(bool))
-            {
-                string boolText = value.Trim().ToLowerInvariant();
-                return boolText == "true" || boolText == "1" || boolText == "yes" || boolText == "y" || boolText == "是";
-            }
-
-            if (actualType.IsEnum)
-            {
-                return Enum.Parse(actualType, value, ignoreCase: true);
-            }
-
-            if (actualType.IsArray)
-            {
-                Type elementType = actualType.GetElementType();
-                string[] parts = SplitGeneralCollection(value);
-                Array array = Array.CreateInstance(elementType, parts.Length);
-
-                for (int i = 0; i < parts.Length; i++)
-                {
-                    array.SetValue(ParseGeneralValue(parts[i], elementType), i);
-                }
-
-                return array;
-            }
-
-            if (actualType.IsGenericType && actualType.GetGenericTypeDefinition() == typeof(List<>))
-            {
-                Type elementType = actualType.GetGenericArguments()[0];
-                string[] parts = SplitGeneralCollection(value);
-                var list = (IList)Activator.CreateInstance(actualType);
-
-                foreach (string part in parts)
-                {
-                    list.Add(ParseGeneralValue(part, elementType));
-                }
-
-                return list;
-            }
-
-            MethodInfo parseMethod = actualType.GetMethod(
-                "Parse",
-                BindingFlags.Public | BindingFlags.Static,
-                null,
-                new[] { typeof(string) },
-                null);
-
-            if (parseMethod != null)
-            {
-                return parseMethod.Invoke(null, new object[] { value });
-            }
-
-            return Convert.ChangeType(value, actualType, CultureInfo.InvariantCulture);
-        }
-
-        /// <summary>
-        /// 拆分 general 配置中的数组或列表文本。
-        /// </summary>
-        private string[] SplitGeneralCollection(string value)
-        {
-            if (string.IsNullOrWhiteSpace(value))
-            {
-                return Array.Empty<string>();
-            }
-
-            string normalized = value.Trim();
-            if (normalized.StartsWith("[", StringComparison.Ordinal) && normalized.EndsWith("]", StringComparison.Ordinal))
-            {
-                normalized = normalized.Substring(1, normalized.Length - 2);
-            }
-
-            return normalized.Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries);
         }
 
         /// <summary>
