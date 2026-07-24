@@ -1370,7 +1370,6 @@ namespace Framework
             var reconnectCts = new CancellationTokenSource();
             _reconnectCts = reconnectCts;
             CancellationToken token = reconnectCts.Token;
-            var random = new Random(unchecked(Environment.TickCount * 397));
 
             try
             {
@@ -1381,7 +1380,8 @@ namespace Framework
                     _currentReconnectAttempt++;
                     int idx = Math.Min(_currentReconnectAttempt - 1, _reconnectIntervals.Length - 1);
                     float baseWait = _reconnectIntervals[idx];
-                    float waitSeconds = baseWait * (float)(0.85 + random.NextDouble() * 0.3);
+                    // 共享随机源做 ±15% 退避抖动，避免多客户端同时重连造成服务端惊群。
+                    float waitSeconds = baseWait * (float)RandomUtil.NextJitterFactor(0.15);
                     OnReconnecting?.Invoke(_currentReconnectAttempt, _maxReconnectAttempts, waitSeconds);
                     await UniTask.Delay(TimeSpan.FromSeconds(waitSeconds), cancellationToken: token);
 

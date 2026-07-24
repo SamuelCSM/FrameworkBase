@@ -103,7 +103,8 @@ namespace Framework.HotUpdate
                 if (attempt < attempts)
                 {
                     // 在基础延迟上加入约 ±15% 抖动，降低 CDN 故障恢复或网络切换时的客户端惊群效应。
-                    double jitter = 0.85 + new Random(unchecked(Environment.TickCount * 31 + attempt)).NextDouble() * 0.3;
+                    // 用共享随机源而非每次 new Random(TickCount)：同毫秒内重复构造会命中相同种子、抖动退化。
+                    double jitter = RandomUtil.NextJitterFactor(0.15);
                     await UniTask.Delay(
                         TimeSpan.FromSeconds(Math.Max(0, RetryDelay) * jitter),
                         cancellationToken: cancellationToken);
