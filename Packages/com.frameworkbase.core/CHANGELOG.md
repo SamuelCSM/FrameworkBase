@@ -14,6 +14,11 @@
   `SdkManager.Compliance` + `SupportsCompliance` 暴露，`MockSdkProvider` 兜底（Mock 恒已实名成年人、不限时）。
   周期心跳与封玩门控见 `AntiAddictionGate`。
 
+- **防沉迷门控编排 `AntiAddictionGate`**（架在合规缝之上的框架增值层）：把渠道缝之外该框架统一做的三件事
+  收口——周期上报在线时长心跳 + 拉最新裁决、订阅渠道主动下发的裁决变更、裁决状态变化时抛
+  `RestrictionChanged` 供业务封玩/解封。所有裁决来源汇流到纯核 `ApplyVerdict`（状态变化才抛、同状态去重、
+  查询失败维持现状不误封误放），封玩表现与法规规则不进框架。EditMode 6 例。
+
 - **SDK 广告缝 `ISdkAdService`**（大厂商业化对标补缺）：`ISdkProvider` 增第五项能力，激励视频/插屏
   （`PreloadAsync`/`IsReady`/`ShowAsync`），`SdkManager.Ad` + `SupportsAd` 暴露，`MockSdkProvider` 兜底
   （Mock 恒"看满发奖"并醒目告警防误上线）。**铁律写进契约**：激励发奖必须由服务端校验广告平台服务器

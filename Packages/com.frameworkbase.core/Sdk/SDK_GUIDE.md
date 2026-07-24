@@ -2,8 +2,8 @@
 
 ## 定位与分工
 
-- **框架主干（本目录）**：只有能力契约（`ISdkProvider` 四子服务）、注册机制（`SdkManager`）
-  与开发期 Mock 兜底。**不含任何渠道厂商代码**。
+- **框架主干（本目录）**：只有能力契约（`ISdkProvider` 六子能力：账号 / 支付 / 推送 / 隐私 / 广告 / 合规）、
+  注册机制（`SdkManager`）与开发期 Mock 兜底。**不含任何渠道厂商代码**。
 - **渠道扩展包（独立仓库/包）**：每个渠道一个实现（如 `com.yourgame.sdk.taptap`），
   引用本包并实现 `ISdkProvider`，含该渠道的原生依赖与构建注入（manifest/plist）。
 - **业务组合根**：启动早期选定渠道实现并注册。
@@ -40,6 +40,39 @@ if (buy.Success)
 
 // 4. 启动补单（服务端验证后逐个 Confirm）
 var pending = await GameEntry.Sdk.Purchase.RestorePendingAsync();
+
+// 5. 激励视频广告：预加载 → 就绪后展示 → 服务端校验回调后发奖
+await GameEntry.Sdk.Ad.PreloadAsync(SdkAdType.Rewarded, "revive_ad");
+if (GameEntry.Sdk.Ad.IsReady(SdkAdType.Rewarded, "revive_ad"))
+{
+    var ad = await GameEntry.Sdk.Ad.ShowAsync(SdkAdType.Rewarded, "revive_ad");
+    // 铁律：ad.Data.Rewarded 仅即时反馈；真正发奖等服务端收到广告平台回调后到账
+}
+```
+
+## 实名 + 防沉迷（大陆上线法规强制）
+
+框架只 relay 渠道裁决，不定法规规则；封玩表现（弹合规文案 + 挡输入 + 踢回登录）由业务实现。
+`AntiAddictionGate` 把周期心跳 + 拉裁决 + 状态变化通知收口：
+
+```csharp
+// 登录成功、拿到渠道账号后启动门控：
+var gate = new AntiAddictionGate(GameEntry.Sdk.Compliance);
+gate.RestrictionChanged += verdict =>
+{
+    switch (verdict.State)
+    {
+        case SdkPlaytimeState.Blocked:   // 宵禁/时长用尽：弹 verdict.NoticeMessage + 封玩
+        case SdkPlaytimeState.Restricted:// 限时内：verdict.RemainingSeconds 倒计时提醒
+        case SdkPlaytimeState.Allowed:   // 解封：恢复
+    }
+};
+gate.Start(heartbeatSeconds: 60, sessionToken);   // 退登/退出时 gate.Stop()
+
+// 未实名先拉起实名（未成年受时长/时段管控）：
+var real = await GameEntry.Sdk.Compliance.QueryRealNameAsync();
+if (real.Data.State == SdkRealNameState.NotAuthenticated)
+    await GameEntry.Sdk.Compliance.ShowRealNameAuthAsync();
 ```
 
 ## 错误处理约定
