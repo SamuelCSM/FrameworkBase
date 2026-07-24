@@ -52,7 +52,8 @@ namespace Framework
 
         private void LateUpdate()
         {
-            if (_focusTarget != null)
+            // 有孔（聚焦态）就必须持续维护：目标既可能移动，也可能中途被销毁/隐藏而需退化兜底。
+            if (_hasHole || _focusTarget != null)
                 UpdateHole();
         }
 
@@ -62,8 +63,19 @@ namespace Framework
         /// </summary>
         private void UpdateHole()
         {
-            if (_focusTarget == null)
+            // 目标被销毁（Unity 伪 null）或被隐藏：挖孔已不可信。与其留一个错位/过期的孔漏点击，
+            // 不如退化为整屏压暗全拦截，由 GuideRunner 步骤看门狗超时兜底（见 CONFIG_DRIVEN_GUIDE 卡死防护）。
+            // 短路顺序要紧：先判伪 null，销毁后访问 .gameObject 会抛 MissingReference。
+            if (_focusTarget == null || !_focusTarget.gameObject.activeInHierarchy)
+            {
+                if (_hasHole)
+                {
+                    _hasHole = false;
+                    SetVerticesDirty();
+                    GameLog.Warning("[Guide] 聚焦目标已销毁或隐藏，遮罩退化为整屏拦截，等待步骤超时兜底。", this);
+                }
                 return;
+            }
 
             _focusTarget.GetWorldCorners(_cornersBuffer);
             Vector2 min = new Vector2(float.MaxValue, float.MaxValue);
@@ -74,6 +86,10 @@ namespace Framework
                 min = Vector2.Min(min, local);
                 max = Vector2.Max(max, local);
             }
+
+            // 零面积（尚未布局或被折叠）：不建退化孔，维持上一帧状态，避免首帧布局未完成时误判成一个针孔。
+            if (max.x - min.x <= 0f || max.y - min.y <= 0f)
+                return;
 
             // 本体矩形不含 padding：穿透区必须严格贴合真实控件。padding 只用于放大视觉孔，
             // 若把它并入穿透区，padding 环内的点击会漏到目标背后的控件——既不推进也无反馈。
