@@ -38,6 +38,9 @@ namespace Framework.Sdk
 
         /// <summary>广告能力（激励视频 / 插屏）；渠道不支持时为 null。</summary>
         ISdkAdService Ad { get; }
+
+        /// <summary>合规能力（实名 + 防沉迷）；渠道不支持时为 null。</summary>
+        ISdkComplianceService Compliance { get; }
     }
 
     /// <summary>
@@ -132,5 +135,34 @@ namespace Framework.Sdk
         /// 用户跳过则 <see cref="SdkErrorCode.RewardNotEarned"/>；无填充则 <see cref="SdkErrorCode.AdNoFill"/>。
         /// </summary>
         UniTask<SdkResult<SdkAdShowResult>> ShowAsync(SdkAdType type, string placementId);
+    }
+
+    /// <summary>
+    /// 渠道合规能力：实名认证 + 防沉迷时长管控（大陆商业上线法规强制）。
+    /// 框架<b>不硬编码任何法规规则</b>（宵禁时段 / 时长上限随政策变，由渠道或游戏服计算），
+    /// 只定义"查实名 / 拉起实名 / 查时长裁决 / 报时长心跳 / 收裁决变更"的缝；
+    /// 周期心跳与封玩门控编排见 <see cref="AntiAddictionGate"/>。
+    /// </summary>
+    public interface ISdkComplianceService
+    {
+        /// <summary>查询当前渠道账号的实名状态。</summary>
+        UniTask<SdkResult<SdkRealNameStatus>> QueryRealNameAsync();
+
+        /// <summary>拉起渠道实名认证界面（渠道内置流程），完成后返回最新实名状态。</summary>
+        UniTask<SdkResult<SdkRealNameStatus>> ShowRealNameAuthAsync();
+
+        /// <summary>查询当前防沉迷时长裁决（是否可玩 / 剩余秒数 / 合规文案）。</summary>
+        UniTask<SdkResult<SdkPlaytimeVerdict>> QueryPlaytimeAsync();
+
+        /// <summary>
+        /// 上报在线时长心跳（部分渠道要求定期上报累计在线时长，渠道据此更新裁决）。
+        /// </summary>
+        /// <param name="elapsedSeconds">距上次上报的在线秒数。</param>
+        UniTask<SdkResult> ReportPlaytimeHeartbeatAsync(int elapsedSeconds);
+
+        /// <summary>
+        /// 渠道主动下发的裁决变更（如到达宵禁点强制下线）；<see cref="AntiAddictionGate"/> 订阅并即时封玩。
+        /// </summary>
+        event Action<SdkPlaytimeVerdict> OnPlaytimeVerdictChanged;
     }
 }

@@ -36,6 +36,12 @@ namespace Framework.Sdk
         /// <summary>激励视频未达发奖条件（用户提前关闭/跳过），不发奖。</summary>
         RewardNotEarned = 9,
 
+        /// <summary>需先完成实名认证（未实名被拦）。</summary>
+        RealNameRequired = 10,
+
+        /// <summary>防沉迷时长限制中（宵禁时段 / 时长用尽），当前禁玩。</summary>
+        PlaytimeRestricted = 11,
+
         /// <summary>其余未归类错误——详情看 ChannelCode/Message。</summary>
         Unknown = 100
     }
@@ -145,5 +151,60 @@ namespace Framework.Sdk
 
         /// <summary>用户是否提前跳过/关闭。</summary>
         public bool Skipped;
+    }
+
+    /// <summary>实名认证状态。</summary>
+    public enum SdkRealNameState
+    {
+        /// <summary>未知（未查询 / 渠道未返回）。</summary>
+        Unknown = 0,
+
+        /// <summary>未实名。</summary>
+        NotAuthenticated = 1,
+
+        /// <summary>已实名成年人。</summary>
+        Adult = 2,
+
+        /// <summary>已实名未成年人（受防沉迷时长/时段管控）。</summary>
+        Minor = 3,
+    }
+
+    /// <summary>实名认证结果。</summary>
+    public class SdkRealNameStatus
+    {
+        /// <summary>实名状态。</summary>
+        public SdkRealNameState State;
+
+        /// <summary>年龄（岁，0=未知）；未成年分档管控（如 &lt;8 / 8-16 / 16-18）可据此。</summary>
+        public int Age;
+    }
+
+    /// <summary>防沉迷时长裁决状态。</summary>
+    public enum SdkPlaytimeState
+    {
+        /// <summary>可正常游玩（成年人 / 未触发限制）。</summary>
+        Allowed = 0,
+
+        /// <summary>限时内可玩：<see cref="SdkPlaytimeVerdict.RemainingSeconds"/> 为本时段剩余可玩秒数。</summary>
+        Restricted = 1,
+
+        /// <summary>当前禁玩（宵禁时段 / 已用尽时长 / 未实名被拦）。</summary>
+        Blocked = 2,
+    }
+
+    /// <summary>
+    /// 防沉迷时长裁决。由渠道 / 游戏服依实名信息与法规计算——<b>框架不硬编码任何规则</b>
+    /// （宵禁时段、时长上限随政策变），只原样透传裁决与合规文案。
+    /// </summary>
+    public class SdkPlaytimeVerdict
+    {
+        /// <summary>裁决状态。</summary>
+        public SdkPlaytimeState State;
+
+        /// <summary>本时段剩余可玩秒数；<see cref="SdkPlaytimeState.Allowed"/> 时为 -1（不限），Blocked 时为 0。</summary>
+        public int RemainingSeconds = -1;
+
+        /// <summary>需向玩家展示的合规文案（渠道 / 法规原文，框架原样透传，不自拟）。</summary>
+        public string NoticeMessage;
     }
 }

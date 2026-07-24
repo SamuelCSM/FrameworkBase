@@ -15,6 +15,7 @@ namespace Framework.Sdk
         private readonly MockPush _push = new MockPush();
         private readonly MockPrivacy _privacy = new MockPrivacy();
         private readonly MockAd _ad = new MockAd();
+        private readonly MockCompliance _compliance = new MockCompliance();
 
         public string ChannelName => "mock";
 
@@ -23,6 +24,7 @@ namespace Framework.Sdk
         public ISdkPushService Push => _push;
         public ISdkPrivacyService Privacy => _privacy;
         public ISdkAdService Ad => _ad;
+        public ISdkComplianceService Compliance => _compliance;
 
         public UniTask<SdkResult> InitializeAsync()
         {
@@ -153,6 +155,36 @@ namespace Framework.Sdk
                 };
                 return UniTask.FromResult(SdkResult<SdkAdShowResult>.Ok(data));
             }
+        }
+
+        // ── 合规（实名 + 防沉迷）─────────────────────────────────────────────
+
+        private sealed class MockCompliance : ISdkComplianceService
+        {
+            public event Action<SdkPlaytimeVerdict> OnPlaytimeVerdictChanged
+            {
+                add { }
+                remove { }
+            }
+
+            // Mock 恒为已实名成年人、不限时——开发期不被防沉迷挡住；正式包接真实渠道后由其裁决。
+            public UniTask<SdkResult<SdkRealNameStatus>> QueryRealNameAsync()
+                => UniTask.FromResult(SdkResult<SdkRealNameStatus>.Ok(
+                    new SdkRealNameStatus { State = SdkRealNameState.Adult, Age = 30 }));
+
+            public UniTask<SdkResult<SdkRealNameStatus>> ShowRealNameAuthAsync()
+            {
+                GameLog.Log("[MockSdkProvider] Mock 实名认证（直接视为已实名成年人）");
+                return UniTask.FromResult(SdkResult<SdkRealNameStatus>.Ok(
+                    new SdkRealNameStatus { State = SdkRealNameState.Adult, Age = 30 }));
+            }
+
+            public UniTask<SdkResult<SdkPlaytimeVerdict>> QueryPlaytimeAsync()
+                => UniTask.FromResult(SdkResult<SdkPlaytimeVerdict>.Ok(
+                    new SdkPlaytimeVerdict { State = SdkPlaytimeState.Allowed, RemainingSeconds = -1 }));
+
+            public UniTask<SdkResult> ReportPlaytimeHeartbeatAsync(int elapsedSeconds)
+                => UniTask.FromResult(SdkResult.Ok());
         }
     }
 }

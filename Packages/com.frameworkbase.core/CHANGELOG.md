@@ -7,6 +7,13 @@
 
 ### 新增
 
+- **SDK 实名/防沉迷合规缝 `ISdkComplianceService`**（大陆商业上线法规强制项）：`ISdkProvider` 增第六项能力
+  ——查实名/拉起实名（`SdkRealNameStatus` + `SdkRealNameState`）、查防沉迷时长裁决（`SdkPlaytimeVerdict` +
+  `SdkPlaytimeState`：可玩/限时/禁玩 + 剩余秒数 + 合规文案）、上报在线时长心跳、收渠道主动下发的裁决变更。
+  **框架不硬编码任何法规规则**（宵禁时段/时长上限随政策变，由渠道或游戏服计算），只 relay 裁决与合规文案。
+  `SdkManager.Compliance` + `SupportsCompliance` 暴露，`MockSdkProvider` 兜底（Mock 恒已实名成年人、不限时）。
+  周期心跳与封玩门控见 `AntiAddictionGate`。
+
 - **SDK 广告缝 `ISdkAdService`**（大厂商业化对标补缺）：`ISdkProvider` 增第五项能力，激励视频/插屏
   （`PreloadAsync`/`IsReady`/`ShowAsync`），`SdkManager.Ad` + `SupportsAd` 暴露，`MockSdkProvider` 兜底
   （Mock 恒"看满发奖"并醒目告警防误上线）。**铁律写进契约**：激励发奖必须由服务端校验广告平台服务器
