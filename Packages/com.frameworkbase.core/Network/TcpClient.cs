@@ -147,14 +147,6 @@ namespace Framework.Network
         }
 
         /// <summary>
-        /// 同步连接兼容入口。Unity 主线程新代码应优先使用 ConnectAsync，避免同步等待造成卡顿或死锁。
-        /// </summary>
-        public void Connect(string host, int port)
-        {
-            ConnectAsync(host, port).GetAwaiter().GetResult();
-        }
-
-        /// <summary>
         /// 幂等关闭当前连接：先在锁内撤销共享状态，再完成发送队列、关闭 Stream/Socket，使阻塞 I/O 退出，
         /// 最后有限等待后台线程结束。不得在持有状态锁时 Join，避免线程退出路径反向获取锁导致死锁。
         /// </summary>
