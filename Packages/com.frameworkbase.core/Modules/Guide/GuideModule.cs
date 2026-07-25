@@ -67,6 +67,10 @@ namespace Framework
             GameEntry.Actions.Register(
                 GuideOrchestrationTypeIds.ClearFocusAction,
                 new GuideClearFocusAction(_presentation));
+            // 「孔外点击」触发器：把表现层 DimClicked 桥接成编排 Trigger，供「点任意处继续」的对话步骤用。
+            GameEntry.Triggers.Register(
+                GuideOrchestrationTypeIds.OverlayClickedTrigger,
+                new GuideOverlayClickedTrigger(_presentation));
         }
 
         /// <summary>Phase 2：编排冻结后初始化引导运行器、接线诊断与遮罩兜底、开始监听。</summary>
@@ -240,6 +244,48 @@ namespace Framework
                         ? ActionExecutionResult.Succeeded()
                         : ActionExecutionResult.Failed(
                             $"TargetId={payload.TargetId} 当前不存在或 Scope 不匹配。"));
+            }
+        }
+
+        /// <summary>
+        /// 「孔外压暗区被点击」触发器（ADR-008 补遗）：把 <see cref="IGuidePresenter.DimClicked"/> 桥接成编排 Trigger。
+        /// 用于「点任意处继续」的对话步骤——完成信号即玩家点击，避免漏配 CompleteTrigger 空等到步骤超时。
+        /// 无参：触发条件是遮罩被点，payload 仅作标记；订阅随 BindOnce/步骤结束经返回句柄一并退订。
+        /// </summary>
+        private sealed class GuideOverlayClickedTrigger : ITriggerBinder<GuideOverlayClickedTriggerPayload>
+        {
+            private readonly IGuidePresenter _presentation;
+            public GuideOverlayClickedTrigger(IGuidePresenter presentation) => _presentation = presentation;
+
+            public IDisposable Bind(
+                GuideOverlayClickedTriggerPayload payload,
+                TriggerContext context,
+                Action<object> onTriggered)
+            {
+                // 显式存同一委托实例，保证退订摘的就是订阅挂上的那个。
+                Action handler = () => onTriggered(null);
+                _presentation.DimClicked += handler;
+                return new Subscription(_presentation, handler);
+            }
+
+            /// <summary>退订句柄：释放时从表现层摘掉点击处理器；幂等，重复 Dispose 无副作用。</summary>
+            private sealed class Subscription : IDisposable
+            {
+                private IGuidePresenter _presentation;
+                private readonly Action _handler;
+
+                public Subscription(IGuidePresenter presentation, Action handler)
+                {
+                    _presentation = presentation;
+                    _handler = handler;
+                }
+
+                public void Dispose()
+                {
+                    IGuidePresenter presentation = _presentation;
+                    _presentation = null;
+                    if (presentation != null) presentation.DimClicked -= _handler;
+                }
             }
         }
 

@@ -35,10 +35,16 @@ namespace HotUpdate.Guide
                 GuideOrchestrationTypeIds.FocusTargetAction, BuildFocusTargetPayloadFactory);
             OrchestrationBootstrap.RegisterActionPayloadFactory(
                 GuideOrchestrationTypeIds.ClearFocusAction, BuildClearFocusPayloadFactory);
+            OrchestrationBootstrap.RegisterTriggerPayloadFactory(
+                GuideOrchestrationTypeIds.OverlayClickedTrigger, BuildOverlayClickedPayloadFactory);
 
             _module = new GuideModule(BuildGuideCatalog);
             GameEntry.Modules.Use(_module);
         }
+
+        /// <summary>孔外点击 Trigger 无参：忽略 PayloadId，直接给标记 payload（该 Trigger 无参数表，故无需索引校验）。</summary>
+        private static Func<int, GuideOverlayClickedTriggerPayload> BuildOverlayClickedPayloadFactory()
+            => _ => new GuideOverlayClickedTriggerPayload();
 
         /// <summary>构建"按 PayloadId 取挖孔参数"的工厂（TargetId / 留白 / 压暗强度）。</summary>
         private static Func<int, GuideFocusTargetActionPayload> BuildFocusTargetPayloadFactory()
