@@ -22,6 +22,10 @@ $rules = @(
     @{ Id = "local-time";   Pattern = '\bDateTime(Offset)?\.Now\b';  Advice = "用 DateTimeOffset.UtcNow 或 ServerTime.Now；确属本地展示则行内豁免" }
     @{ Id = "thread-sleep"; Pattern = '\bThread\.Sleep\s*\(';        Advice = "用定时器 / UniTask.Delay；专用后台线程节流则行内豁免" }
     @{ Id = "gc-collect";   Pattern = '\bGC\.Collect\s*\(';          Advice = "只允许加载屏 / 调试命令等遮蔽时机，行内豁免并写明时机" }
+    # raw-debug-log —— 直接 Debug.Log*：绕过 GameLog 的级别过滤与异步文件流水，真机取证缺片段，
+    #                  且正式包不被剥离、字符串插值恒定分配。统一走 GameLog.Log/Warning/Error/Exception。
+    #                  负向前瞻排除 GameLog 自身的 UnityEngine.Debug.*（它是唯一的落地 sink）。
+    @{ Id = "raw-debug-log"; Pattern = '(?<!UnityEngine\.)\bDebug\.Log\w*\s*\('; Advice = "改用 GameLog.Log/Warning/Error/Exception；确需原生 Debug 则行内豁免" }
 )
 
 # 正斜杠两平台都认（ci.yml 的静态门禁 job 跑在 ubuntu）

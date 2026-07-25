@@ -34,11 +34,11 @@ namespace Framework.Data
             try
             {
                 _connection = new SQLiteConnection(dbPath);
-                Debug.Log($"[SQLiteHelper] 数据库已打开: {dbPath}");
+                GameLog.Log($"[SQLiteHelper] 数据库已打开: {dbPath}");
             }
             catch (Exception ex)
             {
-                Debug.LogError($"[SQLiteHelper] 无法打开数据库: {dbPath}, 错误: {ex.Message}");
+                GameLog.Error($"[SQLiteHelper] 无法打开数据库: {dbPath}, 错误: {ex.Message}");
                 throw;
             }
         }
@@ -79,12 +79,12 @@ namespace Framework.Data
             try
             {
                 var results = _connection.Query<T>(sql, args);
-                Debug.Log($"[SQLiteHelper] 查询返回 {results.Count} 行");
+                GameLog.Log($"[SQLiteHelper] 查询返回 {results.Count} 行");
                 return results;
             }
             catch (Exception ex)
             {
-                Debug.LogError($"[SQLiteHelper] 查询失败: {ex.Message}\nSQL: {sql}");
+                GameLog.Error($"[SQLiteHelper] 查询失败: {ex.Message}\nSQL: {sql}");
                 throw;
             }
         }
@@ -133,18 +133,18 @@ namespace Framework.Data
                 if (RequiresManualConfigMapping(typeof(T)))
                 {
                     var manualResults = QueryConfigTableWithValueParser<T>(tableName);
-                    Debug.Log($"[SQLiteHelper] 配置表 {tableName} 使用强类型解析查询返回 {manualResults.Count} 行");
+                    GameLog.Log($"[SQLiteHelper] 配置表 {tableName} 使用强类型解析查询返回 {manualResults.Count} 行");
                     return manualResults;
                 }
 
                 string sql = BuildConfigTableSelectSql(typeof(T), tableName);
                 var results = _connection.Query<T>(sql);
-                Debug.Log($"[SQLiteHelper] 配置表 {tableName} 查询返回 {results.Count} 行");
+                GameLog.Log($"[SQLiteHelper] 配置表 {tableName} 查询返回 {results.Count} 行");
                 return results;
             }
             catch (Exception ex)
             {
-                Debug.LogError($"[SQLiteHelper] 配置表 {tableName} 查询失败: {ex.Message}");
+                GameLog.Error($"[SQLiteHelper] 配置表 {tableName} 查询失败: {ex.Message}");
                 throw;
             }
         }
@@ -165,7 +165,7 @@ namespace Framework.Data
             }
             catch (Exception ex)
             {
-                Debug.LogError($"[SQLiteHelper] 根据主键获取记录失败: {ex.Message}");
+                GameLog.Error($"[SQLiteHelper] 根据主键获取记录失败: {ex.Message}");
                 throw;
             }
         }
@@ -186,7 +186,7 @@ namespace Framework.Data
             }
             catch (Exception ex)
             {
-                Debug.LogError($"[SQLiteHelper] 查找记录失败: {ex.Message}");
+                GameLog.Error($"[SQLiteHelper] 查找记录失败: {ex.Message}");
                 return default(T);
             }
         }
@@ -398,12 +398,12 @@ namespace Framework.Data
             try
             {
                 int affected = _connection.Execute(sql, args);
-                Debug.Log($"[SQLiteHelper] 执行SQL影响了 {affected} 行");
+                GameLog.Log($"[SQLiteHelper] 执行SQL影响了 {affected} 行");
                 return affected;
             }
             catch (Exception ex)
             {
-                Debug.LogError($"[SQLiteHelper] 执行SQL失败: {ex.Message}\nSQL: {sql}");
+                GameLog.Error($"[SQLiteHelper] 执行SQL失败: {ex.Message}\nSQL: {sql}");
                 throw;
             }
         }
@@ -430,7 +430,7 @@ namespace Framework.Data
             }
             catch (Exception ex)
             {
-                Debug.LogError($"[SQLiteHelper] 执行标量查询失败: {ex.Message}\nSQL: {sql}");
+                GameLog.Error($"[SQLiteHelper] 执行标量查询失败: {ex.Message}\nSQL: {sql}");
                 throw;
             }
         }
@@ -451,12 +451,12 @@ namespace Framework.Data
             try
             {
                 int affected = _connection.Insert(obj);
-                Debug.Log($"[SQLiteHelper] 插入记录成功");
+                GameLog.Log($"[SQLiteHelper] 插入记录成功");
                 return affected;
             }
             catch (Exception ex)
             {
-                Debug.LogError($"[SQLiteHelper] 插入记录失败: {ex.Message}");
+                GameLog.Error($"[SQLiteHelper] 插入记录失败: {ex.Message}");
                 throw;
             }
         }
@@ -473,12 +473,12 @@ namespace Framework.Data
             try
             {
                 int affected = _connection.InsertOrReplace(obj);
-                Debug.Log($"[SQLiteHelper] 插入或替换记录成功");
+                GameLog.Log($"[SQLiteHelper] 插入或替换记录成功");
                 return affected;
             }
             catch (Exception ex)
             {
-                Debug.LogError($"[SQLiteHelper] 插入或替换记录失败: {ex.Message}");
+                GameLog.Error($"[SQLiteHelper] 插入或替换记录失败: {ex.Message}");
                 throw;
             }
         }
@@ -495,12 +495,12 @@ namespace Framework.Data
             try
             {
                 int count = _connection.InsertAll(objects);
-                Debug.Log($"[SQLiteHelper] 批量插入 {count} 条记录成功");
+                GameLog.Log($"[SQLiteHelper] 批量插入 {count} 条记录成功");
                 return count;
             }
             catch (Exception ex)
             {
-                Debug.LogError($"[SQLiteHelper] 批量插入失败: {ex.Message}");
+                GameLog.Error($"[SQLiteHelper] 批量插入失败: {ex.Message}");
                 throw;
             }
         }
@@ -521,12 +521,12 @@ namespace Framework.Data
             try
             {
                 int affected = _connection.Update(obj);
-                Debug.Log($"[SQLiteHelper] 更新记录成功");
+                GameLog.Log($"[SQLiteHelper] 更新记录成功");
                 return affected;
             }
             catch (Exception ex)
             {
-                Debug.LogError($"[SQLiteHelper] 更新记录失败: {ex.Message}");
+                GameLog.Error($"[SQLiteHelper] 更新记录失败: {ex.Message}");
                 throw;
             }
         }
@@ -543,12 +543,12 @@ namespace Framework.Data
             try
             {
                 int count = _connection.UpdateAll(objects);
-                Debug.Log($"[SQLiteHelper] 批量更新 {count} 条记录成功");
+                GameLog.Log($"[SQLiteHelper] 批量更新 {count} 条记录成功");
                 return count;
             }
             catch (Exception ex)
             {
-                Debug.LogError($"[SQLiteHelper] 批量更新失败: {ex.Message}");
+                GameLog.Error($"[SQLiteHelper] 批量更新失败: {ex.Message}");
                 throw;
             }
         }
@@ -569,12 +569,12 @@ namespace Framework.Data
             try
             {
                 int affected = _connection.Delete(obj);
-                Debug.Log($"[SQLiteHelper] 删除记录成功");
+                GameLog.Log($"[SQLiteHelper] 删除记录成功");
                 return affected;
             }
             catch (Exception ex)
             {
-                Debug.LogError($"[SQLiteHelper] 删除记录失败: {ex.Message}");
+                GameLog.Error($"[SQLiteHelper] 删除记录失败: {ex.Message}");
                 throw;
             }
         }
@@ -592,12 +592,12 @@ namespace Framework.Data
             try
             {
                 int affected = _connection.Delete<T>(pk);
-                Debug.Log($"[SQLiteHelper] 根据主键删除记录成功");
+                GameLog.Log($"[SQLiteHelper] 根据主键删除记录成功");
                 return affected;
             }
             catch (Exception ex)
             {
-                Debug.LogError($"[SQLiteHelper] 根据主键删除记录失败: {ex.Message}");
+                GameLog.Error($"[SQLiteHelper] 根据主键删除记录失败: {ex.Message}");
                 throw;
             }
         }
@@ -614,12 +614,12 @@ namespace Framework.Data
             try
             {
                 int count = _connection.DeleteAll<T>();
-                Debug.Log($"[SQLiteHelper] 删除所有记录成功，共 {count} 条");
+                GameLog.Log($"[SQLiteHelper] 删除所有记录成功，共 {count} 条");
                 return count;
             }
             catch (Exception ex)
             {
-                Debug.LogError($"[SQLiteHelper] 删除所有记录失败: {ex.Message}");
+                GameLog.Error($"[SQLiteHelper] 删除所有记录失败: {ex.Message}");
                 throw;
             }
         }
@@ -639,11 +639,11 @@ namespace Framework.Data
             try
             {
                 _connection.CreateTable<T>();
-                Debug.Log($"[SQLiteHelper] 创建表 {typeof(T).Name} 成功");
+                GameLog.Log($"[SQLiteHelper] 创建表 {typeof(T).Name} 成功");
             }
             catch (Exception ex)
             {
-                Debug.LogError($"[SQLiteHelper] 创建表失败: {ex.Message}");
+                GameLog.Error($"[SQLiteHelper] 创建表失败: {ex.Message}");
                 throw;
             }
         }
@@ -659,11 +659,11 @@ namespace Framework.Data
             try
             {
                 _connection.DropTable<T>();
-                Debug.Log($"[SQLiteHelper] 删除表 {typeof(T).Name} 成功");
+                GameLog.Log($"[SQLiteHelper] 删除表 {typeof(T).Name} 成功");
             }
             catch (Exception ex)
             {
-                Debug.LogError($"[SQLiteHelper] 删除表失败: {ex.Message}");
+                GameLog.Error($"[SQLiteHelper] 删除表失败: {ex.Message}");
                 throw;
             }
         }
@@ -688,11 +688,11 @@ namespace Framework.Data
             {
                 _connection.BeginTransaction();
                 _inTransaction = true;
-                Debug.Log("[SQLiteHelper] 事务已开始");
+                GameLog.Log("[SQLiteHelper] 事务已开始");
             }
             catch (Exception ex)
             {
-                Debug.LogError($"[SQLiteHelper] 开始事务失败: {ex.Message}");
+                GameLog.Error($"[SQLiteHelper] 开始事务失败: {ex.Message}");
                 throw;
             }
         }
@@ -711,11 +711,11 @@ namespace Framework.Data
             {
                 _connection.Commit();
                 _inTransaction = false;
-                Debug.Log("[SQLiteHelper] 事务已提交");
+                GameLog.Log("[SQLiteHelper] 事务已提交");
             }
             catch (Exception ex)
             {
-                Debug.LogError($"[SQLiteHelper] 提交事务失败: {ex.Message}");
+                GameLog.Error($"[SQLiteHelper] 提交事务失败: {ex.Message}");
                 throw;
             }
         }
@@ -734,11 +734,11 @@ namespace Framework.Data
             {
                 _connection.Rollback();
                 _inTransaction = false;
-                Debug.Log("[SQLiteHelper] 事务已回滚");
+                GameLog.Log("[SQLiteHelper] 事务已回滚");
             }
             catch (Exception ex)
             {
-                Debug.LogError($"[SQLiteHelper] 回滚事务失败: {ex.Message}");
+                GameLog.Error($"[SQLiteHelper] 回滚事务失败: {ex.Message}");
                 throw;
             }
         }
@@ -759,11 +759,11 @@ namespace Framework.Data
             try
             {
                 _connection.RunInTransaction(action);
-                Debug.Log("[SQLiteHelper] 事务执行成功");
+                GameLog.Log("[SQLiteHelper] 事务执行成功");
             }
             catch (Exception ex)
             {
-                Debug.LogError($"[SQLiteHelper] 事务执行失败: {ex.Message}");
+                GameLog.Error($"[SQLiteHelper] 事务执行失败: {ex.Message}");
                 throw;
             }
         }
@@ -785,17 +785,17 @@ namespace Framework.Data
                     try
                     {
                         Rollback();
-                        Debug.LogWarning("[SQLiteHelper] 关闭连接时自动回滚未完成的事务");
+                        GameLog.Warning("[SQLiteHelper] 关闭连接时自动回滚未完成的事务");
                     }
                     catch (Exception ex)
                     {
-                        Debug.LogError($"[SQLiteHelper] 回滚事务失败: {ex.Message}");
+                        GameLog.Error($"[SQLiteHelper] 回滚事务失败: {ex.Message}");
                     }
                 }
 
                 _connection.Close();
                 _connection = null;
-                Debug.Log("[SQLiteHelper] 数据库连接已关闭");
+                GameLog.Log("[SQLiteHelper] 数据库连接已关闭");
             }
         }
 

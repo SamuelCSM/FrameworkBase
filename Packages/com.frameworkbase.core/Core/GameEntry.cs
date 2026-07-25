@@ -194,7 +194,7 @@ namespace Framework.Core
                 gameObject.AddComponent<PerfHud>();
 #endif
 
-            Debug.Log("[GameEntry] 开始初始化框架...");
+            GameLog.Log("[GameEntry] 开始初始化框架...");
             ApplyPerformanceSettings();
             // 通用补间（PrimeTween）容量与默认缓动一次性引导：须早于任何 UI 过渡 / 场景动画。
             TweenBootstrap.Initialize();
@@ -223,7 +223,7 @@ namespace Framework.Core
                 gameObject.AddComponent<Framework.Notifications.LocalNotificationRelay>();
 
             Application.lowMemory += HandleLowMemory;
-            Debug.Log("[GameEntry] 框架初始化完成");
+            GameLog.Log("[GameEntry] 框架初始化完成");
         }
 
         /// <summary>
@@ -249,8 +249,8 @@ namespace Framework.Core
 
         private static void LogOrchestrationError(string source, Exception error)
         {
-            Debug.LogError($"[GameEntry] {source} 编排回调/执行器异常（已隔离）");
-            if (error != null) Debug.LogException(error);
+            GameLog.Error($"[GameEntry] {source} 编排回调/执行器异常（已隔离）");
+            if (error != null) GameLog.Exception(error);
         }
 
         /// <summary>
@@ -259,7 +259,7 @@ namespace Framework.Core
         /// </summary>
         private void HandleLowMemory()
         {
-            Debug.LogWarning("[GameEntry] 收到系统低内存警告，开始释放可重建缓存");
+            GameLog.Warning("[GameEntry] 收到系统低内存警告，开始释放可重建缓存");
 
             for (int i = 0; i < _components.Count; i++)
             {
@@ -282,7 +282,7 @@ namespace Framework.Core
 
             if (_loadingViewPrefab == null)
             {
-                Debug.LogError("[GameEntry] _loadingViewPrefab 未赋值，请在 Inspector 中拖拽赋值");
+                GameLog.Error("[GameEntry] _loadingViewPrefab 未赋值，请在 Inspector 中拖拽赋值");
                 return;
             }
 
@@ -313,7 +313,7 @@ namespace Framework.Core
 
             if (_loginViewPrefab == null)
             {
-                Debug.LogError("[GameEntry] _loginViewPrefab 未赋值，请在 Inspector 中拖拽 LoginView.prefab");
+                GameLog.Error("[GameEntry] _loginViewPrefab 未赋值，请在 Inspector 中拖拽 LoginView.prefab");
                 return;
             }
 
@@ -332,17 +332,17 @@ namespace Framework.Core
                 {
                     // 登录成功后统一贯通玩家身份到存档隔离 / 埋点 / 远配 / 崩溃归因（组合根职责）。
                     BindLoggedInIdentity(result);
-                    Debug.Log($"[GameEntry] 登录完成 userId={result.UserId} token={(string.IsNullOrEmpty(result.SessionToken) ? "(none)" : "ok")}");
+                    GameLog.Log($"[GameEntry] 登录完成 userId={result.UserId} token={(string.IsNullOrEmpty(result.SessionToken) ? "(none)" : "ok")}");
                 },
                 EnterBusinessAsync = EnterBusinessSessionAsync,
                 ExitBusiness = NotifyBusinessExit,
                 LogoutAuth = reason => Auth?.Logout(reason),
                 ClearIdentity = ClearLoggedInIdentity,
-                Info = message => Debug.Log($"[AppFlow] {message}"),
+                Info = message => GameLog.Log($"[AppFlow] {message}"),
                 Error = (message, ex) =>
                 {
-                    Debug.LogError($"[AppFlow] {message}");
-                    if (ex != null) Debug.LogException(ex);
+                    GameLog.Error($"[AppFlow] {message}");
+                    if (ex != null) GameLog.Exception(ex);
                 },
             });
             await _appFlow.RunAsync(_appFlowCts.Token);
@@ -456,9 +456,9 @@ namespace Framework.Core
         /// 登出属正常业务流，用普通日志（Warning 会污染「零告警」验收门禁）。</summary>
         private void RequestLogout(string reason)
         {
-            Debug.Log($"[GameEntry] 收到登出请求 reason={reason}");
+            GameLog.Log($"[GameEntry] 收到登出请求 reason={reason}");
             if (_appFlow == null || !_appFlow.RequestLogout(reason))
-                Debug.Log($"[GameEntry] 登出请求被忽略（当前不在登录会话中）reason={reason}");
+                GameLog.Log($"[GameEntry] 登出请求被忽略（当前不在登录会话中）reason={reason}");
         }
 
         /// <summary>先让业务释放账号态资源；无论业务是否异常，调用方都继续完成框架清理。</summary>
@@ -470,8 +470,8 @@ namespace Framework.Core
             }
             catch (Exception ex)
             {
-                Debug.LogError($"[GameEntry] 业务退出 OnBusinessExit 抛异常，继续清理框架身份 reason={reason}");
-                Debug.LogException(ex);
+                GameLog.Error($"[GameEntry] 业务退出 OnBusinessExit 抛异常，继续清理框架身份 reason={reason}");
+                GameLog.Exception(ex);
             }
             finally
             {
@@ -657,7 +657,7 @@ namespace Framework.Core
                 Telemetry.CrashReporter.LeaveBreadcrumb($"cmd:{record.Name} ok={record.Success}");
             };
 
-            Debug.Log("[GameEntry] 所有 Manager 初始化完成");
+            GameLog.Log("[GameEntry] 所有 Manager 初始化完成");
         }
 
         /// <summary>
@@ -679,7 +679,7 @@ namespace Framework.Core
             T component = new T();
             _components.Add(component);
             component.OnInit();
-            Debug.Log($"[GameEntry] 初始化组件: {typeof(T).Name}");
+            GameLog.Log($"[GameEntry] 初始化组件: {typeof(T).Name}");
             return component;
         }
 
@@ -746,8 +746,8 @@ namespace Framework.Core
         /// <param name="ex">捕获到的异常。</param>
         private static void LogComponentError(string phase, FrameworkComponent component, Exception ex)
         {
-            Debug.LogError($"[GameEntry] 组件 {component.GetType().Name} {phase} 异常，已隔离不影响其它组件");
-            Debug.LogException(ex);
+            GameLog.Error($"[GameEntry] 组件 {component.GetType().Name} {phase} 异常，已隔离不影响其它组件");
+            GameLog.Exception(ex);
         }
 
         /// <summary>
@@ -755,19 +755,19 @@ namespace Framework.Core
         /// </summary>
         protected override void OnApplicationQuit()
         {
-            Debug.Log("[GameEntry] 开始清理框架...");
+            GameLog.Log("[GameEntry] 开始清理框架...");
 
             // Timer / Save 等 Manager 尚可用时先让业务保存并释放账号态资源。
             // 应用退出不经 AppFlow 循环（保留持久会话供冷启动恢复），直接走业务退出通知。
             NotifyBusinessExit("application_quit");
 
             // 中止仍可能在途的启动下载阶段（Catalog/资源/代码补丁），令其 await 干净解绑。
-            try { _bootCts?.Cancel(); } catch (Exception ex) { Debug.LogException(ex); }
+            try { _bootCts?.Cancel(); } catch (Exception ex) { GameLog.Exception(ex); }
             _bootCts?.Dispose();
             _bootCts = null;
 
             // 停止应用主状态机循环：登录 / 业务入口 / 等登出的 await 经取消令牌干净解绑。
-            try { _appFlowCts?.Cancel(); } catch (Exception ex) { Debug.LogException(ex); }
+            try { _appFlowCts?.Cancel(); } catch (Exception ex) { GameLog.Exception(ex); }
             _appFlowCts?.Dispose();
             _appFlowCts = null;
             _appFlow?.Dispose();
@@ -793,7 +793,7 @@ namespace Framework.Core
                 try
                 {
                     _components[i].OnShutdown();
-                    Debug.Log($"[GameEntry] 关闭组件: {_components[i].GetType().Name}");
+                    GameLog.Log($"[GameEntry] 关闭组件: {_components[i].GetType().Name}");
                 }
                 catch (Exception ex)
                 {
@@ -803,7 +803,7 @@ namespace Framework.Core
 
             _components.Clear();
 
-            Debug.Log("[GameEntry] 框架清理完成");
+            GameLog.Log("[GameEntry] 框架清理完成");
 
             base.OnApplicationQuit();
         }

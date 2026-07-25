@@ -23,13 +23,13 @@ namespace Framework.Core
             {
                 if (_applicationIsQuitting)
                 {
-                    Debug.LogWarning($"[MonoSingleton] '{typeof(T)}' 已在应用退出时销毁，不再返回实例。");
+                    GameLog.Warning($"[MonoSingleton] '{typeof(T)}' 已在应用退出时销毁，不再返回实例。");
                     return null;
                 }
 
                 if (_instance == null)
                 {
-                    Debug.LogError(
+                    GameLog.Error(
                         $"[MonoSingleton] '{typeof(T)}' 实例不存在。" +
                         "请确保其已挂载到启动场景并先于访问点执行 Awake，框架不做隐式查找/自动创建。");
                 }
@@ -50,7 +50,7 @@ namespace Framework.Core
             }
             else if (_instance != this)
             {
-                Debug.LogWarning($"[MonoSingleton] Instance of '{typeof(T)}' already exists. Destroying duplicate.");
+                GameLog.Warning($"[MonoSingleton] Instance of '{typeof(T)}' already exists. Destroying duplicate.");
                 Destroy(gameObject);
             }
         }

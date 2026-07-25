@@ -108,7 +108,7 @@ namespace Framework.Data
 
             if (_isLoaded)
             {
-                Debug.LogWarning($"[ConfigBase] 配置表 {tableName} 已经加载，跳过重复加载");
+                GameLog.Warning($"[ConfigBase] 配置表 {tableName} 已经加载，跳过重复加载");
                 return;
             }
 
@@ -122,7 +122,7 @@ namespace Framework.Data
                     // 使用SQLite-net的Table方法查询所有数据
                     var allData = db.QueryConfigTable<TValue>(tableName);
 
-                    Debug.Log($"[ConfigBase] 从表 {tableName} 加载了 {allData.Count} 条配置数据");
+                    GameLog.Log($"[ConfigBase] 从表 {tableName} 加载了 {allData.Count} 条配置数据");
 
                     // 将数据加载到字典中
                     _dataDict.Clear();
@@ -131,25 +131,25 @@ namespace Framework.Data
                         TKey key = GetKey(item);
                         if (key == null)
                         {
-                            Debug.LogWarning($"[ConfigBase] 配置项的主键为null，跳过该项");
+                            GameLog.Warning($"[ConfigBase] 配置项的主键为null，跳过该项");
                             continue;
                         }
 
                         if (_dataDict.ContainsKey(key))
                         {
-                            Debug.LogWarning($"[ConfigBase] 主键重复: {key}，将覆盖旧值");
+                            GameLog.Warning($"[ConfigBase] 主键重复: {key}，将覆盖旧值");
                         }
 
                         _dataDict[key] = item;
                     }
 
                     _isLoaded = true;
-                    Debug.Log($"[ConfigBase] 配置表 {tableName} 加载完成，共 {_dataDict.Count} 条有效数据");
+                    GameLog.Log($"[ConfigBase] 配置表 {tableName} 加载完成，共 {_dataDict.Count} 条有效数据");
                 }
             }
             catch (Exception ex)
             {
-                Debug.LogError($"[ConfigBase] 加载配置表失败: {tableName}, 错误: {ex.Message}");
+                GameLog.Error($"[ConfigBase] 加载配置表失败: {tableName}, 错误: {ex.Message}");
                 throw;
             }
         }
@@ -163,13 +163,13 @@ namespace Framework.Data
         {
             if (!_isLoaded)
             {
-                Debug.LogError("[ConfigBase] 配置表尚未加载，请先调用Load方法");
+                GameLog.Error("[ConfigBase] 配置表尚未加载，请先调用Load方法");
                 return null;
             }
 
             if (key == null)
             {
-                Debug.LogWarning("[ConfigBase] 查询的主键为null");
+                GameLog.Warning("[ConfigBase] 查询的主键为null");
                 return null;
             }
 
@@ -178,7 +178,7 @@ namespace Framework.Data
                 return value;
             }
 
-            Debug.LogWarning($"[ConfigBase] 未找到主键为 {key} 的配置项");
+            GameLog.Warning($"[ConfigBase] 未找到主键为 {key} 的配置项");
             return null;
         }
 
@@ -190,7 +190,7 @@ namespace Framework.Data
         {
             if (!_isLoaded)
             {
-                Debug.LogError("[ConfigBase] 配置表尚未加载，请先调用Load方法");
+                GameLog.Error("[ConfigBase] 配置表尚未加载，请先调用Load方法");
                 return new List<TValue>();
             }
 
@@ -206,13 +206,13 @@ namespace Framework.Data
         {
             if (!_isLoaded)
             {
-                Debug.LogError("[ConfigBase] 配置表尚未加载，请先调用Load方法");
+                GameLog.Error("[ConfigBase] 配置表尚未加载，请先调用Load方法");
                 return new List<TValue>();
             }
 
             if (predicate == null)
             {
-                Debug.LogWarning("[ConfigBase] 查询条件为null，返回所有数据");
+                GameLog.Warning("[ConfigBase] 查询条件为null，返回所有数据");
                 return GetAll();
             }
 
@@ -222,7 +222,7 @@ namespace Framework.Data
             }
             catch (Exception ex)
             {
-                Debug.LogError($"[ConfigBase] 条件查询失败: {ex.Message}");
+                GameLog.Error($"[ConfigBase] 条件查询失败: {ex.Message}");
                 return new List<TValue>();
             }
         }
@@ -236,7 +236,7 @@ namespace Framework.Data
         {
             if (!_isLoaded)
             {
-                Debug.LogError("[ConfigBase] 配置表尚未加载，请先调用Load方法");
+                GameLog.Error("[ConfigBase] 配置表尚未加载，请先调用Load方法");
                 return null;
             }
 
@@ -252,7 +252,7 @@ namespace Framework.Data
             }
             catch (Exception ex)
             {
-                Debug.LogError($"[ConfigBase] 查询第一个配置项失败: {ex.Message}");
+                GameLog.Error($"[ConfigBase] 查询第一个配置项失败: {ex.Message}");
                 return null;
             }
         }
@@ -266,7 +266,7 @@ namespace Framework.Data
         {
             if (!_isLoaded)
             {
-                Debug.LogError("[ConfigBase] 配置表尚未加载，请先调用Load方法");
+                GameLog.Error("[ConfigBase] 配置表尚未加载，请先调用Load方法");
                 return null;
             }
 
@@ -282,7 +282,7 @@ namespace Framework.Data
             }
             catch (Exception ex)
             {
-                Debug.LogError($"[ConfigBase] 查询最后一个配置项失败: {ex.Message}");
+                GameLog.Error($"[ConfigBase] 查询最后一个配置项失败: {ex.Message}");
                 return null;
             }
         }
@@ -296,7 +296,7 @@ namespace Framework.Data
         {
             if (!_isLoaded)
             {
-                Debug.LogError("[ConfigBase] 配置表尚未加载，请先调用Load方法");
+                GameLog.Error("[ConfigBase] 配置表尚未加载，请先调用Load方法");
                 return false;
             }
 
@@ -315,7 +315,7 @@ namespace Framework.Data
         {
             _dataDict.Clear();
             _isLoaded = false;
-            Debug.Log($"[ConfigBase] 配置表 {_tableName} 已卸载");
+            GameLog.Log($"[ConfigBase] 配置表 {_tableName} 已卸载");
         }
 
         /// <summary>

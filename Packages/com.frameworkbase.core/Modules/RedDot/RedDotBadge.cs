@@ -69,12 +69,12 @@ namespace Framework
         {
             if (_redDotId <= 0)
             {
-                Debug.LogError($"[RedDotBadge] {name} 未配置有效红点 ID", this);
+                GameLog.Error($"[RedDotBadge] {name} 未配置有效红点 ID", this);
                 return;
             }
             if (_badgeRoot == null || _badgeRoot == gameObject)
             {
-                Debug.LogError($"[RedDotBadge] {name} 徽标根未配置或指向自身：本组件须挂常驻节点、" +
+                GameLog.Error($"[RedDotBadge] {name} 徽标根未配置或指向自身：本组件须挂常驻节点、" +
                                "徽标为其子对象，否则隐藏徽标会连带退订", this);
                 return;
             }
@@ -96,7 +96,7 @@ namespace Framework
             catch (Exception ex)
             {
                 Apply(0);
-                Debug.LogError($"[RedDotBadge] {name} 绑定红点 ID {_redDotId} 失败：{ex.Message}", this);
+                GameLog.Error($"[RedDotBadge] {name} 绑定红点 ID {_redDotId} 失败：{ex.Message}", this);
             }
         }
 

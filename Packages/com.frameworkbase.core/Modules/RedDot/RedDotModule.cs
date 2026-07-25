@@ -49,8 +49,8 @@ namespace Framework
                 // 红点订阅者（UI 徽标）回调异常隔离：单个徽标异常不影响其它订阅者与聚合结算。
                 ObserverErrorSink = ex =>
                 {
-                    Debug.LogError("[RedDot] 红点订阅者异常（已隔离）");
-                    if (ex != null) Debug.LogException(ex);
+                    GameLog.Error("[RedDot] 红点订阅者异常（已隔离）");
+                    if (ex != null) GameLog.Exception(ex);
                 },
             };
         }
@@ -70,7 +70,7 @@ namespace Framework
             if (!_service.IsInitialized)
                 _service.Initialize(_catalogProvider());
             RegisterDebugCommands();
-            Debug.Log($"[RedDot] 红点模块已启动，节点数={_service.Catalog.Nodes.Length}。");
+            GameLog.Log($"[RedDot] 红点模块已启动，节点数={_service.Catalog.Nodes.Length}。");
             return UniTask.CompletedTask;
         }
 

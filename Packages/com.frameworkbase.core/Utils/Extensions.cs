@@ -480,4 +480,35 @@ namespace Framework
             return default(T);
         }
     }
+
+    /// <summary>
+    /// 非密码学随机源工具。集中一处的共享 <see cref="Random"/> 单例，用于重连 / 下载重试等
+    /// 退避抖动（anti-thundering-herd）。
+    /// <para>
+    /// 之所以不在各调用点 <c>new System.Random(Environment.TickCount…)</c>：TickCount 分辨率约 15ms，
+    /// 紧密循环内多次构造会命中相同种子，抖动退化为固定值、削峰失效。共享单例只在进程启动播种一次。
+    /// <see cref="System.Random"/> 非线程安全，故取值加锁——抖动非热路径，锁开销可忽略。
+    /// </para>
+    /// </summary>
+    public static class RandomUtil
+    {
+        private static readonly System.Random _shared = new System.Random();
+
+        /// <summary>返回 [0,1) 的随机双精度数（线程安全）。</summary>
+        public static double NextDouble()
+        {
+            lock (_shared) return _shared.NextDouble();
+        }
+
+        /// <summary>
+        /// 返回围绕 1.0 的对称抖动倍率，范围 [1-<paramref name="spread"/>, 1+<paramref name="spread"/>)。
+        /// 例如 <paramref name="spread"/>=0.15 得到约 ±15% 的退避抖动系数。
+        /// </summary>
+        /// <param name="spread">抖动幅度，取绝对值；建议 0～0.5。</param>
+        public static double NextJitterFactor(double spread)
+        {
+            spread = Math.Abs(spread);
+            return 1.0 - spread + NextDouble() * (2.0 * spread);
+        }
+    }
 }

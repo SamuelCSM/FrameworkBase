@@ -85,7 +85,7 @@ namespace Framework.Core
 
         private static async UniTask<LaunchFlowOutcome> RunStepsAsync(LoadingWindow loading, CancellationToken cancellationToken = default)
         {
-            Debug.Log("[LaunchFlow] ========== 游戏启动流程开始 ==========");
+            GameLog.Log("[LaunchFlow] ========== 游戏启动流程开始 ==========");
             var runMetric = LaunchTelemetryHelper.BeginRunMetric();
 
             // language 片提前就绪（ADR-006）：在第一条 Loading 文案之前完成小片提取，
@@ -97,7 +97,7 @@ namespace Framework.Core
             }
             catch (Exception ex)
             {
-                Debug.Log($"[LaunchFlow] language 片提前就绪失败（文案走源语言兜底）：{ex.Message}");
+                GameLog.Log($"[LaunchFlow] language 片提前就绪失败（文案走源语言兜底）：{ex.Message}");
             }
 
             // 远程配置与启动序列并行拉取：不阻塞启动、失败静默沿用磁盘缓存/代码默认值
@@ -118,7 +118,7 @@ namespace Framework.Core
                     localVersion.AppVersion,
                     localVersion.ResourceVersion,
                     localVersion.CodeVersion);
-                Debug.Log($"[LaunchFlow] Step 1  App={localVersion.AppVersion} " +
+                GameLog.Log($"[LaunchFlow] Step 1  App={localVersion.AppVersion} " +
                           $"Resource={localVersion.ResourceVersion} Code={localVersion.CodeVersion}");
                 LaunchTelemetryHelper.EndPhaseMetric(step1, true, $"app={localVersion.AppVersion},res={localVersion.ResourceVersion},code={localVersion.CodeVersion}");
 
@@ -141,7 +141,7 @@ namespace Framework.Core
                     GameEntry.RefData.ConfirmHotUpdateDatabase();
                     HotUpdate.VersionManager.CommitHotUpdateFromRecord(recovery.CommittingRecord);
                     GameEntry.HotUpdate.ContentRelease.EndCommit();
-                    Debug.LogWarning($"[LaunchFlow] Step 1.5  检测到确认阶段被中断的提交 {recovery.CommittingRecord.ReleaseId}，已前滚补完全部内容");
+                    GameLog.Warning($"[LaunchFlow] Step 1.5  检测到确认阶段被中断的提交 {recovery.CommittingRecord.ReleaseId}，已前滚补完全部内容");
                 }
                 else
                 {
@@ -154,12 +154,12 @@ namespace Framework.Core
                     {
                         GameEntry.RefData.ResetDatabaseToFactoryBaseline();
                         string cause = recovery.StateCorruptionHandled ? "状态损坏且无快照" : "内容级崩溃循环";
-                        Debug.LogWarning($"[LaunchFlow] Step 1.5  {cause}，已回退出厂内容基线（安全恢复模式）");
+                        GameLog.Warning($"[LaunchFlow] Step 1.5  {cause}，已回退出厂内容基线（安全恢复模式）");
                     }
                     if (recovery.StateCorruptionHandled && !recovery.FactoryResetPerformed)
-                        Debug.LogWarning("[LaunchFlow] Step 1.5  状态文件损坏，已恢复上一份 LKG 内容（安全兜底）");
+                        GameLog.Warning("[LaunchFlow] Step 1.5  状态文件损坏，已恢复上一份 LKG 内容（安全兜底）");
                     if (recovery.PendingRolledBack)
-                        Debug.LogWarning($"[LaunchFlow] Step 1.5  未确认发行 {recovery.RolledBackReleaseId} 已回滚");
+                        GameLog.Warning($"[LaunchFlow] Step 1.5  未确认发行 {recovery.RolledBackReleaseId} 已回滚");
                 }
 
                 // ── Step 2: 初始化 Addressables ───────────────────
@@ -167,7 +167,7 @@ namespace Framework.Core
                 loading.SetStatus(Language.GetOrDefault("#1_launch_init_resource", "正在初始化资源系统..."));
                 loading.SetProgress(0.1f);
                 await GameEntry.Resource.InitializeAsync();
-                Debug.Log("[LaunchFlow] Step 2  Addressables 初始化完成");
+                GameLog.Log("[LaunchFlow] Step 2  Addressables 初始化完成");
                 LaunchTelemetryHelper.EndPhaseMetric(step2, true);
 
                 // ── Step 3: 检查服务器版本 ────────────────────────
@@ -179,7 +179,7 @@ namespace Framework.Core
                 {
                     loading.SetStatus(Language.GetOrDefault("#1_launch_no_update_server", "未配置更新服务器，跳过版本检查"));
                     loading.SetProgress(0.2f);
-                    Debug.Log("[LaunchFlow] Step 3  未配置 UpdateServerUrl，跳过");
+                    GameLog.Log("[LaunchFlow] Step 3  未配置 UpdateServerUrl，跳过");
                 }
                 else
                 {
@@ -191,10 +191,10 @@ namespace Framework.Core
                     {
                         if (!AllowLaunchWhenUpdateCheckFails())
                             throw new InvalidOperationException("更新清单获取、验签或安全准入失败，当前环境禁止使用本地版本继续启动。");
-                        Debug.LogWarning("[LaunchFlow] Step 3  获取服务器版本失败，配置允许降级为本地版本启动。");
+                        GameLog.Warning("[LaunchFlow] Step 3  获取服务器版本失败，配置允许降级为本地版本启动。");
                     }
                     else
-                        Debug.Log($"[LaunchFlow] Step 3  Server: App={serverVersion.AppVersion} " +
+                        GameLog.Log($"[LaunchFlow] Step 3  Server: App={serverVersion.AppVersion} " +
                                   $"Resource={serverVersion.ResourceVersion} Type={serverVersion.Type}");
                 }
                 // 灰度放量闸门：version.json 携带 GrayPercent 且本机未命中分桶时，按"无更新"继续
@@ -203,7 +203,7 @@ namespace Framework.Core
                 if (serverVersion != null &&
                     !HotUpdate.VersionManager.IsDeviceInGrayRollout(serverVersion, SystemInfo.deviceUniqueIdentifier))
                 {
-                    Debug.Log($"[LaunchFlow] Step 3  灰度放量 {serverVersion.GrayPercent}% 未命中本机，按无更新继续");
+                    GameLog.Log($"[LaunchFlow] Step 3  灰度放量 {serverVersion.GrayPercent}% 未命中本机，按无更新继续");
                     grayMiss = true;
                     serverVersion = null;
                 }
@@ -248,7 +248,7 @@ namespace Framework.Core
                         }))
                     {
                         // 快照或落盘失败即失败关闭：没有回滚能力就不允许开始安装。
-                        Debug.LogError("[LaunchFlow] Step 4  内容发行事务开启失败，中止本次更新");
+                        GameLog.Error("[LaunchFlow] Step 4  内容发行事务开启失败，中止本次更新");
                         LaunchTelemetryHelper.FinalizeRunMetric(runMetric, false, TelemetryErrorCodes.Launch.CatalogUpdateFailed);
                         return LaunchFlowOutcome.Failed;
                     }
@@ -325,7 +325,7 @@ namespace Framework.Core
                 {
                     loading.SetStatus(Language.GetOrDefault("#1_launch_entering_game", "正在进入游戏..."));
                     loading.SetProgress(0.95f);
-                    Debug.Log("[LaunchFlow] 热更已关闭（AppConfig.EnableHotUpdate=false），跳过 AOT 元数据 / 热更程序集 / StartHotfix");
+                    GameLog.Log("[LaunchFlow] 热更已关闭（AppConfig.EnableHotUpdate=false），跳过 AOT 元数据 / 热更程序集 / StartHotfix");
                     // 纯框架模式的统一确认点：无 Hotfix 入口即视为启动就绪，内容事务在此确认。
                     // 同样用 BeginCommit/EndCommit 包裹，确保确认阶段中断可前滚补完（无代码槽，仅内容/配置/version）。
                     GameEntry.HotUpdate.ContentRelease.BeginCommit();
@@ -337,7 +337,7 @@ namespace Framework.Core
                         codeUpdated: false);
                     GameEntry.HotUpdate.ContentRelease.EndCommit();
                     await loading.HideAsync();
-                    Debug.Log("[LaunchFlow] ========== 启动流程完成（纯框架模式）==========");
+                    GameLog.Log("[LaunchFlow] ========== 启动流程完成（纯框架模式）==========");
                     LaunchTelemetryHelper.FinalizeRunMetric(runMetric, true, TelemetryErrorCodes.Launch.Ok);
                     return LaunchFlowOutcome.ReadyForLogin;
                 }
@@ -354,7 +354,7 @@ namespace Framework.Core
                     LaunchTelemetryHelper.FinalizeRunMetric(runMetric, false, TelemetryErrorCodes.Launch.MetadataLoadFailed);
                     return LaunchFlowOutcome.Failed;
                 }
-                Debug.Log("[LaunchFlow] Step 7  AOT 元数据加载完成");
+                GameLog.Log("[LaunchFlow] Step 7  AOT 元数据加载完成");
                 LaunchTelemetryHelper.EndPhaseMetric(step7, true);
 
                 // ── Step 8: 加载热更程序集 ─────────────────────────
@@ -369,7 +369,7 @@ namespace Framework.Core
                     LaunchTelemetryHelper.FinalizeRunMetric(runMetric, false, TelemetryErrorCodes.Launch.HotUpdateAssemblyLoadFailed);
                     return LaunchFlowOutcome.Failed;
                 }
-                Debug.Log("[LaunchFlow] Step 8  HybridCLR 热更程序集加载完成");
+                GameLog.Log("[LaunchFlow] Step 8  HybridCLR 热更程序集加载完成");
                 LaunchTelemetryHelper.EndPhaseMetric(step8, true);
 
                 // ── Step 9: 启动热更逻辑，淡出 Loading ───────────
@@ -401,18 +401,18 @@ namespace Framework.Core
                     resourceUpdateResult.ResourceUpdated,
                     codeUpdated);
                 GameEntry.HotUpdate.ContentRelease.EndCommit();
-                Debug.Log("[LaunchFlow] Step 9  游戏逻辑启动完成");
+                GameLog.Log("[LaunchFlow] Step 9  游戏逻辑启动完成");
                 LaunchTelemetryHelper.EndPhaseMetric(step9, true);
 
                 await loading.HideAsync();
-                Debug.Log("[LaunchFlow] ========== 启动流程完成 ==========");
+                GameLog.Log("[LaunchFlow] ========== 启动流程完成 ==========");
                 LaunchTelemetryHelper.FinalizeRunMetric(runMetric, true, TelemetryErrorCodes.Launch.Ok);
                 return LaunchFlowOutcome.ReadyForLogin;
             }
             catch (Exception ex)
             {
                 AbortPendingContent($"unhandled_exception:{ex.Message}");
-                Debug.LogError($"[LaunchFlow] 启动流程异常: {ex.Message}\n{ex.StackTrace}");
+                GameLog.Error($"[LaunchFlow] 启动流程异常: {ex.Message}\n{ex.StackTrace}");
                 LaunchTelemetryHelper.FinalizeRunMetric(runMetric, false, TelemetryErrorCodes.Launch.UnhandledException);
                 return LaunchFlowOutcome.Failed;
             }
@@ -437,18 +437,18 @@ namespace Framework.Core
             // 保留提交日志和所有恢复材料，本次启动失败退出；重试或下次启动由 Step1.5 幂等补完。
             if (GameEntry.HotUpdate?.ContentRelease?.IsCommitInProgress == true)
             {
-                Debug.LogError($"[LaunchFlow] 确认提交阶段异常（{reason}），已保留提交日志等待前滚重放，禁止回滚待确认内容。");
+                GameLog.Error($"[LaunchFlow] 确认提交阶段异常（{reason}），已保留提交日志等待前滚重放，禁止回滚待确认内容。");
                 return;
             }
 
             try { GameEntry.HotUpdate?.MarkPendingUpdateFailed(reason); }
-            catch (Exception ex) { Debug.LogError($"[LaunchFlow] 代码槽回滚异常：{ex.Message}"); }
+            catch (Exception ex) { GameLog.Error($"[LaunchFlow] 代码槽回滚异常：{ex.Message}"); }
 
             try { GameEntry.HotUpdate?.ContentRelease.MarkPendingFailed(reason); }
-            catch (Exception ex) { Debug.LogError($"[LaunchFlow] 内容事务回滚异常：{ex.Message}"); }
+            catch (Exception ex) { GameLog.Error($"[LaunchFlow] 内容事务回滚异常：{ex.Message}"); }
 
             try { GameEntry.RefData?.RestoreLastConfirmedDatabaseIfAny(); }
-            catch (Exception ex) { Debug.LogError($"[LaunchFlow] 配置恢复异常：{ex.Message}"); }
+            catch (Exception ex) { GameLog.Error($"[LaunchFlow] 配置恢复异常：{ex.Message}"); }
         }
 
         // ── 工具方法 ──────────────────────────────────────────────────────────

@@ -361,12 +361,12 @@ namespace Framework
         /// <summary>执行命令并把结果回显进日志列表（失败走 Warning 黄色醒目；命令由人工输入，不会污染自动化验收的零告警门禁）。</summary>
         private async UniTaskVoid RunCommandAsync(string line)
         {
-            Debug.Log($"[Cmd] > {line}");
+            GameLog.Log($"[Cmd] > {line}");
             CommandResult result = await _commands.ExecuteAsync(line);
             if (result.Success)
-                Debug.Log($"[Cmd] {(string.IsNullOrEmpty(result.Message) ? "OK" : result.Message)}");
+                GameLog.Log($"[Cmd] {(string.IsNullOrEmpty(result.Message) ? "OK" : result.Message)}");
             else
-                Debug.LogWarning($"[Cmd] {result.Message}");
+                GameLog.Warning($"[Cmd] {result.Message}");
         }
     }
 }

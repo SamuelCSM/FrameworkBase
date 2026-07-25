@@ -47,7 +47,7 @@ namespace Framework.Performance
                 : AutoTier;
             IsInitialized = true;
 
-            Debug.Log($"[DeviceTier] 内存 {profile.SystemMemoryMb}MB 显存 {profile.GraphicsMemoryMb}MB " +
+            GameLog.Log($"[DeviceTier] 内存 {profile.SystemMemoryMb}MB 显存 {profile.GraphicsMemoryMb}MB " +
                       $"核数 {profile.ProcessorCount} → 自动 {AutoTier}，生效 {Tier}" +
                       (HasOverride ? "（玩家覆盖）" : ""));
 
@@ -90,7 +90,7 @@ namespace Framework.Performance
 
             // applyExpensiveChanges：启动期一次性调用，抗锯齿等重开销变更此时最便宜
             QualitySettings.SetQualityLevel(index, applyExpensiveChanges: true);
-            Debug.Log($"[DeviceTier] QualityLevel → {index}（{QualitySettings.names[index]}）");
+            GameLog.Log($"[DeviceTier] QualityLevel → {index}（{QualitySettings.names[index]}）");
         }
     }
 }

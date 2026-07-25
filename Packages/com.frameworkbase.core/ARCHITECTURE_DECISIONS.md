@@ -282,6 +282,26 @@ ASP.NET Core / .NET runtime 及 Unity 引擎自身 C# 层）普遍的 `internal`
 分两步迁移 + 架构测试兜底**，与是否拆 asmdef（3b/3c）无关，另有其自身 ROI 权衡，见
 ADR-001/002。
 
+### ADR-003 补遗：静态门面冻结——`GameEntry.*` 静态访问点不再新增（2026-07-24）
+
+**背景**：一次大厂级评审复核指出，`GameEntry` 上已有 40+ 个 `public static ... { get; private set; }`
+Manager 访问点，构成 Service Locator + 全局可变单例。这是知情负债（本 ADR 已权衡：便利 vs 隐式耦合、
+不可并行测试），**问题不在存量，而在增量**——ADR-008 修订「第 13 点」已就 `UITargetRegistry`
+批评过"往既有门面上堆"，此处把它上升为可执行红线，避免每加一个能力就顺手挂一个静态字段、
+让全局面无声膨胀。
+
+**决策（红线，评审 checklist 项）**：
+1. **冻结**：`GameEntry` 的静态 Manager 访问点视为已封口清单，**默认不新增**。新增框架能力优先走
+   ①构造/方法注入，②中间层模块 `RegisterCapabilities` 通道（ADR-008），③既有 Manager 的实例成员——
+   而非再开一个 `GameEntry.Xxx` 静态门面。
+2. **例外**：确需进程级唯一访问点时，在本 ADR 追加一行说明理由（谁依赖、为何不能注入），评审据此把关；
+   写不出理由的新静态门面通不过评审，与 banned-api 豁免同一设计意图。
+3. **不推翻存量**：既有 40+ 访问点重构成注入的边际收益低、成本高，**刻意保留**；本条只管增量方向。
+
+**放弃了什么**：没有引入 DI 容器（Zenject/VContainer）。容器能根治全局态，但会改写整个装配根、
+与 HybridCLR 反射/裁剪的兼容需专门验证，ROI 不支持为"更干净的接线"付这个代价——`ManagerManifest`
+的显式清单 + 拓扑测试已覆盖初始化时序这一最实际的痛点。
+
 ## ADR-004：网络协议契约下沉 `Framework.Protocol.Abstractions`（2026-07-12）
 
 **状态**：已实施。新增程序集 `Framework.Protocol.Abstractions`（asmdef 落 `Protocol/`）。

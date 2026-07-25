@@ -24,7 +24,7 @@ namespace HotUpdate.UI
             UIManager ui = GameEntry.UI;
             if (ui == null)
             {
-                Debug.LogError("[UIWindow] GameEntry.UI 尚未创建，无法安装窗口目录。");
+                GameLog.Error("[UIWindow] GameEntry.UI 尚未创建，无法安装窗口目录。");
                 return;
             }
             if (ReferenceEquals(_installedManager, ui)) return;
@@ -50,7 +50,7 @@ namespace HotUpdate.UI
 
             Catalog = catalog;
             _installedManager = ui;
-            Debug.Log($"[UIWindow] 目录已安装，窗口={catalog.Windows.Length}，Target={catalog.Targets.Length}。");
+            GameLog.Log($"[UIWindow] 目录已安装，窗口={catalog.Windows.Length}，Target={catalog.Targets.Length}。");
         }
 
         private static UIWindowCatalog BuildCatalog()

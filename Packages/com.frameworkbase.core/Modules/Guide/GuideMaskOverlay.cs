@@ -24,6 +24,7 @@ namespace Framework
 
         private RectTransform _focusTarget;
         private Rect _holeRect;
+        private Rect _targetRect;
         private bool _hasHole;
         private readonly Vector3[] _cornersBuffer = new Vector3[4];
 
@@ -51,15 +52,47 @@ namespace Framework
 
         private void LateUpdate()
         {
-            if (_focusTarget != null)
+            KeepOnTop();
+            // 有孔（聚焦态）就必须持续维护：目标既可能移动，也可能中途被销毁/隐藏而需退化兜底。
+            if (_hasHole || _focusTarget != null)
                 UpdateHole();
         }
 
-        /// <summary>把目标世界包围盒换算到本地坐标并外扩 padding；有变化才重建网格。</summary>
+        /// <summary>
+        /// 每帧确保遮罩仍处在同层最后：引导期间可能有更晚打开的弹窗插到同层后方盖住挖孔，
+        /// 使「孔」与真实 z 序错位却无从察觉（看门狗只能发现「卡住」，发现不了「层错」）。
+        /// 仅在被顶下去时才重排，避免每帧无谓触发 Canvas 层级重建。
+        /// </summary>
+        private void KeepOnTop()
+        {
+            Transform self = transform;
+            Transform parent = self.parent;
+            if (parent == null)
+                return;
+            int last = parent.childCount - 1;
+            if (self.GetSiblingIndex() != last)
+                self.SetAsLastSibling();
+        }
+
+        /// <summary>
+        /// 把目标世界包围盒换算到本地坐标：得到本体矩形（<see cref="_targetRect"/>，点击穿透以此为准）
+        /// 与外扩 padding 后的压暗孔（<see cref="_holeRect"/>，仅决定视觉）。二者任一变化才重建网格。
+        /// </summary>
         private void UpdateHole()
         {
-            if (_focusTarget == null)
+            // 目标被销毁（Unity 伪 null）或被隐藏：挖孔已不可信。与其留一个错位/过期的孔漏点击，
+            // 不如退化为整屏压暗全拦截，由 GuideRunner 步骤看门狗超时兜底（见 CONFIG_DRIVEN_GUIDE 卡死防护）。
+            // 短路顺序要紧：先判伪 null，销毁后访问 .gameObject 会抛 MissingReference。
+            if (_focusTarget == null || !_focusTarget.gameObject.activeInHierarchy)
+            {
+                if (_hasHole)
+                {
+                    _hasHole = false;
+                    SetVerticesDirty();
+                    GameLog.Warning("[Guide] 聚焦目标已销毁或隐藏，遮罩退化为整屏拦截，等待步骤超时兜底。", this);
+                }
                 return;
+            }
 
             _focusTarget.GetWorldCorners(_cornersBuffer);
             Vector2 min = new Vector2(float.MaxValue, float.MaxValue);
@@ -71,12 +104,20 @@ namespace Framework
                 max = Vector2.Max(max, local);
             }
 
+            // 零面积（尚未布局或被折叠）：不建退化孔，维持上一帧状态，避免首帧布局未完成时误判成一个针孔。
+            if (max.x - min.x <= 0f || max.y - min.y <= 0f)
+                return;
+
+            // 本体矩形不含 padding：穿透区必须严格贴合真实控件。padding 只用于放大视觉孔，
+            // 若把它并入穿透区，padding 环内的点击会漏到目标背后的控件——既不推进也无反馈。
+            var target = Rect.MinMaxRect(min.x, min.y, max.x, max.y);
             var hole = Rect.MinMaxRect(
                 min.x - _holePadding, min.y - _holePadding,
                 max.x + _holePadding, max.y + _holePadding);
 
-            if (_hasHole && hole == _holeRect)
+            if (_hasHole && hole == _holeRect && target == _targetRect)
                 return;
+            _targetRect = target;
             _holeRect = hole;
             _hasHole = true;
             SetVerticesDirty();
@@ -133,7 +174,8 @@ namespace Framework
                     rectTransform, screenPoint, eventCamera, out Vector2 local))
                 return true;
 
-            return !_holeRect.Contains(local);
+            // 穿透区钳到本体矩形而非视觉孔（含 padding），避免 padding 环成为点击死区。
+            return !_targetRect.Contains(local);
         }
 
         public void OnPointerClick(PointerEventData eventData)

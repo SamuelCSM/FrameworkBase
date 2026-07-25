@@ -32,7 +32,7 @@ namespace Framework
         {
             if (string.IsNullOrEmpty(_address))
             {
-                Debug.LogError($"[LocalizedImage] {name} 未配置资源地址", this);
+                GameLog.Error($"[LocalizedImage] {name} 未配置资源地址", this);
                 return;
             }
 

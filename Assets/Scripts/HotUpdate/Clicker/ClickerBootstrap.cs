@@ -52,7 +52,7 @@ namespace HotUpdate.Clicker
             RegisterUIs();
             GameEntry.OnBusinessEntryAsync = EnterGameAsync;
             GameEntry.OnBusinessExit = ExitGame;
-            Debug.Log("[Clicker] 业务会话钩子已注册（Enter + Exit）");
+            GameLog.Log("[Clicker] 业务会话钩子已注册（Enter + Exit）");
         }
 
         /// <summary>把纯代码商店接入 UIManager；同一 GameEntry 生命周期内幂等。</summary>
@@ -105,11 +105,11 @@ namespace HotUpdate.Clicker
             }
             else
             {
-                Debug.LogError("[Clicker] 红点目录未初始化，ClickerRedDotProvider 未注册。");
+                GameLog.Error("[Clicker] 红点目录未初始化，ClickerRedDotProvider 未注册。");
             }
 
             _mainView = ClickerMainView.Create();
-            Debug.Log($"[Clicker] CLICKER_READY userId={loginResult.UserId} coins={model.Coins} level={model.Level} double={model.DoubleGain}");
+            GameLog.Log($"[Clicker] CLICKER_READY userId={loginResult.UserId} coins={model.Coins} level={model.Level} double={model.DoubleGain}");
 
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
             // 自检：仅当外部（CI / ClickerPlayCheck）置环境变量时运行，避免污染日常手动 Play。
@@ -154,7 +154,7 @@ namespace HotUpdate.Clicker
             }
 
             if (mainView != null || redDotCoordinator != null || hadData)
-                Debug.Log($"[Clicker] 业务会话已退出 reason={reason}");
+                GameLog.Log($"[Clicker] 业务会话已退出 reason={reason}");
         }
 
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
@@ -174,7 +174,7 @@ namespace HotUpdate.Clicker
                 upgradeOk = model.TryUpgrade() && model.Level == levelBefore + 1;
             }
 
-            Debug.Log(clickOk && upgradeOk
+            GameLog.Log(clickOk && upgradeOk
                 ? $"[Clicker] GAMEPLAY_SELFCHECK_OK click(+{expectedGain}) upgrade level={model.Level}"
                 : $"[Clicker] GAMEPLAY_SELFCHECK_FAIL clickOk={clickOk} upgradeOk={upgradeOk}");
         }
@@ -185,7 +185,7 @@ namespace HotUpdate.Clicker
             SaveManager.Instance.Save(new ClickerSave { coins = marker, level = model.Level });
             ClickerSave reloaded = await SaveManager.Instance.LoadAsync<ClickerSave>();
             bool ok = reloaded != null && reloaded.coins == marker && reloaded.level == model.Level;
-            Debug.Log(ok
+            GameLog.Log(ok
                 ? "[Clicker] SAVE_ROUNDTRIP_OK 账号级存档存/读一致"
                 : $"[Clicker] SAVE_ROUNDTRIP_FAIL expected={marker} got={reloaded?.coins}");
             model.SaveNow(); // 恢复真实状态

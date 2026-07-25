@@ -51,7 +51,7 @@ namespace Framework
             if (!TryValidate(out string error))
             {
                 isApplied = false;
-                Debug.LogError("[" + GetType().Name + "] 相机 Rig 配置不完整：" + error);
+                GameLog.Error("[" + GetType().Name + "] 相机 Rig 配置不完整：" + error);
                 return;
             }
 

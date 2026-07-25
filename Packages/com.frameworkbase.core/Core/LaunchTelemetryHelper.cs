@@ -86,7 +86,7 @@ namespace Framework.Core
             Telemetry.CrashReporter.LeaveBreadcrumb($"launch:end success={success} reason={endReason}");
 
             string json = JsonSerializers.Shared.ToJson(run, true);
-            Debug.Log($"[LaunchTelemetry] {json}");
+            GameLog.Log($"[LaunchTelemetry] {json}");
 
             try
             {
@@ -95,7 +95,7 @@ namespace Framework.Core
             }
             catch (Exception ex)
             {
-                Debug.LogWarning($"[LaunchTelemetry] 写入 launch_metrics_last.json 失败: {ex.Message}");
+                GameLog.Warning($"[LaunchTelemetry] 写入 launch_metrics_last.json 失败: {ex.Message}");
             }
 
             TrackRunMetric(run);

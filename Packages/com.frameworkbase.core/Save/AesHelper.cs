@@ -26,8 +26,12 @@ namespace Framework.Save
         // 存档主密钥来源：默认绑定本设备；上云/跨设备时可通过 SetKeyProvider 替换
         private static ISaveKeyProvider _keyProvider = new DeviceSaveKeyProvider();
 
-        private static byte[] _cachedEncKey; // AES 加解密 Key（16 字节）
-        private static byte[] _cachedMacKey; // HMAC-SHA256 Key（32 字节）
+        // volatile + _keyLock：不再依赖"SaveManager 档案锁"的隐式约定。AesHelper 同时被 SaveManager 与
+        // EncryptedPrefsSecureStorage 复用，二者的调用线程不由单一档案锁串行；SetKeyProvider 清缓存与
+        // EnsureKeys 派生若并发，非同步的 check-then-act 会撕裂读到"enc 已置、mac 仍空"的半初始化密钥。
+        private static volatile byte[] _cachedEncKey; // AES 加解密 Key（16 字节）
+        private static volatile byte[] _cachedMacKey; // HMAC-SHA256 Key（32 字节）
+        private static readonly object _keyLock = new object();
 
         /// <summary>
         /// 替换存档主密钥来源并清空密钥缓存，下次读写时按新来源重新派生。
@@ -35,31 +39,46 @@ namespace Framework.Save
         /// </summary>
         internal static void SetKeyProvider(ISaveKeyProvider provider)
         {
-            _keyProvider = provider ?? throw new ArgumentNullException(nameof(provider));
-            _cachedEncKey = null;
-            _cachedMacKey = null;
+            if (provider == null) throw new ArgumentNullException(nameof(provider));
+            // 与 EnsureKeys 同锁：换源与清缓存必须相对派生原子，避免旧源派生结果回写覆盖新源。
+            lock (_keyLock)
+            {
+                _keyProvider = provider;
+                _cachedEncKey = null;
+                _cachedMacKey = null;
+            }
         }
 
-        // 确保两把子密钥已派生并缓存（线程安全由 SaveManager 的档案锁在 IO 层保证）
+        // 确保两把子密钥已派生并缓存。双检锁：快路径无锁读 volatile 字段命中即返回；
+        // 未命中时进锁复检并派生，两把子密钥在锁内一次性发布，杜绝半初始化可见性。
         private static void EnsureKeys()
         {
             if (_cachedEncKey != null && _cachedMacKey != null) return;
 
-            var master = _keyProvider.GetMasterSecret() ?? string.Empty;
-
-            // 加密 Key：与历史保持一致 = SHA256(master + Salt) 取前 16 字节，保证旧档可解密
-            using (var sha = SHA256.Create())
+            lock (_keyLock)
             {
-                var encHash = sha.ComputeHash(Encoding.UTF8.GetBytes(master + AppSalt));
-                var encKey = new byte[KeyBytes];
-                Array.Copy(encHash, encKey, KeyBytes);
+                if (_cachedEncKey != null && _cachedMacKey != null) return;
+
+                var master = _keyProvider.GetMasterSecret() ?? string.Empty;
+
+                // 加密 Key：与历史保持一致 = SHA256(master + Salt) 取前 16 字节，保证旧档可解密
+                byte[] encKey = new byte[KeyBytes];
+                using (var sha = SHA256.Create())
+                {
+                    var encHash = sha.ComputeHash(Encoding.UTF8.GetBytes(master + AppSalt));
+                    Array.Copy(encHash, encKey, KeyBytes);
+                }
+
+                // MAC Key：独立标签派生的 32 字节，仅用于 HMAC-SHA256
+                byte[] macKey;
+                using (var sha = SHA256.Create())
+                {
+                    macKey = sha.ComputeHash(Encoding.UTF8.GetBytes(master + AppSalt + MacLabel));
+                }
+
+                // 锁内最后发布：先 enc 后 mac，读侧快路径要求两者皆非空才命中，避免撕裂。
                 _cachedEncKey = encKey;
-            }
-
-            // MAC Key：独立标签派生的 32 字节，仅用于 HMAC-SHA256
-            using (var sha = SHA256.Create())
-            {
-                _cachedMacKey = sha.ComputeHash(Encoding.UTF8.GetBytes(master + AppSalt + MacLabel));
+                _cachedMacKey = macKey;
             }
         }
 
