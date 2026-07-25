@@ -31,7 +31,7 @@ namespace Framework.Tests
             Assert.AreEqual(1, compilation.Guides.Steps.Length);
             Assert.AreEqual(3, compilation.Guides.StepActions.Length);
             Assert.AreEqual(1, compilation.Rules.Rules.Length);
-            Assert.AreEqual(2, compilation.Triggers.Triggers.Length);
+            Assert.AreEqual(3, compilation.Triggers.Triggers.Length);
             Assert.AreEqual(2, compilation.Actions.Actions.Length);
             Assert.AreEqual(210001, compilation.Guides.Guides[0].Id);
             Assert.AreEqual(1001, compilation.Guides.Steps[0].StepId);
@@ -42,6 +42,8 @@ namespace Framework.Tests
             Assert.AreEqual(generated, Normalize(File.ReadAllText(GuideConfigCompiler.GeneratedIdsPath)));
             StringAssert.Contains("public const int ClickerShopIntro = 210001;", generated);
             StringAssert.Contains("public const int FocusBuyButton = 1001;", generated);
+            // 无参模块 Trigger（孔外点击/点任意处继续）：编译器认作已知、不再判"业务扩展"，常量正常生成。
+            StringAssert.Contains("public const int GuideOverlayClicked = 420003;", generated);
         }
 
         [Test]

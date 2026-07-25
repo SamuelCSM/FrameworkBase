@@ -448,6 +448,13 @@ namespace Framework.Editor.Guide
                 BuiltinOrchestrationTypeIds.Triggers.UITargetClicked,
                 BuiltinOrchestrationTypeIds.Triggers.Delay,
             };
+            // 模块自带的无参 Trigger：运行时已注册 Binder 与 Payload 工厂，但无对应 payload 表可校验，
+            // 故既不当"业务扩展"告警、也不强求 PayloadId>0；仍用占位引用走通编辑器侧运行时校验
+            // （与非内置 TypeId 一致注册为 EmptyTrigger<OrchestrationPayloadReference>，类型对得上）。
+            var knownModuleNoPayload = new HashSet<int>
+            {
+                GuideOrchestrationTypeIds.OverlayClickedTrigger,
+            };
             return new TriggerCatalog
             {
                 Triggers = sheet.DataRows.Select((row, index) =>
@@ -456,6 +463,7 @@ namespace Framework.Editor.Guide
                     int payloadId = Int(row, "PayloadId", sheet, index);
                     object payload;
                     if (known.Contains(typeId)) payload = RequirePayload(payloads, payloadId, sheet, index);
+                    else if (knownModuleNoPayload.Contains(typeId)) payload = new OrchestrationPayloadReference(payloadId);
                     else
                     {
                         if (payloadId <= 0) throw RowError(sheet, index, "业务扩展 Trigger PayloadId 必须大于 0。");
