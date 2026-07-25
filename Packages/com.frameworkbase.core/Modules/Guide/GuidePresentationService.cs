@@ -3,8 +3,11 @@ using UnityEngine;
 
 namespace Framework
 {
-    /// <summary>通用引导表现服务：按 TargetId 创建/更新顶层挖孔遮罩。</summary>
-    public sealed class GuidePresentationService : IDisposable
+    /// <summary>
+    /// 框架自带的引导表现实现（<see cref="IGuidePresenter"/> 的矩形挖孔基线）：按 TargetId 创建/更新顶层挖孔遮罩。
+    /// 收 <c>internal</c>——对外只暴露接口，L3 要替换表现时注入自己的实现，不需要 new 本类（ADR-008 补遗）。
+    /// </summary>
+    internal sealed class GuidePresentationService : IGuidePresenter
     {
         private readonly UIManager _ui;
         private readonly UITargetRegistry _targets;
