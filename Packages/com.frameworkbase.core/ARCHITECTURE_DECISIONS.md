@@ -699,6 +699,51 @@ Executor，也能自带 Payload 工厂，新增模块只改自己的 Bootstrap**
 且 ADR-008 本就要求 L3 显式维护模块清单）——运行时保持"显式登记"，只把登记点从"别人的文件"改到
 "自己的 Bootstrap"。号段也没有借这次改动强行迁移，避免在 Unity 占锁、无法重导 `config.db` 时动配表。
 
+### ADR-008 补遗：引导表现改为可替换缝 `IGuidePresenter`（2026-07-25）
+
+**状态**：已决策，随即实施（本补遗只立**代码侧的缝**；配表侧的模式/形状字段留到能重导 `config.db` 时另做）。
+
+**背景**：ADR-008 第 4 点已把引导表现（`GuidePresentationService` + `GuideFocus/Clear` Action）下沉 L2，
+但落地是**具象直连**——`GuideModule` 里 `GuideFocusTargetAction` 直接 `new ...(_presentation)` 攥着具体的
+`GuidePresentationService`。而引导表现只有一种实现：四块 quad 的矩形挖孔遮罩。近期引导表现评审提出多种
+高亮模式（原对象提层、视觉副本、Shader 圆角/羽化、世界物体高亮、非矩形形状）——其中矩形挖孔是框架该
+自带的**最低成本基线**，其余是项目专属表现（L3）或将来的框架升级。具象直连没有替换点：想在 L3 换成
+Shader 版或原对象提层，必须回头改 L2 的 `GuideModule`/Action，这与 ADR-008「框架主干不承载项目专属
+业务表现、分层判据是概念职责」相抵。
+
+**决策**：把引导表现抽成一条可替换的缝，框架只保证矩形基线。
+
+1. **L2 定义接口 `IGuidePresenter`**（`Focus(targetId, scope, padding, dimAlpha)` / `Clear()` /
+   `event Action DimClicked`），`GuidePresentationService` 作为**框架自带默认实现**（矩形挖孔基线）。接口与
+   默认实现同住 `Modules/Guide/`——表现语义（挖孔、聚焦 Target）属引导业务，按第 4 点归 L2，不上 L1。
+2. **`GuideModule` 依赖接口、按接口注入**：无参路径自建默认矩形实现（现状零行为变化），L3 可注入替换实现
+   （Shader / 原对象提层 / 视觉副本）。方向 L3→L2 接口，依赖不破。
+3. **缝的边界守死在「表现」**：presenter 只回答「把某 Target 表现成聚焦态 / 清除遮罩」，**不认识 Step/
+   Runner**。步骤推进仍走 `CompleteTrigger`（表现层→Runner 零耦合），守住 ADR-008 第 5 点的编排/表现分离。
+   `DimClicked` 已在前序缺陷修复（`30c80a4`）从 overlay 转发到服务级，接口把它纳入契约——替换实现也**必须**
+   提供该事件（「点任意处继续」的 Trigger 将绑它，见 2-1 计划）。
+4. **未知模式安全降级是 presenter 的契约义务**：将来 Focus payload 携带模式/形状提示（`HighlightMode` /
+   `FocusShape`）时，由 presenter 解释；**内置矩形实现对不认识的模式一律降级为矩形并告警一次**，不得抛错。
+
+**放弃了什么**：
+
+- **不把多种 `HighlightMode` 内置进框架**。矩形之外的模式都不进 L2——框架只保证「矩形基线 + 缝」，避免
+  框架主干承载项目表现（ADR-008 铁律）。多形状真要做，是挂在这条缝上的 Shader/SDF presenter，属 L3 或
+  将来单独的框架升级。
+- **不引入 presenter 注册表/自动发现**（按模式路由多个 presenter）。当前只有一个内置实现 + 可选一个 L3
+  替换，单个注入点足够；真出现「同一引导按步切换多种 presenter」再议——延续「重拆触发条件」的克制。
+- **不趁此加 `Shape`/`InputMode` 配表字段**。那要动 `Guide.xlsx` + 重导 `config.db`，在 Unity 占锁期不动
+  配表（延续修订第 11 点的克制）。本补遗只立代码侧的缝,配表侧字段等导出窗口再落。
+
+**后果与迁移**：
+
+- 新增 public `IGuidePresenter` + `GuideModule` 构造签名微调 = 契约微调；框架处 `0.x` 孵化期，直接改、
+  `CHANGELOG` 标注，不留兼容层。
+- 顺 ADR-003 补遗方向：对外只留 `IGuidePresenter`，`GuidePresentationService` 可收 `internal`——L3 注入的是
+  自己的实现、不需要 new 默认实现，默认实现由 `GuideModule` 无参路径自建。
+- 纯代码改动，不碰配表/导出/分片；验证走一次 Unity 编译 + 现有引导 EditMode 用例（表现是 MonoBehaviour，
+  覆不到，真机点验留给 PlayMode）。
+
 ## ADR-009：资源热更闭环——远程 Catalog 纳入已验签发布身份（2026-07-23）
 
 **状态**：已决策，分步实施（本条为方案定稿；契约与校验先行，构建管线与客户端消费接线需真机发布演练验证，见文末「实施路线」）。
