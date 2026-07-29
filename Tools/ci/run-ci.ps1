@@ -213,6 +213,15 @@ function Invoke-AssetGate {
         Start-Sleep -Milliseconds 200
     }
 
+    # 终局重扫：轮询是靠「文件大小连续 3s 不变」判定冲刷完成的，而 Windows 上目录项记录的大小
+    # 可能滞后于实际写入——Unity 退出后曾出现大小停滞数秒、随后整块冲刷的情况，循环会在哨兵可见
+    # 之前就按「无结论」收敛，把已通过的门禁误报成失败。循环只在大小变化时扫，故此处无条件补扫一次。
+    if ($null -eq $verdict) {
+        $endLine = Get-Content $logPath -Encoding UTF8 -ErrorAction SilentlyContinue |
+            Where-Object { $_ -match "\[CiGate\]\s+GATE_RESULT\s+exit=(\d+)" } | Select-Object -Last 1
+        if ($endLine -and $endLine -match "GATE_RESULT\s+exit=(\d+)") { $verdict = [int]$Matches[1] }
+    }
+
     # 摘出门禁关键行（此时日志已完整）。必须走 Write-Host：否则这些行会并入函数返回值，
     # 污染 $gateExit（PowerShell 函数返回全部未捕获输出，而非仅 return 值）。
     Get-Content $logPath -Encoding UTF8 -ErrorAction SilentlyContinue |

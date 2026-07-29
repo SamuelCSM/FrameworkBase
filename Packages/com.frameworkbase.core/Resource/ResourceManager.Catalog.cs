@@ -241,7 +241,7 @@ namespace Framework
         {
             GameLog.Log($"[ResourceManager] 开始下载资源依赖 [{key}]...");
 
-            // 句柄在 finally 统一释放：覆盖成功、失败、异常、取消四条出口，避免旧实现 catch 路径漏释放句柄。
+            // 句柄在 finally 统一释放：覆盖成功、失败、异常、取消四条出口，catch 路径极易漏释放。
             // default 句柄的 IsValid() 为 false，异常发生在创建之前时 finally 安全跳过。
             AsyncOperationHandle handle = default;
             try

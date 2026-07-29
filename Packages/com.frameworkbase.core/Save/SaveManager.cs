@@ -111,6 +111,20 @@ namespace Framework.Save
         public void SetSaveKeyProvider(ISaveKeyProvider provider)
             => AesHelper.SetKeyProvider(provider);
 
+        /// <summary>
+        /// 设置本项目的域分隔 Salt（建议用包名，如 com.yourcompany.yourgame）。
+        /// 需在任何读写存档之前调用——通常放在启动流程里，早于第一次读档。
+        ///
+        /// 为什么必须设：默认主密钥种子是 <c>deviceUniqueIdentifier</c>，同一台设备上
+        /// 两个 FrameworkBase 产品拿到的种子完全相同，全靠此 Salt 把派生密钥分开。
+        /// 不设则沿用框架兜底值，兄弟产品会派生出同一把存档密钥。
+        /// 注意：上线后再改 Salt 会使既有存档全部无法解密，须配合迁移策略。
+        /// </summary>
+        /// <param name="salt">项目级唯一串，不得为空白。</param>
+        /// <exception cref="ArgumentException">salt 为 null 或全空白时抛出。</exception>
+        public void SetSaveSalt(string salt)
+            => AesHelper.SetAppSalt(salt);
+
         // ── 路径 ─────────────────────────────────────────────────────────────
         // 目录结构：{persistentDataPath}/saves/{userId}/{TypeName}_{slot}.sav
         private string UserDir => Path.Combine(Application.persistentDataPath, "saves", $"u_{_currentUserId}");

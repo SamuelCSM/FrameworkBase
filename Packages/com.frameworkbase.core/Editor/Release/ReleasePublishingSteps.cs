@@ -196,8 +196,8 @@ namespace Framework.Editor.Release
                     ? ctx.Profile.UploadRoot
                     : ctx.VersionOutputDir;
 
-                // 部署目标失败关闭闸门（P0）：旧实现在目标为空时静默保留本地 staging 并返回，
-                // 导致 Publish 模式的工作流"看起来成功"却从未部署。现在按模式判定：
+                // 部署目标失败关闭闸门（P0）：目标为空时若静默保留本地 staging 并返回，
+                // Publish 模式的工作流会"看起来成功"却从未部署。故按模式判定：
                 //   - BuildOnly：允许无部署目标，只保留 staging（此时才是合法的"不部署"）；
                 //   - Publish/Promote/Rollback：目标为空由工厂抛 RELEASE_E_STORE_NOT_CONFIGURED。
                 if (ctx.Mode == ReleaseMode.BuildOnly)

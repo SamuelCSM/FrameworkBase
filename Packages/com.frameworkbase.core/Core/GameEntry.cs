@@ -30,7 +30,7 @@ namespace Framework.Core
         private AppFlow _appFlow;
         private CancellationTokenSource _appFlowCts;
         // 启动下载阶段（LaunchFlow：Catalog/资源/代码补丁下载）的作用域取消源，早于 _appFlowCts 创建。
-        // 此前该阶段完全无令牌，应用退出时在途下载只能被弃置空转；有了它可在 OnDestroy 干净中止。
+        // 该阶段必须自带令牌：否则应用退出时在途下载只能被弃置空转，无法在 OnDestroy 干净中止。
         private CancellationTokenSource _bootCts;
 
         // ── Inspector 序列化字段 ──────────────────────────────────────────────

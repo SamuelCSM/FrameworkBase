@@ -14,16 +14,16 @@ namespace Editor.ExcelTool
     public class ExcelExporterWindow : EditorWindow
     {
         private const string DefaultExcelFolder = "Assets/RefData_Excel";
-        private const string ExcelPathPrefsKey = "ClientBase.ExcelExporterWindow.ExcelPath";
+        private const string ExcelPathPrefsKey = "FrameworkBase.ExcelExporterWindow.ExcelPath";
         /// <summary>
         /// 单文件导出时记忆工作表名的 EditorPrefs 键。
         /// </summary>
-        private const string SheetNamePrefsKey = "ClientBase.ExcelExporterWindow.SheetName";
-        private const string OutputTargetPrefsKey = "ClientBase.ExcelExporterWindow.OutputTarget";
-        private const string FileScopePrefsKey = "ClientBase.ExcelExporterWindow.FileScope";
-        private const string PruneMissingTablesPrefsKey = "ClientBase.ExcelExporterWindow.PruneMissingTables";
-        private const string ServerExportPrefsKey = "ClientBase.ExcelExporterWindow.ServerExport";
-        private const string ServerOutputDirPrefsKey = "ClientBase.ExcelExporterWindow.ServerOutputDir";
+        private const string SheetNamePrefsKey = "FrameworkBase.ExcelExporterWindow.SheetName";
+        private const string OutputTargetPrefsKey = "FrameworkBase.ExcelExporterWindow.OutputTarget";
+        private const string FileScopePrefsKey = "FrameworkBase.ExcelExporterWindow.FileScope";
+        private const string PruneMissingTablesPrefsKey = "FrameworkBase.ExcelExporterWindow.PruneMissingTables";
+        private const string ServerExportPrefsKey = "FrameworkBase.ExcelExporterWindow.ServerExport";
+        private const string ServerOutputDirPrefsKey = "FrameworkBase.ExcelExporterWindow.ServerOutputDir";
 
         private enum FileScopeMode
         {

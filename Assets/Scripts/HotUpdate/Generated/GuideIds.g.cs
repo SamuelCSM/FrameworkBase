@@ -26,6 +26,7 @@ namespace HotUpdate.Guide.Generated
     {
         public const int ClickerShopReady = 420001;
         public const int ClickerShopBuyClicked = 420002;
+        public const int GuideOverlayClicked = 420003;
     }
 
     public static class ActionIds

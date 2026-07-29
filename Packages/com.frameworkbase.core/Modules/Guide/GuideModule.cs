@@ -26,15 +26,28 @@ namespace Framework
     {
         /// <summary>引导私有目录提供者（L3 从 ConfigData 构建，延迟到 StartAsync 求值）。</summary>
         private readonly Func<GuideCatalog> _guideCatalogProvider;
+        /// <summary>L3 注入的替换表现实现；为 null 时 RegisterCapabilities 自建矩形挖孔基线（ADR-008 补遗）。</summary>
+        private readonly IGuidePresenter _injectedPresenter;
         /// <summary>配置引导运行器；StartAsync 创建并初始化，Dispose 释放。</summary>
         private GuideRunner _runner;
-        /// <summary>挖孔遮罩表现服务；RegisterCapabilities 创建，供引导表现 Action 与遮罩兜底使用。</summary>
-        private GuidePresentationService _presentation;
+        /// <summary>引导表现缝的实际实现；RegisterCapabilities 求值（注入优先，否则自建默认），供表现 Action 与遮罩兜底使用。</summary>
+        private IGuidePresenter _presentation;
 
+        /// <summary>默认构造：表现用框架自带的矩形挖孔基线（现状行为，零变化）。</summary>
         public GuideModule(Func<GuideCatalog> guideCatalogProvider)
+            : this(guideCatalogProvider, null)
+        {
+        }
+
+        /// <summary>
+        /// 注入替换表现构造（ADR-008 补遗）：<paramref name="presenter"/> 非空则用它替代矩形基线
+        /// （Shader/原对象提层等），并把其生命周期交由本模块（Dispose 时一并释放）。
+        /// </summary>
+        public GuideModule(Func<GuideCatalog> guideCatalogProvider, IGuidePresenter presenter)
         {
             _guideCatalogProvider = guideCatalogProvider
                 ?? throw new ArgumentNullException(nameof(guideCatalogProvider));
+            _injectedPresenter = presenter;
         }
 
         /// <summary>Phase 1：引导表现依赖 L1 UI 能力；表现 Action 的 executor 必须在编排 Catalog 冻结前注册。</summary>
@@ -45,13 +58,19 @@ namespace Framework
             if (GameEntry.Actions.DefaultTimeout <= TimeSpan.Zero)
                 GameEntry.Actions.DefaultTimeout = TimeSpan.FromSeconds(30);
 
-            _presentation = new GuidePresentationService(GameEntry.UI, GameEntry.UI.Targets);
+            // 注入优先，否则自建矩形挖孔基线；延迟到此刻是因为默认实现依赖 L1 UI 能力（此时已就绪）。
+            _presentation = _injectedPresenter
+                ?? new GuidePresentationService(GameEntry.UI, GameEntry.UI.Targets);
             GameEntry.Actions.Register(
                 GuideOrchestrationTypeIds.FocusTargetAction,
                 new GuideFocusTargetAction(_presentation));
             GameEntry.Actions.Register(
                 GuideOrchestrationTypeIds.ClearFocusAction,
                 new GuideClearFocusAction(_presentation));
+            // 「孔外点击」触发器：把表现层 DimClicked 桥接成编排 Trigger，供「点任意处继续」的对话步骤用。
+            GameEntry.Triggers.Register(
+                GuideOrchestrationTypeIds.OverlayClickedTrigger,
+                new GuideOverlayClickedTrigger(_presentation));
         }
 
         /// <summary>Phase 2：编排冻结后初始化引导运行器、接线诊断与遮罩兜底、开始监听。</summary>
@@ -211,8 +230,8 @@ namespace Framework
 
         private sealed class GuideFocusTargetAction : IActionExecutor<GuideFocusTargetActionPayload>
         {
-            private readonly GuidePresentationService _presentation;
-            public GuideFocusTargetAction(GuidePresentationService presentation) => _presentation = presentation;
+            private readonly IGuidePresenter _presentation;
+            public GuideFocusTargetAction(IGuidePresenter presentation) => _presentation = presentation;
 
             public UniTask<ActionExecutionResult> ExecuteAsync(
                 GuideFocusTargetActionPayload payload,
@@ -228,10 +247,52 @@ namespace Framework
             }
         }
 
+        /// <summary>
+        /// 「孔外压暗区被点击」触发器（ADR-008 补遗）：把 <see cref="IGuidePresenter.DimClicked"/> 桥接成编排 Trigger。
+        /// 用于「点任意处继续」的对话步骤——完成信号即玩家点击，避免漏配 CompleteTrigger 空等到步骤超时。
+        /// 无参：触发条件是遮罩被点，payload 仅作标记；订阅随 BindOnce/步骤结束经返回句柄一并退订。
+        /// </summary>
+        private sealed class GuideOverlayClickedTrigger : ITriggerBinder<GuideOverlayClickedTriggerPayload>
+        {
+            private readonly IGuidePresenter _presentation;
+            public GuideOverlayClickedTrigger(IGuidePresenter presentation) => _presentation = presentation;
+
+            public IDisposable Bind(
+                GuideOverlayClickedTriggerPayload payload,
+                TriggerContext context,
+                Action<object> onTriggered)
+            {
+                // 显式存同一委托实例，保证退订摘的就是订阅挂上的那个。
+                Action handler = () => onTriggered(null);
+                _presentation.DimClicked += handler;
+                return new Subscription(_presentation, handler);
+            }
+
+            /// <summary>退订句柄：释放时从表现层摘掉点击处理器；幂等，重复 Dispose 无副作用。</summary>
+            private sealed class Subscription : IDisposable
+            {
+                private IGuidePresenter _presentation;
+                private readonly Action _handler;
+
+                public Subscription(IGuidePresenter presentation, Action handler)
+                {
+                    _presentation = presentation;
+                    _handler = handler;
+                }
+
+                public void Dispose()
+                {
+                    IGuidePresenter presentation = _presentation;
+                    _presentation = null;
+                    if (presentation != null) presentation.DimClicked -= _handler;
+                }
+            }
+        }
+
         private sealed class GuideClearFocusAction : IActionExecutor<GuideClearFocusActionPayload>
         {
-            private readonly GuidePresentationService _presentation;
-            public GuideClearFocusAction(GuidePresentationService presentation) => _presentation = presentation;
+            private readonly IGuidePresenter _presentation;
+            public GuideClearFocusAction(IGuidePresenter presentation) => _presentation = presentation;
 
             public UniTask<ActionExecutionResult> ExecuteAsync(
                 GuideClearFocusActionPayload payload,

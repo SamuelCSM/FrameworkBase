@@ -126,8 +126,9 @@ namespace Framework.Foundation
             public int FinalCount;
 
             /// <summary>
-            /// 增量刷新的受影响标记；仅在单次 <see cref="FlushDirty"/> 内为 true，用于零分配去重，
-            /// 替代旧实现每次 Flush 都新建的 HashSet。刷新结束后必须复位为 false。
+            /// 增量刷新的受影响标记；仅在单次 <see cref="FlushDirty"/> 内为 true。
+            /// 用节点上的标记位而非每次 Flush 新建 HashSet 来去重，换取零分配。
+            /// 刷新结束后必须复位为 false。
             /// </summary>
             public bool Affected;
         }

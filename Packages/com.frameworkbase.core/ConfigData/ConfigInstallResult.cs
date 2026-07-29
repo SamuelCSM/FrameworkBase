@@ -5,9 +5,9 @@ namespace Framework
     /// <summary>
     /// 配置数据库安装流程的终态分类。
     /// <para>
-    /// 历史缺陷：旧实现用单个 bool 同时表示"本次没有配置更新 / 下载失败 / 校验失败 / 替换失败"，
-    /// LaunchFlow 无法区分"没有热更配置（正常）"与"配置安装失败（必须阻断）"，
-    /// 导致配置失败后启动流程继续提交新 ResourceVersion，形成"新资源 + 旧配置"的不一致组合。
+    /// 每种终态必须显式分开，不得退化成单个 bool：LaunchFlow 要据此区分
+    /// "没有热更配置（正常，放行）"与"配置安装失败（必须阻断）"。二者一旦混为一类，
+    /// 失败后启动流程会继续提交新 ResourceVersion，形成"新资源 + 旧配置"的不一致组合。
     /// </para>
     /// </summary>
     public enum ConfigInstallStatus

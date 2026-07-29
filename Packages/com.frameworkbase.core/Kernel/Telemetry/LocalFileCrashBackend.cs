@@ -13,8 +13,8 @@ namespace Framework.Core.Telemetry
     /// 默认崩溃后端：托管异常本地落盘（JSON Lines，崩溃安全），下次启动 HTTP 上报到
     /// <c>AppConfig.CrashReportUrl</c>。没接厂商 SDK 时的兜底——<b>只能覆盖托管异常</b>，
     /// 原生致命崩溃（SIGSEGV / OOM / ANR）需接入厂商扩展包（见 <see cref="ICrashBackend"/>）。
-    /// 落盘行为与旧版 <c>CrashReporter</c> 等价，另把 <see cref="SetUser"/> / <see cref="SetCustomKey"/> /
-    /// <see cref="LeaveBreadcrumb"/> 的归因字段一并写进记录。
+    /// <see cref="SetUser"/> / <see cref="SetCustomKey"/> / <see cref="LeaveBreadcrumb"/> 设置的
+    /// 归因字段会一并写进每条记录。
     /// </summary>
     public sealed class LocalFileCrashBackend : ICrashBackend
     {

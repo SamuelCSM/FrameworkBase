@@ -8,15 +8,24 @@ namespace Framework.Save
     /// AES-128-CBC 加解密 + HMAC-SHA256 完整性工具（框架内部使用）。
     ///
     /// 主密钥种子由 <see cref="ISaveKeyProvider"/> 提供（默认绑定本设备），
-    /// 再经 SHA-256 派生出两把彼此独立的子密钥：
-    ///   · 加密 Key（AES-128）：保持与历史版本一致，旧存档仍可解密；
-    ///   · MAC Key（HMAC-SHA256）：独立派生，用于防篡改完整性校验。
+    /// 与项目级域分隔 Salt（见 <see cref="SetAppSalt"/>）拼接后经 SHA-256 派生出两把彼此独立的子密钥：
+    ///   · 加密 Key（AES-128）：SHA256(种子 + Salt) 取前 16 字节；
+    ///   · MAC Key（HMAC-SHA256）：追加独立标签派生，用于防篡改完整性校验。
     /// 不在代码中硬编码裸 Key；IV 随机生成并前置于密文，解密时自动读取。
+    /// 种子与 Salt 任一变化都会换出新密钥，旧存档随之不可解——这是刻意的隔离语义，不是缺陷。
     /// </summary>
     internal static class AesHelper
     {
-        // 固定 Salt —— 修改此值会导致旧存档无法解密，请勿随意更改
-        private const string AppSalt = "ClientBase_SaveSalt_v1";
+        // 域分隔 Salt 的框架兜底值。按设计不要求保密，故明文常量无妨。
+        // internal 而非 private：单测换 Salt 后需据此还原，避免污染其它用例。
+        internal const string DefaultAppSalt = "FrameworkBase_SaveSalt_v1";
+
+        // 域分隔 Salt —— 它是同设备上不同产品之间的唯一区分量，必须按项目取值：
+        // 默认主密钥种子是 deviceUniqueIdentifier，同一台设备上两个 FrameworkBase 产品拿到的种子
+        // 完全相同，全靠此 Salt 把两者的派生密钥分开。留用框架兜底值不会立即出错，但会让
+        // 同设备上的兄弟产品派生出同一把存档密钥，故正式项目须经 SaveManager.SetSaveSalt 覆盖。
+        // 只在 _keyLock 内被 EnsureKeys 读取，故无需 volatile。
+        private static string _appSalt = DefaultAppSalt;
         // MAC 子密钥派生标签 —— 与加密 Key 做密钥分离，避免同一把 Key 既加密又签名
         private const string MacLabel = "|mac";
         private const int KeyBytes = 16; // AES-128
@@ -26,12 +35,31 @@ namespace Framework.Save
         // 存档主密钥来源：默认绑定本设备；上云/跨设备时可通过 SetKeyProvider 替换
         private static ISaveKeyProvider _keyProvider = new DeviceSaveKeyProvider();
 
-        // volatile + _keyLock：不再依赖"SaveManager 档案锁"的隐式约定。AesHelper 同时被 SaveManager 与
-        // EncryptedPrefsSecureStorage 复用，二者的调用线程不由单一档案锁串行；SetKeyProvider 清缓存与
-        // EnsureKeys 派生若并发，非同步的 check-then-act 会撕裂读到"enc 已置、mac 仍空"的半初始化密钥。
+        // volatile + _keyLock：本类被 SaveManager 与 EncryptedPrefsSecureStorage 共用，二者的调用线程
+        // 不由任何单一外部锁串行，故同步必须自带，不能倚赖"调用方持有档案锁"的隐式约定。
+        // SetKeyProvider 清缓存与 EnsureKeys 派生若并发，非同步的 check-then-act 会撕裂读到
+        // "enc 已置、mac 仍空"的半初始化密钥。
         private static volatile byte[] _cachedEncKey; // AES 加解密 Key（16 字节）
         private static volatile byte[] _cachedMacKey; // HMAC-SHA256 Key（32 字节）
         private static readonly object _keyLock = new object();
+
+        /// <summary>
+        /// 替换域分隔 Salt 并清空密钥缓存，下次读写时按新 Salt 重新派生。
+        /// 须在任何读写存档之前调用；更换 Salt 会使此前用旧 Salt 加密的存档无法解密。
+        /// </summary>
+        /// <param name="salt">项目级唯一串，建议用包名（如 com.yourcompany.yourgame）。不得为空白。</param>
+        /// <exception cref="ArgumentException">salt 为 null 或全空白时抛出——空 Salt 会静默退化成无域分隔。</exception>
+        internal static void SetAppSalt(string salt)
+        {
+            if (string.IsNullOrWhiteSpace(salt)) throw new ArgumentException("Salt 不得为空白", nameof(salt));
+            // 与 EnsureKeys 同锁，理由同 SetKeyProvider：换 Salt 与清缓存必须相对派生原子
+            lock (_keyLock)
+            {
+                _appSalt = salt;
+                _cachedEncKey = null;
+                _cachedMacKey = null;
+            }
+        }
 
         /// <summary>
         /// 替换存档主密钥来源并清空密钥缓存，下次读写时按新来源重新派生。
@@ -61,11 +89,11 @@ namespace Framework.Save
 
                 var master = _keyProvider.GetMasterSecret() ?? string.Empty;
 
-                // 加密 Key：与历史保持一致 = SHA256(master + Salt) 取前 16 字节，保证旧档可解密
+                // 加密 Key = SHA256(master + Salt) 取前 16 字节
                 byte[] encKey = new byte[KeyBytes];
                 using (var sha = SHA256.Create())
                 {
-                    var encHash = sha.ComputeHash(Encoding.UTF8.GetBytes(master + AppSalt));
+                    var encHash = sha.ComputeHash(Encoding.UTF8.GetBytes(master + _appSalt));
                     Array.Copy(encHash, encKey, KeyBytes);
                 }
 
@@ -73,7 +101,7 @@ namespace Framework.Save
                 byte[] macKey;
                 using (var sha = SHA256.Create())
                 {
-                    macKey = sha.ComputeHash(Encoding.UTF8.GetBytes(master + AppSalt + MacLabel));
+                    macKey = sha.ComputeHash(Encoding.UTF8.GetBytes(master + _appSalt + MacLabel));
                 }
 
                 // 锁内最后发布：先 enc 后 mac，读侧快路径要求两者皆非空才命中，避免撕裂。

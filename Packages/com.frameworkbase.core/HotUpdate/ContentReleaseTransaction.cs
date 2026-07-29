@@ -462,7 +462,7 @@ namespace Framework.HotUpdate
             }
             catch (Exception ex)
             {
-                // 失败安全：损坏的状态文件不再"当作无事务继续"，而是标记损坏，交由 PrepareForLaunch
+                // 失败安全：损坏的状态文件不得"当作无事务继续"，须标记损坏并交由 PrepareForLaunch
                 // 安全兜底——无法证明当前内容已确认时，优先恢复快照，无快照则回退出厂。
                 _logError($"[ContentRelease] 状态文件损坏，将走启动安全兜底：{ex.Message}");
                 _stateWasCorrupt = true;

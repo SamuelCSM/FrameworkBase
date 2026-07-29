@@ -200,7 +200,7 @@ namespace Framework
             }
             catch (Exception ex)
             {
-                // "查询失败"必须显式向上传播；旧实现吞异常返回 0 会被误判为"所有 bundle 已是最新"。
+                // "查询失败"必须显式向上传播：吞异常返回 0 会被误判为"所有 bundle 已是最新"。
                 _logError($"[ResourceManager] 下载尺寸查询失败 [{key}]：{ex.Message}");
                 return DownloadSizeResult.Failed(ex.Message);
             }
