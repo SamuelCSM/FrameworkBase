@@ -21,8 +21,8 @@ namespace Framework.Editor
     /// </summary>
     public class FullPackagePublisherWindow : EditorWindow
     {
-        internal const string AutoSwitchBackAfterBuildPrefsKey = "ClientBase.FullPackage.AutoSwitchBackAfterBuild";
-        private const string BuildOutputPathPrefsKey = "ClientBase.FullPackage.BuildOutputPath";
+        internal const string AutoSwitchBackAfterBuildPrefsKey = "FrameworkBase.FullPackage.AutoSwitchBackAfterBuild";
+        private const string BuildOutputPathPrefsKey = "FrameworkBase.FullPackage.BuildOutputPath";
 
         /// <summary>
         /// 整包一键流程状态机。
@@ -435,7 +435,8 @@ namespace Framework.Editor
         private static string PickBuildOutputPath()
         {
             BuildTarget target = EditorUserBuildSettings.activeBuildTarget;
-            string productName = string.IsNullOrEmpty(PlayerSettings.productName) ? "ClientBase" : PlayerSettings.productName;
+            // 兜底名取框架名而非任何具体项目名：未填 productName 的新工程不应打出带他人项目名的包体
+            string productName = string.IsNullOrEmpty(PlayerSettings.productName) ? "FrameworkBase" : PlayerSettings.productName;
 
             if (target == BuildTarget.StandaloneWindows || target == BuildTarget.StandaloneWindows64)
             {

@@ -15,7 +15,7 @@ namespace Editor.ExcelTool
     /// </summary>
     public class ConfigTableEditorWindow : EditorWindow
     {
-        private const string PrefsPrefix = "ClientBase.ConfigTableEditor.";
+        private const string PrefsPrefix = "FrameworkBase.ConfigTableEditor.";
         private const string ModePrefsKey = PrefsPrefix + "Mode";
         private const string ExcelPathPrefsKey = PrefsPrefix + "ExcelPath";
         private const string TableNamePrefsKey = PrefsPrefix + "TableName";

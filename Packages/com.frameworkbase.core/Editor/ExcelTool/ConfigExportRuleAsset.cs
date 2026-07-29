@@ -39,7 +39,7 @@ namespace Editor.ExcelTool
     /// <summary>
     /// 配表导出规则资产。默认双端 Keyed Table，Overrides 维护导出目标与少数 List 形态例外。
     /// </summary>
-    [CreateAssetMenu(fileName = "ConfigExportRules", menuName = "ClientBase/Config Export Rules")]
+    [CreateAssetMenu(fileName = "ConfigExportRules", menuName = "Framework/Config Export Rules")]
     public sealed class ConfigExportRuleAsset : ScriptableObject
     {
         /// <summary>

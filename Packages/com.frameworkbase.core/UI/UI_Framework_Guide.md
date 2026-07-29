@@ -848,14 +848,14 @@ HotUpdate/Scene/Sample/
 
 ## 验证
 
-修改 Framework UI 代码后执行：
+修改 Framework UI 代码后，在仓库根目录执行：
 
 ```powershell
-dotnet build G:\ClientBase\Framework.csproj --no-restore
+dotnet build .\Framework.csproj --no-restore
 ```
 
-修改 HotUpdate UI 代码后执行：
+修改 HotUpdate UI 代码后，在仓库根目录执行：
 
 ```powershell
-dotnet build G:\ClientBase\HotUpdate.csproj --no-restore
+dotnet build .\HotUpdate.csproj --no-restore
 ```
