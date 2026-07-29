@@ -188,6 +188,7 @@ public class PlayerData : SaveData
 | **AES-128-CBC 加密** | Key 由主密钥种子 + `Salt` 经 SHA-256 派生（默认种子 = `deviceUniqueIdentifier`），防止直接阅读存档 |
 | **HMAC-SHA256 完整性校验** | 用独立派生的 MAC Key 做 encrypt-then-MAC；读档常数时间校验，被篡改时拒绝加载并 fallback 到备份。旧版裸 SHA-256 存档仍可读入，下次写档自动升级为 HMAC |
 | **可插拔密钥来源** | 主密钥种子由 `ISaveKeyProvider` 提供，默认 `DeviceSaveKeyProvider`（绑定设备）。上云/跨设备时注入账号或服务端下发密钥的实现即可 |
+| **项目级域分隔 Salt** | `SaveManager.Instance.SetSaveSalt("com.yourcompany.yourgame")`，须早于第一次读写存档。**正式项目必设**——默认种子是设备 ID，同一台设备上两个 FrameworkBase 产品的种子完全相同，全靠 Salt 分开派生密钥；不设则沿用框架兜底值，兄弟产品会派生出同一把存档密钥 |
 | **原子写入** | 先写 `.tmp` 再重命名，防止写到一半崩溃导致存档损坏 |
 | **自动备份** | 每次写档前把旧档备份为 `.sav.bak`，主档损坏时自动恢复 |
 

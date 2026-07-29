@@ -8,7 +8,8 @@
   + 最小壳工程（协议模板程序集 / 冒烟示例 / 工程配置），壳工程同时充当新项目模板。
 - **分发**：本仓库内框架以 embedded package 形式演进；新项目经 git URL /
   本地路径引用 `com.frameworkbase.core` 获得只读版本化依赖，修复经版本发布回流，不再源码分叉。
-- **来源**：ClientBase 的 `Assets/Scripts/Framework/` 单向抽取（复制，非 submodule 反向引用）。
+- **来源**：由前身项目的 `Assets/Scripts/Framework/` 单向抽取（复制，非 submodule 反向引用），
+  此后独立演进，不再与前身同步。
 
 ## 目录
 
@@ -72,9 +73,13 @@ Tools/ci/                    本地 CI 门禁脚本（run-ci.ps1）与 CI 说明
    `proto/sample/sample_list.proto` 是模板示例，起步时删除替换。
 3. **热更程序集组**：经 `AppConfig.HotUpdateAssemblyFiles` 配置（依赖在前），留空默认
    `GameProtocol → HotUpdate`；无热更程序集的项目关闭 `EnableHotUpdate`。
-4. **提交纪律**：提交前跑 `Tools\ci\run-ci.ps1`（需关闭 Unity 编辑器）；push/PR 由 GitHub Actions
+4. **存档域分隔**：正式项目须在首次读写存档之前调用
+   `SaveManager.Instance.SetSaveSalt("com.yourcompany.yourgame")`。默认主密钥种子是设备 ID，
+   同一台设备上两个 FrameworkBase 产品的种子完全相同，全靠此 Salt 分开派生密钥；
+   不设则沿用框架兜底值。**上线后再改会使既有存档全部无法解密**，须一开始就定下来。
+5. **提交纪律**：提交前跑 `Tools\ci\run-ci.ps1`（需关闭 Unity 编辑器）；push/PR 由 GitHub Actions
    复验（首次启用需配置 Unity 许可 Secrets，见 `Tools/ci/README.md`）。
-5. **业务广播消息**：在业务程序集自建枚举从 20000 起占号，订阅/发布时转成 `int` 走
+6. **业务广播消息**：在业务程序集自建枚举从 20000 起占号，订阅/发布时转成 `int` 走
    `EventManager` 重载；`Framework/Event/GameMessage.cs` 仅保留框架系统段（9000-9999）
    与登录段（10000-10999）。
 

@@ -7,7 +7,8 @@ namespace Framework.Tests
 {
     /// <summary>
     /// 存档加密核心单测（AesHelper）：加解密往返、随机 IV、HMAC 防篡改、密钥分离、
-    /// 换密钥来源后旧档不可解（设备绑定语义）。这是存档安全的地基，同步可测、不碰磁盘。
+    /// 换密钥来源后旧档不可解（设备绑定语义）、换 Salt 后旧档不可解（同设备跨产品域分隔语义）。
+    /// 这是存档安全的地基，同步可测、不碰磁盘。
     /// </summary>
     public class AesHelperTests
     {
@@ -23,13 +24,16 @@ namespace Framework.Tests
         {
             // 固定主密钥，摆脱对本机 deviceUniqueIdentifier 的依赖，判定确定
             AesHelper.SetKeyProvider(new FixedKeyProvider("unit-test-master-secret"));
+            // Salt 同样固定：它与主密钥种子一同参与派生，不钉死则用例间会互相串味
+            AesHelper.SetAppSalt("unit-test-salt");
         }
 
         [TearDown]
         public void TearDown()
         {
-            // 还原默认设备绑定来源，避免污染其它用例/播放态
+            // 还原默认设备绑定来源与框架兜底 Salt，避免污染其它用例/播放态
             AesHelper.SetKeyProvider(new DeviceSaveKeyProvider());
+            AesHelper.SetAppSalt(AesHelper.DefaultAppSalt);
         }
 
         [Test]
@@ -103,6 +107,40 @@ namespace Framework.Tests
 
             Assert.AreNotEqual(secret, recovered,
                 "换密钥来源后绝不能解出原文（存档设备绑定语义）");
+        }
+
+        [Test]
+        public void 换Salt后_旧档无法解密()
+        {
+            const string secret = "coins=9999";
+            byte[] cipher = AesHelper.Encrypt(secret);
+
+            // 模拟同设备上的另一个产品：主密钥种子相同（同一台设备），仅 Salt 不同。
+            // 这正是 Salt 存在的理由——若 Salt 不参与派生，两个产品会解开彼此的存档。
+            AesHelper.SetAppSalt("another-product-salt");
+
+            // 断言口径与「换密钥来源」用例一致：不能断言"必抛"。AES-CBC+PKCS7 用错 key 时
+            // 约 1/256 概率解出乱码而 padding 恰好合法，断言必抛会让 CI 偶发误挂。
+            string recovered = null;
+            try
+            {
+                recovered = AesHelper.Decrypt(cipher);
+            }
+            catch (CryptographicException)
+            {
+                Assert.Pass("padding 校验失败，跨产品不可解（域分隔语义成立）");
+            }
+
+            Assert.AreNotEqual(secret, recovered,
+                "换 Salt 后绝不能解出原文（同设备不同产品的存档域分隔语义）");
+        }
+
+        [Test]
+        public void 设置空白Salt_抛异常()
+        {
+            // 空 Salt 会静默退化成"无域分隔"，必须在入口拒绝而不是让它悄悄生效
+            Assert.Throws<System.ArgumentException>(() => AesHelper.SetAppSalt(null));
+            Assert.Throws<System.ArgumentException>(() => AesHelper.SetAppSalt("   "));
         }
 
         [Test]
