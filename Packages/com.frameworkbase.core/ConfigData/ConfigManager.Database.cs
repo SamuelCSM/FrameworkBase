@@ -179,7 +179,7 @@ namespace Framework
         /// 安装成功（Installed，旧库备份保留至启动确认点）/ 下载失败 / 校验失败 / 替换失败 / 重载失败。
         /// 调用方（LaunchFlow）必须检查 <see cref="ConfigInstallResult.Succeeded"/>：
         /// 任何失败终态都要中止本次启动更新，禁止继续提交版本状态——
-        /// 旧实现的单 bool 返回把"没有配置更新"和"安装失败"混成一类，失败会被静默放行。
+        /// 若把"没有配置更新"和"安装失败"混成一类，失败会被静默放行。
         /// </para>
         /// </summary>
         public async UniTask<ConfigInstallResult> UpdateDatabaseFromAddressablesAsync(
@@ -772,9 +772,9 @@ namespace Framework
 #endif
         }
 
-        // 说明：旧的 InstallDatabaseBytes（临时文件→校验→备份→替换→立即删备份）已收敛进
-        // ConfigDatabaseInstaller。行为差异：备份不再在安装成功后立即删除，而是保留到统一启动
-        // 确认点（ConfirmHotUpdateDatabase），使配置回滚与代码槽回滚保持一致的事务边界。
+        // 安装事务（临时文件→校验→备份→替换）收在 ConfigDatabaseInstaller，本类不重复实现。
+        // 备份保留到统一启动确认点（ConfirmHotUpdateDatabase）而非安装成功即删，
+        // 使配置回滚与代码槽回滚共享同一事务边界。
 
         /// <summary>
         /// 打开数据库文件，并校验 SQLite 能否读取其表结构。

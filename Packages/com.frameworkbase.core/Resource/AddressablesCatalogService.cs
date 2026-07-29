@@ -60,7 +60,7 @@ namespace Framework
                 await handle.Task;
                 cancellationToken.ThrowIfCancellationRequested();
 
-                // 历史缺陷修复点：旧实现从不检查 UpdateCatalogs 的句柄状态，失败也被当成功。
+                // await 返回不代表成功：UpdateCatalogs 失败时句柄状态为 Failed 而不抛，不检查即误判为成功。
                 if (handle.Status != AsyncOperationStatus.Succeeded)
                 {
                     throw new CatalogOperationException(

@@ -231,8 +231,8 @@ namespace Framework.Tests
             var tx = NewTransaction();
             ContentReleaseTransaction.LaunchRecoveryReport report = null;
             Assert.DoesNotThrow(() => report = tx.PrepareForLaunch(), "损坏状态不得抛异常中断启动");
-            // 策略变更（#2）：损坏状态不再"当作无状态继续信任当前 Catalog"——那样可能放行事务中途
-            // 写坏的、与旧代码槽错配的新 Catalog。改为安全兜底：无法证明已确认时优先恢复快照，无快照则回退出厂。
+            // 损坏状态不得"当作无状态继续信任当前 Catalog"：那样可能放行事务中途写坏的、
+            // 与代码槽错配的新 Catalog。语义是安全兜底——无法证明已确认时优先恢复快照，无快照则回退出厂。
             Assert.IsTrue(report.StateCorruptionHandled,
                 "损坏状态必须走安全兜底（恢复快照/回退出厂），不得静默继续信任当前内容");
             Assert.IsFalse(report.PendingRolledBack, "损坏时不基于垃圾数据做猜测性 Pending 回滚");

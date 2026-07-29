@@ -7,8 +7,8 @@ namespace Framework
     /// 配置数据库事务化安装器（纯文件逻辑，可测试）。
     /// <para>
     /// 事务边界：安装 = 写临时文件 → 校验 → 备份旧库（.bak）→ 覆盖正式库。
-    /// 与旧实现的关键区别：<b>安装成功后不再立即删除 .bak</b>——备份保留到统一启动确认点
-    /// （<see cref="ConfirmInstalled"/>），启动确认前任何失败（Hotfix 启动失败、进程被杀）都能通过
+    /// <b>.bak 不在安装成功时删除，而是保留到统一启动确认点</b>（<see cref="ConfirmInstalled"/>）：
+    /// 启动确认前的任何失败（Hotfix 启动失败、进程被杀）都能通过
     /// <see cref="RestoreLastConfirmed"/> 恢复上一份已确认数据库，避免"代码槽回滚而配置停留新版本"。
     /// </para>
     /// <para>

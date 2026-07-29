@@ -1,14 +1,14 @@
 # FrameworkBase 行尾与文件类型规约
 #
-# 为什么需要：本仓库此前无 .gitattributes，git 不做归一化，仓库里存什么行尾就是什么。
-# 实测跟踪文件中 1559 个纯 LF、224 个纯 CRLF、31 个「同一文件内混合行尾」。
-# 后果是任何整文件重写型工具（sed / 格式化器 / 编辑器保存）碰一下就会统一行尾，
-# 令一个改几个字符的提交炸成上千行 diff，污染 review、blame 与合并。
+# 没有本文件时 git 不归一化行尾，仓库里存什么就是什么，同一文件内都可能 CRLF/LF 混杂。
+# 后果是任何整文件重写型工具（sed / 格式化器 / 编辑器保存）碰一下就统一行尾，
+# 令改几个字符的提交炸成上千行 diff，污染 review、blame 与合并。
 #
-# 取值理由：仓库主流已是 LF（1559/1814），且远端 CI 跑 Linux 容器，
-# 故选 eol=lf —— 索引与工作区都是 LF，Windows 本地与 Linux CI 字节完全一致。
-# 配套：ProjectSettings/EditorSettings.asset 的 m_LineEndingsForNewScripts 已置 1（Unix），
-# 否则 Unity 新建脚本仍写 CRLF，会持续制造与本规约相反的文件。
+# 取值理由：仓库主流是 LF，且远端 CI 跑 Linux 容器，故选 eol=lf ——
+# 索引与工作区都是 LF，Windows 本地与 Linux CI 字节一致。
+# 配套两处，缺一则本规约会被持续绕过：
+#   ProjectSettings/EditorSettings.asset 的 m_LineEndingsForNewScripts = 1（Unix），管 Unity 新建脚本；
+#   .editorconfig 的 end_of_line，管编辑器写入。
 
 * text=auto eol=lf
 

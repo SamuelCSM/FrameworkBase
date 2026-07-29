@@ -6,8 +6,8 @@ root = true
 [*]
 charset = utf-8
 # 行尾统一 LF，与 .gitattributes 的 `* text=auto eol=lf` 对齐。
-# 缺了这一项，VS/Rider 在 Windows 上新建文件仍写 CRLF：git 入库时会归一化故无 diff 噪音，
-# 但工作区会重新退化成 CRLF/LF 混杂——正是 2026-07 清理掉的那个毛病。
+# 缺了这一项，VS/Rider 在 Windows 上新建文件会写 CRLF：git 入库时归一化故无 diff 噪音，
+# 但工作区会退化成 CRLF/LF 混杂。
 end_of_line = lf
 insert_final_newline = true
 trim_trailing_whitespace = true

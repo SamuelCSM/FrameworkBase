@@ -13,10 +13,10 @@ namespace HotUpdate.Entry
     /// 全局编排装配根（L3，ADR-008）：从 rule/trigger/action 三组配表构建 <see cref="RuleCatalog"/>、
     /// <see cref="TriggerCatalog"/>、<see cref="ActionCatalog"/> 并在冻结钩子里 Initialize。
     /// <para>
-    /// 这三个目录是<b>全框架共享</b>的基础设施，不属于任何单个模块——此前它们寄生在 GuideBootstrap 里，
-    /// 且用 <c>GameEntry.OnFreezeOrchestration = ...</c> 单槽赋值，第二个需要注册 Payload 工厂的模块出现时
-    /// 会静默覆盖引导的冻结逻辑。现由本类独占钩子，各模块只经
-    /// <see cref="RegisterActionPayloadFactory{TPayload}"/> 等接口贡献自己那部分 Payload 工厂。
+    /// 这三个目录是<b>全框架共享</b>的基础设施，不属于任何单个模块，故必须由本类独占
+    /// <c>GameEntry.OnFreezeOrchestration</c> 钩子——该钩子是单槽赋值，若由某个模块持有，
+    /// 第二个需要注册 Payload 工厂的模块出现时会静默覆盖掉前者的冻结逻辑。
+    /// 各模块只经 <see cref="RegisterActionPayloadFactory{TPayload}"/> 等接口贡献自己那部分 Payload 工厂。
     /// </para>
     /// </summary>
     public static class OrchestrationBootstrap

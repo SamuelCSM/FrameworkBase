@@ -11,8 +11,9 @@ using UnityEditor.AddressableAssets.Build;
 namespace Framework.Editor.Release
 {
     /// <summary>
-    /// 热更发布流水线的标准步骤集。入口（HotUpdatePublisher 窗口 / ReleaseBatchEntry CI 命令行）组装
-    /// 这些步骤调用 <see cref="ReleasePipeline.Run"/>，不再把流程内联在窗口方法里。
+    /// 热更发布流水线的标准步骤集。流程只在此定义一处：入口（HotUpdatePublisher 窗口 /
+    /// ReleaseBatchEntry CI 命令行）一律组装这些步骤调用 <see cref="ReleasePipeline.Run"/>，
+    /// 不得把流程内联进各自的入口方法，否则 UI 与 CI 两条路会各自漂移。
     /// </summary>
     public static class HotUpdateReleaseSteps
     {
@@ -105,8 +106,8 @@ namespace Framework.Editor.Release
                     // 构建期临时覆盖远程路径，使资源产物进入本次统一 staging；finally 恢复 Profile，避免环境 URL 污染工程资产。
                     profileSettings.SetValue(profileId, AddressableAssetSettings.kRemoteBuildPath, stagedBuildPath);
                     profileSettings.SetValue(profileId, AddressableAssetSettings.kRemoteLoadPath, stagedLoadPath);
-                    // ADR-009：必须产出远程 catalog，客户端才能 CheckForCatalogUpdates 检测到更新并对其验签；
-                    // 此前该开关为 0，资源热更链断裂（catalog 被烘进包、运行时永远查不到远程更新）。
+                    // ADR-009：必须产出远程 catalog，客户端才能 CheckForCatalogUpdates 检测到更新并对其验签。
+                    // 该开关为 0 会静默断裂资源热更链：catalog 被烘进包，运行时永远查不到远程更新。
                     settings.BuildRemoteCatalog = true;
                     AddressableAssetSettings.BuildPlayerContent(out AddressablesPlayerBuildResult result);
                     if (!string.IsNullOrEmpty(result.Error))

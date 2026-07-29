@@ -35,9 +35,10 @@ namespace Framework.Save
         // 存档主密钥来源：默认绑定本设备；上云/跨设备时可通过 SetKeyProvider 替换
         private static ISaveKeyProvider _keyProvider = new DeviceSaveKeyProvider();
 
-        // volatile + _keyLock：不再依赖"SaveManager 档案锁"的隐式约定。AesHelper 同时被 SaveManager 与
-        // EncryptedPrefsSecureStorage 复用，二者的调用线程不由单一档案锁串行；SetKeyProvider 清缓存与
-        // EnsureKeys 派生若并发，非同步的 check-then-act 会撕裂读到"enc 已置、mac 仍空"的半初始化密钥。
+        // volatile + _keyLock：本类被 SaveManager 与 EncryptedPrefsSecureStorage 共用，二者的调用线程
+        // 不由任何单一外部锁串行，故同步必须自带，不能倚赖"调用方持有档案锁"的隐式约定。
+        // SetKeyProvider 清缓存与 EnsureKeys 派生若并发，非同步的 check-then-act 会撕裂读到
+        // "enc 已置、mac 仍空"的半初始化密钥。
         private static volatile byte[] _cachedEncKey; // AES 加解密 Key（16 字节）
         private static volatile byte[] _cachedMacKey; // HMAC-SHA256 Key（32 字节）
         private static readonly object _keyLock = new object();

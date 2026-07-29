@@ -164,8 +164,8 @@ namespace Game.Editor
             if (!Application.isPlaying)
                 return;
 
-            // 硬超时兜底放最前：任何阶段卡住都能退出，杜绝 batchmode 无限跑（上一版把它放在
-            // 各阶段 return 之后，登录阶段一 return 就永远够不到超时 → 挂了数小时）。
+            // 硬超时兜底必须放在所有阶段判定之前：任何阶段卡住都能退出，杜绝 batchmode 无限跑。
+            // 若放在各阶段 return 之后，提前 return 的阶段就永远够不到超时判定，会一直挂着。
             if (EditorApplication.timeSinceStartup >= _deadline)
             {
                 Finish(true);
