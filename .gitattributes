@@ -1,0 +1,48 @@
+# FrameworkBase 行尾与文件类型规约
+#
+# 为什么需要：本仓库此前无 .gitattributes，git 不做归一化，仓库里存什么行尾就是什么。
+# 实测跟踪文件中 1559 个纯 LF、224 个纯 CRLF、31 个「同一文件内混合行尾」。
+# 后果是任何整文件重写型工具（sed / 格式化器 / 编辑器保存）碰一下就会统一行尾，
+# 令一个改几个字符的提交炸成上千行 diff，污染 review、blame 与合并。
+#
+# 取值理由：仓库主流已是 LF（1559/1814），且远端 CI 跑 Linux 容器，
+# 故选 eol=lf —— 索引与工作区都是 LF，Windows 本地与 Linux CI 字节完全一致。
+# 配套：ProjectSettings/EditorSettings.asset 的 m_LineEndingsForNewScripts 已置 1（Unix），
+# 否则 Unity 新建脚本仍写 CRLF，会持续制造与本规约相反的文件。
+
+* text=auto eol=lf
+
+# ── 必须 CRLF ────────────────────────────────────────────────────────────────
+# cmd.exe 解析 LF 换行的批处理时，label/goto 有已知的截断问题
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# ── 必须 LF ──────────────────────────────────────────────────────────────────
+# Git hook 由 Git Bash 执行，CRLF 会令 shebang 解析失败（报 bad interpreter）
+.githooks/* text eol=lf
+*.sh text eol=lf
+
+# ── 二进制：禁止任何行尾转换与文本 diff ──────────────────────────────────────
+# text=auto 会按 NUL 字节自动识别二进制，但下列几类损坏后果严重且静默，显式钉死不靠探测：
+#   .p7s = 热更清单签名，任何字节改动都会让签名校验失败
+#   .db  = 配表 SQLite 库，损坏后表现为运行期读表异常而非构建期报错
+*.p7s binary
+*.db binary
+*.bytes binary
+*.dll binary
+*.so binary
+*.dylib binary
+*.pdb binary
+*.xlsx binary
+*.pdf binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ttf binary
+*.otf binary
+*.wav binary
+*.mp3 binary
+*.ogg binary
+*.fbx binary
+*.unitypackage binary
