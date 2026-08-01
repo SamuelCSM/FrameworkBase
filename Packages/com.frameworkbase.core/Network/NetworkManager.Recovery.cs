@@ -70,6 +70,12 @@ namespace Framework
         /// </summary>
         public override void OnApplicationFocus(bool hasFocus)
         {
+            // 无头进程（batchmode：CI、自动化联调）没有窗口焦点这回事，Unity 在其中恒报无焦点。
+            // 若据此进入后台，OnUpdate 会在入站消息泵之前提前返回，心跳与响应配对被永久冻结，
+            // 表现为"连得上、发得出、永远收不到"。焦点信号在无头进程中无意义，整条忽略。
+            if (UnityEngine.Application.isBatchMode)
+                return;
+
             EnsureLifecycleInitialized();
             if (!hasFocus)
             {
