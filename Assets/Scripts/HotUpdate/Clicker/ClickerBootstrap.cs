@@ -8,6 +8,7 @@ using Framework.Foundation;
 using Framework.Save;
 using HotUpdate.RedDot;
 using HotUpdate.Entry;
+using HotUpdate.Net;
 using HotUpdate.UI.Generated;
 using UnityEngine;
 
@@ -111,6 +112,10 @@ namespace HotUpdate.Clicker
             _mainView = ClickerMainView.Create();
             GameLog.Log($"[Clicker] CLICKER_READY userId={loginResult.UserId} coins={model.Coins} level={model.Level} double={model.DoubleGain}");
 
+            // 长连接在玩法就位后建立：握手失败不阻断进游戏（玩法本地权威），
+            // 未配置服务器地址时按单机模式静默跳过。
+            await GameServerSession.ConnectAndBindAsync();
+
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
             // 自检：仅当外部（CI / ClickerPlayCheck）置环境变量时运行，避免污染日常手动 Play。
             // 直接在带类型访问的热更侧验玩法数值与账号级存档，落 ASCII 哨兵供 CI 判定。
@@ -133,6 +138,9 @@ namespace HotUpdate.Clicker
             bool hadData = ClickerGameDataManager.IsInitialized;
             _mainView = null;
             _redDotCoordinator = null;
+
+            // 先断长连接再释放本地状态：避免重连逻辑在业务已拆掉后仍把旧身份绑回服务端。
+            GameServerSession.Shutdown(reason);
 
             try
             {
