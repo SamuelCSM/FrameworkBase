@@ -61,7 +61,10 @@ Tools/ci/                    本地 CI 门禁脚本（run-ci.ps1）与 CI 说明
 - [x] **E** 分发模型：Framework 迁嵌入式 UPM 包 `com.frameworkbase.core`（semver + CHANGELOG），
       壳工程转正为模板工程
 - [x] **F** 运营能力层：平台 SDK 抽象 / 埋点事件管道 / 远程配置与功能开关
-- [ ] **G** 参考垂直切片：A～C（启动壳/配表/Clicker）已收口；D～G（真实热更/登录/CI/接入文档）待完成
+- [x] **G** 参考垂直切片 A～H 全部收口：启动壳 / 配表 / Clicker 玩法 / **真机热更闭环**（同一 IL2CPP
+      Player 上 v1→v2 数值翻倍→回滚复原）/ 登录与多账号 / CI 接入 / [接入指南](Docs/TemplateGuide.md) /
+      **客户端真连 ServerBase**（SessionBind 握手 + 校时 + 服务端权威档案）。
+      一条命令跑完全链路：`.\Tools\demo\run-demo.ps1`，读法见 [演示向导](Docs/DemoGuide.md)。
 
 ## 使用须知（新项目起步）
 
