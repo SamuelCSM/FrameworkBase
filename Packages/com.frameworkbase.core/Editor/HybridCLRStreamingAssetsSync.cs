@@ -34,6 +34,31 @@ namespace Framework.Editor
         }
 
         /// <summary>
+        /// batchmode 构建前置入口：同步 AOT 补充元数据到 StreamingAssets。
+        /// <para>
+        /// 与 <see cref="SyncFromMenu"/> 的区别在失败处理：那条把异常吞进对话框，自动化里等于静默通过，
+        /// 结果要等 Player 运行到「未找到 AOT 元数据: mscorlib.dll.bytes」才暴露，且那时热更已装到一半回滚。
+        /// 本入口失败即以非零码退出，把问题挡在构建期。
+        /// </para>
+        /// 用法：<c>-executeMethod Framework.Editor.HybridCLRStreamingAssetsSync.SyncForBuildBatch</c>
+        /// </summary>
+        public static void SyncForBuildBatch()
+        {
+            try
+            {
+                EnsureGeneratedMetadataForBuild();
+                SyncMetadataToStreamingAssets();
+                Debug.Log("[HybridCLRSync] AOT_METADATA_SYNC_OK");
+                if (Application.isBatchMode) EditorApplication.Exit(0);
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"[HybridCLRSync] AOT_METADATA_SYNC_FAIL {ex.Message}");
+                if (Application.isBatchMode) EditorApplication.Exit(1);
+            }
+        }
+
+        /// <summary>
         /// 检查当前构建目标的 HybridCLR AOT 裁剪产物，缺失时自动执行 Generate/All。
         /// </summary>
         /// <param name="target">需要检查的构建目标；为空时使用当前 ActiveBuildTarget。</param>

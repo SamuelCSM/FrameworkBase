@@ -123,6 +123,14 @@ namespace HotUpdate.Clicker
             {
                 RunGameplaySelfCheck(model);
                 await RunSaveRoundtripSelfCheck(model);
+
+                // 独立 Player 里玩法会一直跑下去，无人值守演练需要自己收尾。
+                // 只认显式开关，避免手动跑 Development Build 时被意外关掉。
+                if (Environment.GetEnvironmentVariable("CLICKER_SELFCHECK_QUIT") == "1")
+                {
+                    GameLog.Log("[Clicker] SELFCHECK_QUIT 自检完成，退出进程");
+                    Application.Quit(0);
+                }
             }
 #endif
         }

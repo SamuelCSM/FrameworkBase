@@ -51,17 +51,58 @@ namespace Framework.Storage
     }
 
     /// <summary>
-    /// Player 运行时卷空间查询。Android 使用 StatFs；其它平台使用目标路径所在卷的 DriveInfo。
+    /// Player 运行时卷空间查询。Android 用 StatFs；Windows 独立包用 kernel32 的
+    /// <c>GetDiskFreeSpaceEx</c>；编辑器与其余平台回退 <see cref="DriveInfo"/>。
     /// 平台不支持时返回 Unknown，让上层按失败关闭策略处理。
+    /// <para>
+    /// Windows 独立包不能走 <see cref="DriveInfo"/>：IL2CPP 的 mscorlib 把
+    /// <c>DriveInfo::GetDriveFormat</c> 桩成 "Unsupported internal call" 并直接抛，
+    /// 而 <c>DriveInfo</c> 取任何属性都会触到它。热更装载前的空间预检因此在**所有 IL2CPP 包**
+    /// 上必然得 Unknown，被失败关闭策略一律中止——即真机热更装不上。编辑器是 Mono，看不到此事。
+    /// </para>
     /// </summary>
     public sealed class SystemStorageCapacityProvider : IStorageCapacityProvider
     {
+#if UNITY_STANDALONE_WIN && !UNITY_EDITOR
+        /// <summary>Windows 卷空闲空间查询；取调用方配额可用字节（受配额限制时小于卷剩余）。</summary>
+        [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true, CharSet = System.Runtime.InteropServices.CharSet.Unicode, EntryPoint = "GetDiskFreeSpaceExW")]
+        [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
+        private static extern bool GetDiskFreeSpaceEx(
+            string lpDirectoryName,
+            out ulong lpFreeBytesAvailableToCaller,
+            out ulong lpTotalNumberOfBytes,
+            out ulong lpTotalNumberOfFreeBytes);
+#endif
+
         public StorageVolumeSnapshot Query(string path)
         {
             if (string.IsNullOrWhiteSpace(path))
                 return StorageVolumeSnapshot.Unknown("目标路径为空。");
 
-#if UNITY_ANDROID && !UNITY_EDITOR
+#if UNITY_STANDALONE_WIN && !UNITY_EDITOR
+            try
+            {
+                string fullPath = Path.GetFullPath(path);
+                // GetDiskFreeSpaceEx 要求目录存在；安装目标可能尚未创建，故上溯到最近的已存在祖先。
+                string probe = fullPath;
+                while (!string.IsNullOrEmpty(probe) && !Directory.Exists(probe))
+                    probe = Path.GetDirectoryName(probe);
+                if (string.IsNullOrEmpty(probe))
+                    return StorageVolumeSnapshot.Unknown($"无法定位已存在的祖先目录：{fullPath}");
+
+                if (!GetDiskFreeSpaceEx(probe, out ulong freeToCaller, out _, out _))
+                {
+                    int err = System.Runtime.InteropServices.Marshal.GetLastWin32Error();
+                    return StorageVolumeSnapshot.Unknown($"GetDiskFreeSpaceEx 失败：Win32Error={err}, path={probe}");
+                }
+
+                return StorageVolumeSnapshot.Known((long)Math.Min(freeToCaller, long.MaxValue), "kernel32.GetDiskFreeSpaceEx");
+            }
+            catch (Exception winEx)
+            {
+                return StorageVolumeSnapshot.Unknown($"Windows 卷空间查询失败：{winEx.Message}");
+            }
+#elif UNITY_ANDROID && !UNITY_EDITOR
             try
             {
                 using (var statFs = new AndroidJavaObject("android.os.StatFs", path))
@@ -83,8 +124,10 @@ namespace Framework.Storage
                     return StorageVolumeSnapshot.Unknown($"无法解析目标卷：{fullPath}");
 
                 var drive = new DriveInfo(root);
-                if (!drive.IsReady)
-                    return StorageVolumeSnapshot.Unknown($"目标卷未就绪：{root}");
+                // 刻意不查 DriveInfo.IsReady：它内部要取卷格式（GetDriveFormat），该 icall 在 IL2CPP
+                // 下不受支持并直接抛出，会让所有 IL2CPP 包（即全部真机包）的热更止步于
+                // STORAGE_E_SPACE_UNKNOWN。卷真未就绪时 AvailableFreeSpace 自身同样会抛，
+                // 由下方 catch 统一收口为 Unknown，判定语义不丢。
                 return StorageVolumeSnapshot.Known(drive.AvailableFreeSpace, "System.IO.DriveInfo");
             }
             catch (Exception ex)
