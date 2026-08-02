@@ -135,6 +135,23 @@ namespace HotUpdate.Net
         }
 
         /// <summary>
+        /// 查询服务端权威档案（020_001，由服务端 L3 示例业务模块提供）。
+        /// 请求体不带任何身份字段——服务端只按会话绑定回答「你是谁」，客户端自报不作数。
+        /// 这是「服务端权威」的最小形态，日后金币/等级上收时沿本条链路扩展。
+        /// </summary>
+        /// <returns>未连接或未完成握手时返回 null。</returns>
+        public static async UniTask<GS2GC_020_001_GetClickerProfileResponse> QueryServerProfileAsync()
+        {
+            NetworkManager network = GameEntry.Network;
+            if (network == null || !network.IsConnected || !IsBound)
+                return null;
+
+            return await network
+                .RequestAsync<GC2GS_020_001_GetClickerProfileRequest, GS2GC_020_001_GetClickerProfileResponse>(
+                    new GC2GS_020_001_GetClickerProfileRequest());
+        }
+
+        /// <summary>
         /// 业务会话退出时断开长连接（登出 / 切号 / 重复登录顶替）。幂等。
         /// </summary>
         /// <param name="reason">断开原因，进日志便于回溯。</param>
@@ -223,6 +240,33 @@ namespace HotUpdate.Net
             catch (Exception ex)
             {
                 GameLog.Log($"[GameServerSession] ECHO_ROUNDTRIP_FAIL 异常 {ex.Message}");
+            }
+
+            await RunServerProfileSelfCheck();
+        }
+
+        /// <summary>
+        /// 查一次服务端权威档案，证明 L3 示例业务模块（samples/，非框架项目）经模块缝接入后
+        /// 真能被客户端消费。断言服务端回的 userId 与本地登录身份一致——它来自会话绑定，
+        /// 而请求体是空的。
+        /// </summary>
+        private static async UniTask RunServerProfileSelfCheck()
+        {
+            try
+            {
+                GS2GC_020_001_GetClickerProfileResponse profile = await QueryServerProfileAsync();
+                bool ok = profile != null && profile.ResultCode == 0 &&
+                          string.Equals(profile.UserId, AuthSession.UserId, StringComparison.Ordinal) &&
+                          profile.ServerTimeMs > 0;
+
+                GameLog.Log(ok
+                    ? $"[GameServerSession] SERVER_PROFILE_OK userId={profile.UserId} " +
+                      $"serverTime={profile.ServerTimeMs} boundAt={profile.BoundAtMs}"
+                    : $"[GameServerSession] SERVER_PROFILE_FAIL code={profile?.ResultCode} userId={profile?.UserId}");
+            }
+            catch (Exception ex)
+            {
+                GameLog.Log($"[GameServerSession] SERVER_PROFILE_FAIL 异常 {ex.Message}");
             }
         }
 #endif

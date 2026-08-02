@@ -13,7 +13,8 @@ namespace Game.Editor
     /// 驱动「游客登录 → 连接 → SessionBind 握手 → 心跳校时 → 业务消息往返」全链路。
     ///
     /// 逐项对应 ServerBase 联调验收清单：握手成功 = 4.2；ServerTime 同步 = 3.1；
-    /// 真实 RTT = 3.2；Echo 往返 = 绑定后业务请求放行。
+    /// 真实 RTT = 3.2；Echo 往返 = 绑定后业务请求放行；服务端权威档案（020_001）可消费
+    /// = L3 示例业务模块经 IServerModule 缝接入后确实对客户端生效（ADR-S014）。
     ///
     /// <para>
     /// 观察方式分两种，因为 <c>HotUpdate</c> 与 <c>GameProtocol</c> 都是热更程序集
@@ -49,6 +50,9 @@ namespace Game.Editor
         private static bool _syncOk;
         private static bool _echoOk;
         private static bool _echoFailed;
+        private static bool _profileOk;
+        private static bool _profileFailed;
+        private static string _profileUserId = string.Empty;
         private static long _observedRttMs = -1;
         private static long _observedOffsetMs;
         private static string _boundUserId = string.Empty;
@@ -90,6 +94,9 @@ namespace Game.Editor
             _syncOk = false;
             _echoOk = false;
             _echoFailed = false;
+            _profileOk = false;
+            _profileFailed = false;
+            _profileUserId = string.Empty;
             _observedRttMs = -1;
             _observedOffsetMs = 0;
             _boundUserId = string.Empty;
@@ -134,6 +141,18 @@ namespace Game.Editor
             {
                 _echoFailed = true;
                 Details.AppendLine($"[FAIL] Echo 往返失败：{condition}");
+            }
+
+            if (condition.Contains("SERVER_PROFILE_OK"))
+            {
+                _profileOk = true;
+                _profileUserId = ExtractField(condition, "userId=");
+                Details.AppendLine($"[OK] 服务端权威档案 020_001 可消费 userId={_profileUserId}（L3 示例模块经缝接入）");
+            }
+            else if (condition.Contains("SERVER_PROFILE_FAIL"))
+            {
+                _profileFailed = true;
+                Details.AppendLine($"[FAIL] 服务端权威档案查询失败：{condition}");
             }
         }
 
@@ -205,10 +224,12 @@ namespace Game.Editor
             _phase = 2;
         }
 
-        /// <summary>等热更侧 Echo 探针的哨兵；超时按失败收尾。</summary>
+        /// <summary>等热更侧两个探针（Echo + 服务端档案）的哨兵；超时按失败收尾。</summary>
         private static void WaitForEcho()
         {
-            if (_echoOk || _echoFailed)
+            bool echoSettled = _echoOk || _echoFailed;
+            bool profileSettled = _profileOk || _profileFailed;
+            if (echoSettled && profileSettled)
             {
                 Finish();
                 return;
@@ -216,7 +237,10 @@ namespace Game.Editor
 
             if (EditorApplication.timeSinceStartup > _stageDeadline)
             {
-                Details.AppendLine($"[FAIL] {EchoWaitSecs:F0}s 内未见 Echo 哨兵");
+                if (!echoSettled)
+                    Details.AppendLine($"[FAIL] {EchoWaitSecs:F0}s 内未见 Echo 哨兵");
+                if (!profileSettled)
+                    Details.AppendLine($"[FAIL] {EchoWaitSecs:F0}s 内未见服务端档案哨兵");
                 Finish();
             }
         }
@@ -227,11 +251,11 @@ namespace Game.Editor
             EditorApplication.update -= OnUpdate;
             Application.logMessageReceived -= OnLog;
 
-            bool ok = _bindOk && _syncOk && _echoOk;
+            bool ok = _bindOk && _syncOk && _echoOk && _profileOk;
             string sentinel = ok ? "GAME_SERVER_SESSION_CHECK_OK" : "GAME_SERVER_SESSION_CHECK_FAIL";
 
             Debug.Log($"[GameServerSessionCheck] {sentinel} " +
-                      $"bind={_bindOk} sync={_syncOk} echo={_echoOk} " +
+                      $"bind={_bindOk} sync={_syncOk} echo={_echoOk} profile={_profileOk} " +
                       $"userId={_boundUserId} offset={_observedOffsetMs}ms rtt={_observedRttMs}ms\n{Details}");
 
             if (Application.isBatchMode)

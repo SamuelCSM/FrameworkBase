@@ -1,0 +1,14 @@
+syntax = "proto3";
+option csharp_namespace = "Game.Protocol";
+
+// 挂机示例玩法模块（主号 020）—— 服务端权威只读查询的最小形态。
+// 请求刻意不带任何身份字段：服务端只认会话绑定推导出的身份，不认客户端自报。
+// 纯模板示例，业务项目起步时删除本文件并替换为自己的玩法协议。
+message GC2GS_020_001_GetClickerProfileRequest {
+}
+message GS2GC_020_001_GetClickerProfileResponse {
+  int32 ResultCode = 1;
+  string UserId = 2;                    // 服务端认定的身份，取自会话绑定
+  int64 ServerTimeMs = 3;               // 服务端权威时刻（客户端校时的对照基准）
+  int64 BoundAtMs = 4;                  // 本连接完成会话绑定的时刻
+}
