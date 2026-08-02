@@ -116,9 +116,16 @@ namespace HotUpdate.Clicker
             // 未配置服务器地址时按单机模式静默跳过。
             await GameServerSession.ConnectAndBindAsync();
 
-#if UNITY_EDITOR || DEVELOPMENT_BUILD
-            // 自检：仅当外部（CI / ClickerPlayCheck）置环境变量时运行，避免污染日常手动 Play。
+            // 自检：仅当外部（CI / ClickerPlayCheck / 热更运行时演练）置环境变量时运行，避免污染日常手动 Play。
             // 直接在带类型访问的热更侧验玩法数值与账号级存档，落 ASCII 哨兵供 CI 判定。
+            //
+            // 闸门只用环境变量，不用 #if UNITY_EDITOR || DEVELOPMENT_BUILD：本文件编进热更程序集，
+            // 由 HybridCLR 独立编译，那两个宏在该编译单元里都不成立，条件编译会把整段自检从下发的 dll
+            // 里剪掉——真 Player 上哨兵永远打不出来。
+            //
+            // 也不叠加 Debug.isDebugBuild：AOT 侧没有别处引用它，托管裁剪会把该属性剪掉，热更侧一调即
+            // MissingMethodException。热更代码只能安全使用 AOT 侧已被保留的 API（见 ADR-010），
+            // 为一道锦上添花的闸门去扩大保留集不划算。环境变量本身已是显式开关，正式包无人会设。
             if (Environment.GetEnvironmentVariable("CLICKER_SELFCHECK") == "1")
             {
                 RunGameplaySelfCheck(model);
@@ -132,7 +139,6 @@ namespace HotUpdate.Clicker
                     Application.Quit(0);
                 }
             }
-#endif
         }
 
         /// <summary>
@@ -173,8 +179,8 @@ namespace HotUpdate.Clicker
                 GameLog.Log($"[Clicker] 业务会话已退出 reason={reason}");
         }
 
-#if UNITY_EDITOR || DEVELOPMENT_BUILD
         // 数值取自配表：点击加 ClickGain；升级消耗 UpgradeCost 并升 1 级。验证配表→运行时消费闭环。
+        // 与调用点同为无条件编译，闸门在运行期（环境变量），原因见调用点注释。
         private static void RunGameplaySelfCheck(ClickerModel model)
         {
             long coinsBefore = model.Coins;
@@ -206,6 +212,5 @@ namespace HotUpdate.Clicker
                 : $"[Clicker] SAVE_ROUNDTRIP_FAIL expected={marker} got={reloaded?.coins}");
             model.SaveNow(); // 恢复真实状态
         }
-#endif
     }
 }
