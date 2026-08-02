@@ -812,3 +812,66 @@ catalog 是小文件，代价可忽略。选后者。
 2. 客户端下载—验签—放行门：接入 `CatalogUpdateFlow` / `ResourceManager`（**需发布演练**）。
 3. 发布管线建远程 catalog + 回填身份（**需发布演练**）。
 4. 构建期门禁 `HotUpdateSecurityBuildCheck` 扩规则（随第 3 步）。
+
+## ADR-010：热更可见的 AOT 程序集整体免裁剪——按程序集粒度保留，保留集由 asmdef 引用图推导（2026-08-02）
+
+**状态**：已实施。新增 `Editor/HotUpdateAotPreserveLinkXml.cs`（`IUnityLinkerProcessor`，出包期生成追加
+link.xml）；`HybridCLRStreamingAssetsSync.EnsureGeneratedMetadataForBuild` 增 `forceRegenerate` 形参，
+batchmode 入口 `SyncForBuildBatch` 置真。仅在 `HybridCLRSettings.enable` 为真时生效。
+
+**背景**：托管代码裁剪的可达性分析以 AOT 侧引用图为根，而热更 dll 不在这张图里——出包时它还不存在，
+上线后还会被整个替换。于是「只被热更侧调用的 AOT 类型」在裁剪器看来是死代码。实测表现为 Player 能下载、
+验签、安装补丁、加载 AOT 补充元数据，却在加载热更程序集时抛
+`Could not load type 'Framework.Foundation.RedDotCatalog' from assembly 'Framework.Modules'`。
+
+这类失败有两个恶劣性质：其一，**编辑器永远看不到**——编辑器是 Mono、不裁剪，全套 EditMode/PlayMode 测试
+都不会触发；其二，**可以在出包之后才发作**——包已发到玩家手里，某个后续热更版本第一次调用某个当时无人
+引用的 AOT API，补丁一推即崩，且再也无法靠改 Player 补救。
+
+HybridCLR 自带的 `Generate/LinkXml` 挡不住第二种：它扫描**出包当刻**的热更 dll，只保留那一刻真实引用到的
+成员。而热更的全部意义就在于代码会变。
+
+**决策一：按程序集粒度整体保留（`preserve="all"`），不做类型/成员粒度。** 粒度选择等价于在承诺什么：
+类型粒度承诺的是「出包当刻用到的那些成员在」，程序集粒度承诺的是「这些程序集的公开面在包的生命周期内
+始终可用」。只有后者才是热更契约需要的那个承诺——热更 dll 是按这些程序集的**编译期引用**构建的，
+少一个成员就是运行期崩溃。
+
+**决策二：保留集由 asmdef 引用图推导，不手维护清单。** 以热更程序集为起点沿
+`CompilationPipeline.GetAssemblies(AssembliesType.Player)` 的 `assemblyReferences` 求传递闭包，
+再剔除热更程序集自身。asmdef 的 references 就是「热更侧被允许调用什么」的既有唯一声明，复用它可消除
+清单漂移；工程加一条热更引用即自动纳入保留，不需要有人记得同步第二处。
+
+不取 `compiledAssemblyReferences`（预编译 dll）：那份列表对每个程序集都会带出全量自动引用的 dll，
+按整体保留会把无关第三方库一并锁死。预编译 dll 仍由 HybridCLR 生成的 link.xml 与常规可达性分析覆盖。
+
+**决策三：出包入口强制重生成 HybridCLR 产物，不复用既有产物。** AOT 裁剪 dll、方法桥、link.xml、
+AOT 泛型引用四样都是「当前代码 + 当前链接配置」的派生物，**齐全不等于同源**。按「文件在即跳过」复用，
+Player 能构建、能加载热更程序集，却会在首次跨 AOT/解释执行边界调用时抛
+`ExecutionEngineException - NotSupportNative2Managed`（缺方法桥）。自动化入口不接受这种静默失配。
+手工菜单入口保持非强制，避免每次点同步都付几分钟全量生成。
+
+**放弃了什么**：
+- **不降低 `ManagedStrippingLevel`**：那是全局钝器，把引擎与 .NET 类库的裁剪一起关掉，包体代价远大于
+  按程序集保留，且仍不表达「哪些程序集对热更有契约」这层意思——读者从设置面板看不出原因。
+- **不依赖 HybridCLR 生成的 link.xml 作为唯一防线**：它按出包当刻的引用生成，与热更的可变前提相悖。
+  两者叠加使用，本决策负责程序集粒度的下界。
+- **不把 link.xml 作为静态文件入库**：保留集随 asmdef 变化，静态文件必然漂移；且不启用热更的工程不该
+  被无条件施加保留。改为出包期按当时的引用图生成。
+- **不区分「框架自有」与「第三方」程序集**：曾考虑只整体保留框架自有程序集、放过 TextMeshPro/UGUI 以省
+  包体，但那会在热更侧留一个静默的洞——热更代码调一个当时没人用的 TMP API 即崩，失败形态与本决策要消除
+  的完全一致。取全量闭包，代价记在下方。
+
+- **不保留 Unity 引擎模块（`UnityEngine.*`）**：它们不经 asmdef references 进入引用图（走隐式引擎引用），
+  故不在本决策的保留集内；也**刻意不额外补上**。`stripEngineCode` 的原生代码裁剪由托管侧使用分析驱动，
+  把托管引擎代码整体保留等于变相关掉原生裁剪，移动端包体代价远大于收益。
+  **残留风险**：热更代码调用一个 AOT 侧无人引用的引擎 API 时仍会 `MissingMethodException`
+  （实测形态：`MethodNotFind UnityEngine.Debug::get_isDebugBuild`）。这不是理论风险——HybridCLR 生成的
+  link.xml 只覆盖出包当刻热更 dll 真实引用到的引擎成员，出包后新调的引擎 API 不在其中。
+  处置：热更侧只使用 AOT 侧已在用的引擎 API；确需新引擎 API 时，在工程自有 link.xml 里按**类型粒度**
+  补保留项——这是引擎模块唯一可控成本的保留方式。
+
+**后果与代价**：本工程实测保留 12 个程序集（Framework 五个 + HybridCLR.Runtime + PrimeTween.Runtime +
+UniTask + Unity.Addressables + Unity.ResourceManager + Unity.TextMeshPro + UnityEngine.UI），这些程序集的
+未使用托管代码不再被剪，包体与 IL2CPP 编译时间相应上升；引擎原生代码裁剪（`stripEngineCode`）不受影响。
+不启用热更的工程完全不受影响。要收窄保留集，正确做法是收窄热更 asmdef 的 references——那同时也收窄了
+热更侧的调用面，两者本就该一致。

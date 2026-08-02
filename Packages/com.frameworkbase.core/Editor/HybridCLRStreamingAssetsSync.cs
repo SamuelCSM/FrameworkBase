@@ -46,7 +46,12 @@ namespace Framework.Editor
         {
             try
             {
-                EnsureGeneratedMetadataForBuild();
+                // 强制重生成：AOT 裁剪产物、方法桥、link.xml、AOT 泛型引用都是「当前代码 + 当前链接配置」
+                // 的派生物，源码或 link.xml 一变就失配。按"文件在即跳过"复用上一轮产物，Player 能构建、
+                // 能加载热更程序集，却会在首次跨 AOT/解释执行边界调用时抛
+                // ExecutionEngineException - NotSupportNative2Managed（缺方法桥），
+                // 或在补充元数据里找不到泛型实例。自动化入口不接受这种静默失配，宁可多花几分钟。
+                EnsureGeneratedMetadataForBuild(forceRegenerate: true);
                 SyncMetadataToStreamingAssets();
                 Debug.Log("[HybridCLRSync] AOT_METADATA_SYNC_OK");
                 if (Application.isBatchMode) EditorApplication.Exit(0);
@@ -59,14 +64,18 @@ namespace Framework.Editor
         }
 
         /// <summary>
-        /// 检查当前构建目标的 HybridCLR AOT 裁剪产物，缺失时自动执行 Generate/All。
+        /// 检查当前构建目标的 HybridCLR AOT 裁剪产物，缺失（或被要求强制刷新）时执行 Generate/All。
         /// </summary>
         /// <param name="target">需要检查的构建目标；为空时使用当前 ActiveBuildTarget。</param>
-        public static void EnsureGeneratedMetadataForBuild(BuildTarget? target = null)
+        /// <param name="forceRegenerate">
+        /// 为真时无视产物是否齐全一律重生成。出包管线须置真：产物是当前代码与 link.xml 的派生物，
+        /// 齐全不等于同源。手工菜单入口保持为假，避免每次点同步都付几分钟的全量生成。
+        /// </param>
+        public static void EnsureGeneratedMetadataForBuild(BuildTarget? target = null, bool forceRegenerate = false)
         {
             BuildTarget buildTarget = target ?? EditorUserBuildSettings.activeBuildTarget;
             List<string> missing = GetMissingGeneratedMetadataFiles(buildTarget);
-            if (missing.Count == 0)
+            if (missing.Count == 0 && !forceRegenerate)
                 return;
 
             if (buildTarget != EditorUserBuildSettings.activeBuildTarget)
@@ -77,9 +86,10 @@ namespace Framework.Editor
 
             Il2CppToolchainValidator.ValidateForBuildTarget(buildTarget);
 
-            Debug.LogWarning(
-                "[HybridCLRStreamingAssetsSync] AOT 元数据生成产物缺失，将自动执行 HybridCLR/Generate/All：\n" +
-                string.Join("\n", missing));
+            Debug.Log(forceRegenerate
+                ? "[HybridCLRStreamingAssetsSync] 强制刷新 HybridCLR 生成产物，执行 Generate/All……"
+                : "[HybridCLRStreamingAssetsSync] AOT 元数据生成产物缺失，将自动执行 HybridCLR/Generate/All：\n" +
+                  string.Join("\n", missing));
 
             PrebuildCommand.GenerateAll();
 

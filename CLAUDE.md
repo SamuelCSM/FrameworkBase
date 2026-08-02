@@ -1,7 +1,7 @@
 # FrameworkBase 开发约定
 
 项目定位、能力清单与目录结构见 [README.md](README.md)；架构决策的背景与取舍见
-[ARCHITECTURE_DECISIONS.md](Packages/com.frameworkbase.core/ARCHITECTURE_DECISIONS.md)（ADR-001~008）。
+[ARCHITECTURE_DECISIONS.md](Packages/com.frameworkbase.core/ARCHITECTURE_DECISIONS.md)（ADR-001~010）。
 本文件只列动手前必须遵守的规则。
 
 ---
