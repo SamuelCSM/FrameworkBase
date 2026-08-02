@@ -11,8 +11,16 @@
 #   2. 构建一次 Development + IL2CPP Player（此后 Player 不再重建——这是关键：
 #      后续数值变化只可能来自热更 dll，不可能来自重新构建的宿主）；
 #   3. 发布 v1 → 起本地 HTTP 服务托管 uploadRoot → 跑 Player → 记下 ClickGain；
-#   4. 改一行玩法（ClickGain ×2）发布 v2 → 同一个 Player 再跑 → 断言数值翻倍；
-#   5. 一键回滚到 v1 → 同一个 Player 再跑 → 断言数值回到初值。
+#   4. 改一行玩法（ClickGain ×2）发布 v2 → 同一个 Player 从同一起点再跑 → 断言数值翻倍；
+#   5. 一键回滚到 v1 → 清空本地状态后同一个 Player 再跑 → 断言数值回到初值。
+#
+# 跳 5 为何要清空本地状态：回滚只把已签名指针指回 v1 的正本清单，其 codeVersion 仍是 2，
+# 而防降级准入是单调的，已装到 code=3 的客户端会拒收。回滚的实际作用域是"尚未取到坏版本的
+# 客户端"，清空状态即扮演该角色。要把已中招的客户端也救回，须改用"以更高版本号重发旧代码"。
+#
+# 三次 Player 运行前都归零本地状态，使三次测量同起点——自检自身会升级并存档，而玩法数值随等级变化，
+# 不归零则数值差无法归因到代码改动。代价是「已装过 v1 的客户端增量收 v2」这条路径不被本脚本覆盖，
+# 三跳测的都是「全新客户端拉取指定版本」。
 #
 # 判定一律以 Player 日志的 ASCII 哨兵为准（batchmode/Player 退出码均不可靠）：
 #   GAMEPLAY_SELFCHECK_OK click(+N)
@@ -26,8 +34,10 @@ param(
     [switch]$SkipBuild,
     [switch]$KeepArtifacts,
     [int]$Port = 8099,
-    # 须 >= Player 内烘入的本地 resourceVersion，否则热更清单会被"拒绝资源版本降级"挡下。
-    [int]$ResourceVersion = 2
+    # 必须**等于** Player 整包烘入的 resourceVersion。低了触发"拒绝资源版本降级"；
+    # 高了则触发 ADR-009 的规则——ResourceVersion 增长的清单必须携带合法资源 Catalog 身份，
+    # 而本演练是纯代码热更（publishResource=false），根本没有 catalog 可填。
+    [int]$ResourceVersion = 1
 )
 
 $ErrorActionPreference = "Stop"
@@ -84,6 +94,17 @@ Copy-Item $appConfigPath $appConfigBackup -Force
 Copy-Item $modelPath $modelBackup -Force
 Copy-Item $devProfilePath $devProfileBackup -Force
 
+# Player 的 persistentDataPath：装好的热更代码槽与 version.json 都在这里，跨进程、跨轮次留存。
+# 不清空则第二轮起必然撞上"拒绝代码版本降级"——上一轮装到 code=3，本轮 v1 发 code=2。
+# 编辑器 Play 用的是同一个目录，故整体移开保管、退出时原样放回，不直接删用户数据。
+$psText = [IO.File]::ReadAllText((Join-Path $projectPath "ProjectSettings\ProjectSettings.asset"))
+if (-not ($psText -match "(?m)^\s*companyName:\s*(.+?)\s*$")) { throw "ProjectSettings.asset 中未找到 companyName。" }
+$companyName = $Matches[1]
+if (-not ($psText -match "(?m)^\s*productName:\s*(.+?)\s*$")) { throw "ProjectSettings.asset 中未找到 productName。" }
+$productName = $Matches[1]
+$playerDataDir    = Join-Path $env:USERPROFILE "AppData\LocalLow\$companyName\$productName"
+$playerDataBackup = Join-Path $rehearsalRoot "PlayerData.orig"
+
 $httpJob = $null
 $failures = New-Object System.Collections.Generic.List[string]
 
@@ -92,12 +113,43 @@ function Write-Step([string]$text) {
     Write-Host "──── [$text] ────"
 }
 
+# 把保管中的 Player 原数据放回原位。备份目录存在即代表「用户原数据尚在保管中」；
+# 放回后立即删除备份，使下次启动时"备份仍在"能唯一地表示上一轮被中途打断。
+function Restore-PlayerData {
+    if (-not (Test-Path $playerDataBackup)) { return }
+    if (Test-Path $playerDataDir) { Remove-Item $playerDataDir -Recurse -Force -ErrorAction SilentlyContinue }
+    New-Item -ItemType Directory -Force (Split-Path $playerDataDir -Parent) | Out-Null
+    Copy-Item $playerDataBackup $playerDataDir -Recurse -Force
+    Remove-Item $playerDataBackup -Recurse -Force -ErrorAction SilentlyContinue
+}
+
+# 把 Player 的 persistentDataPath 移到 $rehearsalRoot 保管，此后本脚本可随意清空它。
+# 跨卷（C: → G:）Move-Item 对目录不成立，故复制后删除。
+function Backup-PlayerData {
+    # 备份还在，说明上一轮被中途打断——里面才是用户原数据，先放回，
+    # 否则接下来会把上一轮的演练残留当成原数据保管，真数据就丢了。
+    if (Test-Path $playerDataBackup) {
+        Write-Host "检测到上一轮遗留的 Player 数据备份，先还原：$playerDataBackup"
+        Restore-PlayerData
+    }
+    if (Test-Path $playerDataDir) {
+        Copy-Item $playerDataDir $playerDataBackup -Recurse -Force
+        Remove-Item $playerDataDir -Recurse -Force
+    }
+}
+
+# 让下一次 Player 运行从「刚装好整包、从未热更过」的状态起跑。
+function Reset-PlayerData {
+    if (Test-Path $playerDataDir) { Remove-Item $playerDataDir -Recurse -Force -ErrorAction SilentlyContinue }
+}
+
 # 还原一切被本脚本改动的工作区文件。任何路径退出都必须经过这里，
 # 否则会把演练用的 AppConfig（含一次性公钥 + EnableHotUpdate=1）留在工作区。
 function Restore-Workspace {
     if (Test-Path $appConfigBackup) { Copy-Item $appConfigBackup $appConfigPath -Force }
     if (Test-Path $modelBackup) { Copy-Item $modelBackup $modelPath -Force }
     if (Test-Path $devProfileBackup) { Copy-Item $devProfileBackup $devProfilePath -Force }
+    Restore-PlayerData
     if ($script:httpJob) {
         Stop-Job $script:httpJob -ErrorAction SilentlyContinue
         Remove-Job $script:httpJob -Force -ErrorAction SilentlyContinue
@@ -131,6 +183,8 @@ $env:FRAMEWORKBASE_MANIFEST_PRIVATE_KEY_XML_BASE64 =
     [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($privateXml))
 
 try {
+    Backup-PlayerData
+
     # ── 跳 1：把演练配置烘进 AppConfig（Player 构建期读取，运行时不可改）──────
     Write-Step "跳 1/5 配置演练档（EnableHotUpdate=1 + 本地更新服务 + 一次性公钥）"
     $config = [IO.File]::ReadAllText($appConfigPath)
@@ -142,6 +196,10 @@ try {
         "(- KeyId: dev_hotupdate_manifest\r?\n    PublicKeyXml: )[^\r\n]*",
         { param($m) $m.Groups[1].Value + $publicXml },
         [Text.RegularExpressions.RegexOptions]::None)
+    # 清空游戏服地址，让 Player 走单机模式。本演练的被测对象是热更链路，不该牵连长连接：
+    # 业务入口在自检之前 await 首连，服务端没起时框架会持续退避重连，自检永远等不到，
+    # 于是"服务端没开"会被记成"热更没生效"。传输层贯通由 GameServerSessionPlayCheck 单独验。
+    $config = $config -replace "(?m)^  GameServerHost: .*$", "  GameServerHost: "
     # PS 5.1 的 -Encoding utf8 会写 BOM；Unity 资产是无 BOM UTF-8，故走 .NET 显式无 BOM 写入。
     [IO.File]::WriteAllText($appConfigPath, $config, (New-Object Text.UTF8Encoding $false))
     $devProfile = [IO.File]::ReadAllText($devProfilePath)
@@ -281,7 +339,7 @@ try {
     Write-Host "v1 ClickGain = $gainV1"
     if ($gainV1 -le 0) { $failures.Add("v1 未取到 ClickGain 哨兵") }
 
-    # ── 跳 4：改玩法（×2）发布 v2 → 同一 Player 再跑 ─────────────────────────
+    # ── 跳 4：改玩法（×2）发布 v2 → 同一 Player 从同一起点再跑 ───────────────
     Write-Step "跳 4/5 改玩法 ClickGain×2，发布 v2（code=3）并运行同一个 Player"
     $model = [IO.File]::ReadAllText($modelPath)
     $patched = $model -replace "(?m)^(\s*)public int ClickGain\s*=>\s*(.+?);\s*$", '$1public int ClickGain => ($2) * 2;'
@@ -292,14 +350,18 @@ try {
         [IO.File]::WriteAllText($modelPath, $patched, (New-Object Text.UTF8Encoding $false))
     }
     Invoke-Publish -code 3 -tag "v2" | Out-Null
+    # 归零本地状态再测。自检自身会升一级并存档，而 ClickGain 取自当前等级的配表行，
+    # 不归零则 v2 从 v1 留下的 level=2 起跑，测到的是"新代码 × 新等级"的合力，
+    # 无法归因到代码改动。三次测量必须同起点，数值差才只可能来自热更 dll。
+    Reset-PlayerData
     $gainV2 = Invoke-PlayerRun -tag "v2"
     Write-Host "v2 ClickGain = $gainV2（期望 $($gainV1 * 2)）"
     if ($gainV1 -gt 0 -and $gainV2 -ne ($gainV1 * 2)) {
         $failures.Add("v2 数值未翻倍：期望 $($gainV1 * 2)，实得 $gainV2（热更 dll 未真正生效）")
     }
 
-    # ── 跳 5：回滚到 v1 → 同一 Player 再跑 ───────────────────────────────────
-    Write-Step "跳 5/5 一键回滚到 v1 并运行同一个 Player"
+    # ── 跳 5：回滚到 v1 → 同一 Player 以「未取过 v2 的客户端」身份再跑 ───────
+    Write-Step "跳 5/5 一键回滚到 v1 并运行同一个 Player（清空本地状态，模拟尚未取到 v2 的客户端）"
     $rollbackLog = Join-Path $logsDir "runtime-rehearsal-rollback.log"
     $proc = Start-Process -FilePath $UnityPath -PassThru -ArgumentList @(
         "-batchmode", "-projectPath", $projectPath, "-buildTarget", "Win64",
@@ -308,6 +370,11 @@ try {
         "-switchedBy", "runtime-rehearsal", "-logFile", $rollbackLog)
     $proc.WaitForExit()
 
+    # 回滚把已签名指针指回 v1 的正本清单，该清单的 codeVersion 仍是 2。防降级准入是单调的
+    # （见 UpdateSecurity.ValidateManifest：server.CodeVersion < local.CodeVersion 即拒），
+    # 因此已经装到 code=3 的客户端不会被指针回滚救回——回滚止的是尚未取到坏版本的那批客户端的血。
+    # 这里清空本地状态正是在扮演那批客户端；不清空则本跳测的是"防降级是否生效"，与跳名不符。
+    Reset-PlayerData
     $gainRollback = Invoke-PlayerRun -tag "rollback"
     Write-Host "回滚后 ClickGain = $gainRollback（期望 $gainV1）"
     if ($gainV1 -gt 0 -and $gainRollback -ne $gainV1) {
