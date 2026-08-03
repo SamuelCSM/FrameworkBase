@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text.RegularExpressions;
@@ -194,6 +195,82 @@ namespace Framework.Tests
             Assert.AreEqual(StorageCapacityStatus.Unknown, result.Status);
             Assert.AreEqual(0, cleaner.Calls);
             Assert.AreEqual(1, provider.QueryCount);
+        }
+
+        /// <summary>按指定布局拼一份 statvfs 写回缓冲区，用于覆盖真机才成立的解读路径。</summary>
+        private static byte[] Statvfs(UnixStatvfs.Layout layout, ulong fragmentSize, ulong availableBlocks,
+            ulong blockSize = 4096)
+        {
+            var buffer = new byte[256];
+            BitConverter.GetBytes(blockSize).CopyTo(buffer, 0);      // f_bsize
+            BitConverter.GetBytes(fragmentSize).CopyTo(buffer, 8);   // f_frsize
+            if (layout == UnixStatvfs.Layout.Darwin64)
+                BitConverter.GetBytes((uint)availableBlocks).CopyTo(buffer, 24); // f_bavail（32 位）
+            else
+                BitConverter.GetBytes(availableBlocks).CopyTo(buffer, 32);       // f_bavail（64 位）
+            return buffer;
+        }
+
+        [Test]
+        public void statvfs解读_两个平台的字段宽度不同不能共用一套偏移()
+        {
+            Assert.IsTrue(UnixStatvfs.TryReadAvailableBytes(
+                Statvfs(UnixStatvfs.Layout.LinuxLp64, 4096, 1000), UnixStatvfs.Layout.LinuxLp64,
+                out long linuxBytes, out _));
+            Assert.AreEqual(4096L * 1000, linuxBytes);
+
+            Assert.IsTrue(UnixStatvfs.TryReadAvailableBytes(
+                Statvfs(UnixStatvfs.Layout.Darwin64, 4096, 1000), UnixStatvfs.Layout.Darwin64,
+                out long darwinBytes, out _));
+            Assert.AreEqual(4096L * 1000, darwinBytes);
+
+            // 拿 Darwin 的缓冲区按 Linux 布局读会落到全零区，得 0 而非真实值——布局判定错了必须看得见。
+            Assert.IsTrue(UnixStatvfs.TryReadAvailableBytes(
+                Statvfs(UnixStatvfs.Layout.Darwin64, 4096, 1000), UnixStatvfs.Layout.LinuxLp64,
+                out long mismatched, out _));
+            Assert.AreEqual(0L, mismatched);
+        }
+
+        [Test]
+        public void statvfs解读_frsize为0时退回bsize且溢出饱和不为负()
+        {
+            Assert.IsTrue(UnixStatvfs.TryReadAvailableBytes(
+                Statvfs(UnixStatvfs.Layout.LinuxLp64, 0, 10, blockSize: 512), UnixStatvfs.Layout.LinuxLp64,
+                out long bytes, out _));
+            Assert.AreEqual(512L * 10, bytes);
+
+            Assert.IsTrue(UnixStatvfs.TryReadAvailableBytes(
+                Statvfs(UnixStatvfs.Layout.LinuxLp64, ulong.MaxValue / 2, ulong.MaxValue / 2),
+                UnixStatvfs.Layout.LinuxLp64, out long saturated, out _));
+            Assert.AreEqual(long.MaxValue, saturated, "卷比 long 还大不该表现为负数空间");
+
+            Assert.IsFalse(UnixStatvfs.TryReadAvailableBytes(
+                Statvfs(UnixStatvfs.Layout.LinuxLp64, 0, 10, blockSize: 0), UnixStatvfs.Layout.LinuxLp64,
+                out _, out string error));
+            Assert.IsNotEmpty(error);
+
+            Assert.IsFalse(UnixStatvfs.TryReadAvailableBytes(
+                new byte[8], UnixStatvfs.Layout.LinuxLp64, out _, out _), "缓冲区不足必须失败而非读越界");
+        }
+
+        [Test]
+        public void 预检目标目录尚未创建_上溯到最近的已存在祖先()
+        {
+            string existing = Path.Combine(Path.GetTempPath(), "fb-storage-" + Path.GetRandomFileName());
+            Directory.CreateDirectory(existing);
+            try
+            {
+                string ancestor = SystemStorageCapacityProvider.ResolveExistingAncestor(
+                    Path.Combine(existing, "not-created-yet", "deeper"));
+
+                Assert.AreEqual(
+                    Path.GetFullPath(existing).TrimEnd(Path.DirectorySeparatorChar),
+                    ancestor.TrimEnd(Path.DirectorySeparatorChar));
+            }
+            finally
+            {
+                Directory.Delete(existing, recursive: true);
+            }
         }
     }
 }
