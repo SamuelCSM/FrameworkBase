@@ -816,8 +816,10 @@ catalog 是小文件，代价可忽略。选后者。
 ## ADR-010：热更可见的 AOT 程序集整体免裁剪——按程序集粒度保留，保留集由 asmdef 引用图推导（2026-08-02）
 
 **状态**：已实施。新增 `Editor/HotUpdateAotPreserveLinkXml.cs`（`IUnityLinkerProcessor`，出包期生成追加
-link.xml）；`HybridCLRStreamingAssetsSync.EnsureGeneratedMetadataForBuild` 增 `forceRegenerate` 形参，
-batchmode 入口 `SyncForBuildBatch` 置真。仅在 `HybridCLRSettings.enable` 为真时生效。
+link.xml）；强制重生成由 `forceRegenerate` 形参表达，两个出包入口——batchmode 的
+`HybridCLRStreamingAssetsSync.SyncForBuildBatch` 与整包发布管线的
+`HotUpdatePublisher.SyncToStreamingAssetsForBuild`——均置真，手工窗口/菜单入口为假。
+仅在 `HybridCLRSettings.enable` 为真时生效。
 
 **背景**：托管代码裁剪的可达性分析以 AOT 侧引用图为根，而热更 dll 不在这张图里——出包时它还不存在，
 上线后还会被整个替换。于是「只被热更侧调用的 AOT 类型」在裁剪器看来是死代码。实测表现为 Player 能下载、

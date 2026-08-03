@@ -439,15 +439,22 @@ namespace Framework.Editor
         }
 
         /// <summary>
-        /// 确保整包构建所需的 HybridCLR 生成产物齐全；缺失时自动执行 Generate/All。
+        /// 确保整包构建所需的 HybridCLR 生成产物齐全；缺失（或被要求强制刷新）时执行 Generate/All。
         /// </summary>
         /// <param name="target">当前构建目标。</param>
-        private static void EnsureHybridCLROutputsForBuild(BuildTarget target)
+        /// <param name="forceRegenerate">
+        /// 为真时无视产物是否齐全一律重生成。出包管线须置真：AOT 裁剪 dll、方法桥、link.xml、AOT 泛型引用
+        /// 都是「当前代码 + 当前链接配置」的派生物，齐全不等于同源（见 ADR-010 决策三）。按"文件在即跳过"
+        /// 复用上一轮产物，Player 能构建、能加载热更程序集，却会在首次跨 AOT/解释执行边界调用时抛
+        /// ExecutionEngineException - NotSupportNative2Managed，或在补充元数据里找不到泛型实例。
+        /// 手工窗口入口保持为假，避免每次点同步都付几分钟的全量生成。
+        /// </param>
+        private static void EnsureHybridCLROutputsForBuild(BuildTarget target, bool forceRegenerate = false)
         {
             CompileDllCommand.CompileDll(target);
 
             var missing = GetMissingHybridCLROutputs(target);
-            if (missing.Count == 0)
+            if (missing.Count == 0 && !forceRegenerate)
                 return;
 
             if (target != EditorUserBuildSettings.activeBuildTarget)
@@ -458,9 +465,10 @@ namespace Framework.Editor
 
             Il2CppToolchainValidator.ValidateForBuildTarget(target);
 
-            Debug.LogWarning(
-                "[HotUpdatePublisher] HybridCLR 生成产物缺失，将自动执行 HybridCLR/Generate/All：\n" +
-                string.Join("\n", missing));
+            Debug.Log(forceRegenerate
+                ? "[HotUpdatePublisher] 强制刷新 HybridCLR 生成产物，执行 Generate/All……"
+                : "[HotUpdatePublisher] HybridCLR 生成产物缺失，将自动执行 HybridCLR/Generate/All：\n" +
+                  string.Join("\n", missing));
 
             PrebuildCommand.GenerateAll();
 
@@ -495,13 +503,14 @@ namespace Framework.Editor
 
         /// <summary>
         /// 对外暴露：打包前同步热更程序集组、HybridCLR AOT 元数据与 version.json 到 StreamingAssets。
+        /// 这是整包发布管线的出包前置，故强制重生成 HybridCLR 产物（见 ADR-010 决策三）。
         /// </summary>
         public static void SyncToStreamingAssetsForBuild(string versionOutputDir = null, bool showDialog = true)
         {
             try
             {
                 BuildTarget target = EditorUserBuildSettings.activeBuildTarget;
-                EnsureHybridCLROutputsForBuild(target);
+                EnsureHybridCLROutputsForBuild(target, forceRegenerate: true);
 
                 string streamingDir = Path.Combine(Application.dataPath, "StreamingAssets");
                 Directory.CreateDirectory(streamingDir);
