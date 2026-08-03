@@ -138,5 +138,18 @@ namespace Framework.Tests
             Assert.IsTrue(NetworkReauthenticationPolicy.CanFlushOfflineQueue(
                 NetworkReauthenticationResult.Succeeded));
         }
+
+        [Test]
+        public void 只有移动端把失焦当进后台_桌面与无头进程失焦时网络层不得挂起()
+        {
+            Assert.IsTrue(NetworkHostProfile.FocusLossMeansBackground(NetworkHostKind.Mobile));
+            Assert.IsFalse(NetworkHostProfile.FocusLossMeansBackground(NetworkHostKind.DesktopWindow));
+            Assert.IsFalse(NetworkHostProfile.FocusLossMeansBackground(NetworkHostKind.Headless));
+
+            // 编辑器（GUI 或 batchmode）永远不该被判成移动端：否则点开别的窗口就会冻住网络层，
+            // 而本地 CI 的联调验收全在 batchmode 里跑，一冻就表现为"永远收不到回包"。
+            Assert.AreNotEqual(NetworkHostKind.Mobile, NetworkHostProfile.Current);
+            Assert.IsFalse(NetworkHostProfile.FocusLossMeansBackground(NetworkHostProfile.Current));
+        }
     }
 }

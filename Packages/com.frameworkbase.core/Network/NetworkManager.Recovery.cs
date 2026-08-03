@@ -65,17 +65,25 @@ namespace Framework
         }
 
         /// <summary>
-        /// Focus 作为部分平台漏发 Pause 回调时的完整兜底。它与 Pause 连续到达时，
+        /// Focus 作为移动端漏发 Pause 回调时的兜底。它与 Pause 连续到达时，
         /// 生命周期策略会把重复的进入后台/恢复判定为幂等操作。
+        /// <para>
+        /// 失焦只在移动端代表进入后台（见 ADR-011）。桌面窗口与无头进程失焦时进程仍在跑，
+        /// 若据此进入后台，<see cref="OnUpdate"/> 会在入站消息泵之前提前返回，入站派发、在途请求超时
+        /// 与心跳一并停摆，表现为"连得上、发得出、永远收不到"，服务端随后按空闲回收该连接。
+        /// </para>
         /// </summary>
         public override void OnApplicationFocus(bool hasFocus)
         {
             EnsureLifecycleInitialized();
             if (!hasFocus)
             {
-                EnterBackground();
+                if (NetworkHostProfile.FocusLossMeansBackground(NetworkHostProfile.Current))
+                    EnterBackground();
                 return;
             }
+
+            // 得焦一律走恢复判定：即使本形态不认失焦，Pause 也可能已把状态置为后台。
             if (_lifecyclePolicy.IsBackground)
                 ResumeForeground("focus-resume");
             else if (!IsConnected && _enableAutoReconnect && !string.IsNullOrEmpty(_lastHost))

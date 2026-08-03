@@ -89,6 +89,51 @@ namespace Framework.Network
         }
     }
 
+    /// <summary>
+    /// 宿主形态——决定窗口焦点信号是否具备「进入后台」的语义（见 ADR-011）。
+    /// </summary>
+    internal enum NetworkHostKind
+    {
+        /// <summary>无头进程（batchmode 的 CI、自动化联调、专用服务器）：没有窗口焦点这回事，Unity 恒报无焦点。</summary>
+        Headless,
+        /// <summary>桌面窗口，含编辑器与独立包：失焦后进程照常运行，玩家 alt-tab 是常态。</summary>
+        DesktopWindow,
+        /// <summary>移动端：进后台由 Pause 权威通知，Focus 是部分平台漏发 Pause 时的兜底。</summary>
+        Mobile,
+    }
+
+    /// <summary>
+    /// 宿主形态判定与「焦点丢失是否等于进入后台」的规则。判定与规则分开：
+    /// 规则是纯逻辑可测的，判定依赖平台宏只在真机成立。
+    /// </summary>
+    internal static class NetworkHostProfile
+    {
+        /// <summary>当前进程的宿主形态。运行期不会改变，取一次即可。</summary>
+        public static NetworkHostKind Current { get; } = Resolve();
+
+        /// <summary>
+        /// 焦点丢失是否应被当作「进入后台」。仅移动端为真——那里 Pause 才是权威信号，
+        /// Focus 只是兜底；其余形态失焦时进程仍在跑，据此进入后台会冻结网络层（见 ADR-011）。
+        /// </summary>
+        public static bool FocusLossMeansBackground(NetworkHostKind host) => host == NetworkHostKind.Mobile;
+
+        /// <summary>
+        /// 按平台宏判定宿主形态。用编译期宏而非 <c>Application.isMobilePlatform</c>：
+        /// 后者在编辑器下的取值随激活构建目标漂移，会让编辑器 Play 时的行为跟着构建目标变。
+        /// </summary>
+        private static NetworkHostKind Resolve()
+        {
+            if (Application.isBatchMode)
+                return NetworkHostKind.Headless;
+
+#if (UNITY_ANDROID || UNITY_IOS) && !UNITY_EDITOR
+            return NetworkHostKind.Mobile;
+#else
+            return NetworkHostKind.DesktopWindow;
+#endif
+        }
+    }
+
     /// <summary>回前台/网络变化后策略给出的恢复动作，从"无需处理"到"废弃旧连接并等网"逐级升级。</summary>
     internal enum NetworkRecoveryAction
     {

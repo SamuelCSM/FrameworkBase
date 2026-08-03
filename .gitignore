@@ -108,6 +108,9 @@ HybridCLRData/
 
 /[Aa]ssets/HybridCLRGenerate/
 /[Aa]ssets/HybridCLRGenerate.meta
+# AOT 补充元数据是按构建目标裁剪出的生成物（打包前由 SyncForBuildBatch 同步），随包走不入库
+/[Aa]ssets/StreamingAssets/HybridCLRMetadata/
+/[Aa]ssets/StreamingAssets/HybridCLRMetadata.meta
 
 # IDE settings
 .vscode/
