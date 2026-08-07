@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Security.Cryptography;
 using System.Text;
 
@@ -24,7 +25,7 @@ namespace Framework.Save
         // 默认主密钥种子是 deviceUniqueIdentifier，同一台设备上两个 FrameworkBase 产品拿到的种子
         // 完全相同，全靠此 Salt 把两者的派生密钥分开。留用框架兜底值不会立即出错，但会让
         // 同设备上的兄弟产品派生出同一把存档密钥，故正式项目须经 SaveManager.SetSaveSalt 覆盖。
-        // 只在 _keyLock 内被 EnsureKeys 读取，故无需 volatile。
+        // 只在 _keyLock 内被密钥派生读取，故无需 volatile。
         private static string _appSalt = DefaultAppSalt;
         // MAC 子密钥派生标签 —— 与加密 Key 做密钥分离，避免同一把 Key 既加密又签名
         private const string MacLabel = "|mac";
@@ -32,16 +33,38 @@ namespace Framework.Save
 
         private const int IvBytes  = 16;
 
+        /// <summary>
+        /// 用途域标签：不同用途派生出彼此独立的密钥，一个域的密钥泄露不会波及另一个域。
+        /// 存档是玩家数据、凭证是会话机密，两者的价值与生命周期都不同，不该共用一把 Key。
+        /// </summary>
+        internal static class Purpose
+        {
+            /// <summary>玩家存档（SaveManager）。</summary>
+            public const string Save = "save";
+
+            /// <summary>会话凭证等机密（SecureStorage 默认后端）。</summary>
+            public const string SecureStorage = "secure-storage";
+        }
+
         // 存档主密钥来源：默认绑定本设备；上云/跨设备时可通过 SetKeyProvider 替换
         private static ISaveKeyProvider _keyProvider = new DeviceSaveKeyProvider();
 
-        // volatile + _keyLock：本类被 SaveManager 与 EncryptedPrefsSecureStorage 共用，二者的调用线程
-        // 不由任何单一外部锁串行，故同步必须自带，不能倚赖"调用方持有档案锁"的隐式约定。
-        // SetKeyProvider 清缓存与 EnsureKeys 派生若并发，非同步的 check-then-act 会撕裂读到
-        // "enc 已置、mac 仍空"的半初始化密钥。
-        private static volatile byte[] _cachedEncKey; // AES 加解密 Key（16 字节）
-        private static volatile byte[] _cachedMacKey; // HMAC-SHA256 Key（32 字节）
+        // 按用途域缓存的子密钥。_keyLock：本类被 SaveManager 与 EncryptedPrefsSecureStorage 共用，
+        // 二者的调用线程不由任何单一外部锁串行，故同步必须自带，不能倚赖"调用方持有档案锁"的隐式约定。
+        // 换 Salt / 换密钥源与派生若并发，非同步的 check-then-act 会撕裂读到半初始化的密钥对。
+        private static readonly Dictionary<string, DerivedKeys> _keysByPurpose =
+            new Dictionary<string, DerivedKeys>(StringComparer.Ordinal);
         private static readonly object _keyLock = new object();
+
+        /// <summary>某个用途域下派生出的一对子密钥。两者一次性整体发布，读侧不会看到半初始化状态。</summary>
+        private sealed class DerivedKeys
+        {
+            /// <summary>AES 加解密 Key（16 字节）。</summary>
+            public byte[] Enc;
+
+            /// <summary>HMAC-SHA256 Key（32 字节）。</summary>
+            public byte[] Mac;
+        }
 
         /// <summary>
         /// 替换域分隔 Salt 并清空密钥缓存，下次读写时按新 Salt 重新派生。
@@ -52,12 +75,11 @@ namespace Framework.Save
         internal static void SetAppSalt(string salt)
         {
             if (string.IsNullOrWhiteSpace(salt)) throw new ArgumentException("Salt 不得为空白", nameof(salt));
-            // 与 EnsureKeys 同锁，理由同 SetKeyProvider：换 Salt 与清缓存必须相对派生原子
+            // 与派生同锁，理由同 SetKeyProvider：换 Salt 与清缓存必须相对派生原子
             lock (_keyLock)
             {
                 _appSalt = salt;
-                _cachedEncKey = null;
-                _cachedMacKey = null;
+                _keysByPurpose.Clear();
             }
         }
 
@@ -68,32 +90,35 @@ namespace Framework.Save
         internal static void SetKeyProvider(ISaveKeyProvider provider)
         {
             if (provider == null) throw new ArgumentNullException(nameof(provider));
-            // 与 EnsureKeys 同锁：换源与清缓存必须相对派生原子，避免旧源派生结果回写覆盖新源。
+            // 与派生同锁：换源与清缓存必须相对派生原子，避免旧源派生结果回写覆盖新源。
             lock (_keyLock)
             {
                 _keyProvider = provider;
-                _cachedEncKey = null;
-                _cachedMacKey = null;
+                _keysByPurpose.Clear();
             }
         }
 
-        // 确保两把子密钥已派生并缓存。双检锁：快路径无锁读 volatile 字段命中即返回；
-        // 未命中时进锁复检并派生，两把子密钥在锁内一次性发布，杜绝半初始化可见性。
-        private static void EnsureKeys()
+        /// <summary>
+        /// 取指定用途域的子密钥，未派生时在锁内派生并缓存。
+        /// 派生输入含用途标签，因此存档域与凭证域即使同种子同 Salt 也得到互不相关的密钥。
+        /// </summary>
+        /// <param name="purpose">用途域标签，取自 <see cref="Purpose"/>。</param>
+        /// <returns>该用途域的加密与 MAC 子密钥。</returns>
+        private static DerivedKeys GetKeys(string purpose)
         {
-            if (_cachedEncKey != null && _cachedMacKey != null) return;
-
             lock (_keyLock)
             {
-                if (_cachedEncKey != null && _cachedMacKey != null) return;
+                if (_keysByPurpose.TryGetValue(purpose, out DerivedKeys cached))
+                    return cached;
 
                 var master = _keyProvider.GetMasterSecret() ?? string.Empty;
+                string domain = master + _appSalt + "|" + purpose;
 
-                // 加密 Key = SHA256(master + Salt) 取前 16 字节
+                // 加密 Key = SHA256(master + Salt + 用途) 取前 16 字节
                 byte[] encKey = new byte[KeyBytes];
                 using (var sha = SHA256.Create())
                 {
-                    var encHash = sha.ComputeHash(Encoding.UTF8.GetBytes(master + _appSalt));
+                    var encHash = sha.ComputeHash(Encoding.UTF8.GetBytes(domain));
                     Array.Copy(encHash, encKey, KeyBytes);
                 }
 
@@ -101,24 +126,27 @@ namespace Framework.Save
                 byte[] macKey;
                 using (var sha = SHA256.Create())
                 {
-                    macKey = sha.ComputeHash(Encoding.UTF8.GetBytes(master + _appSalt + MacLabel));
+                    macKey = sha.ComputeHash(Encoding.UTF8.GetBytes(domain + MacLabel));
                 }
 
-                // 锁内最后发布：先 enc 后 mac，读侧快路径要求两者皆非空才命中，避免撕裂。
-                _cachedEncKey = encKey;
-                _cachedMacKey = macKey;
+                var keys = new DerivedKeys { Enc = encKey, Mac = macKey };
+                _keysByPurpose[purpose] = keys;
+                return keys;
             }
         }
 
-        /// <summary>加密 JSON 字符串，返回 IV(16) + 密文</summary>
-        public static byte[] Encrypt(string plainText)
+        /// <summary>用指定用途域的密钥加密字符串，返回 IV(16) + 密文。</summary>
+        /// <param name="purpose">用途域标签，取自 <see cref="Purpose"/>。</param>
+        /// <param name="plainText">待加密明文。</param>
+        /// <returns>IV 前置的密文字节。</returns>
+        public static byte[] Encrypt(string purpose, string plainText)
         {
-            EnsureKeys();
+            DerivedKeys keys = GetKeys(purpose);
             var plainBytes = Encoding.UTF8.GetBytes(plainText);
 
             using (var aes = Aes.Create())
             {
-                aes.Key     = _cachedEncKey;
+                aes.Key     = keys.Enc;
                 aes.Mode    = CipherMode.CBC;
                 aes.Padding = PaddingMode.PKCS7;
                 aes.GenerateIV();
@@ -134,13 +162,16 @@ namespace Framework.Save
             }
         }
 
-        /// <summary>解密，输入 IV(16) + 密文，返回原始 JSON 字符串</summary>
-        public static string Decrypt(byte[] ivAndCipher)
+        /// <summary>用指定用途域的密钥解密，输入 IV(16) + 密文，返回原始字符串。</summary>
+        /// <param name="purpose">用途域标签，须与加密时一致，否则解不开。</param>
+        /// <param name="ivAndCipher">IV 前置的密文字节。</param>
+        /// <returns>解密后的明文。</returns>
+        public static string Decrypt(string purpose, byte[] ivAndCipher)
         {
             if (ivAndCipher == null || ivAndCipher.Length <= IvBytes)
                 throw new CryptographicException("Cipher data too short");
 
-            EnsureKeys();
+            DerivedKeys keys = GetKeys(purpose);
             var iv     = new byte[IvBytes];
             var cipher = new byte[ivAndCipher.Length - IvBytes];
             Array.Copy(ivAndCipher, 0, iv, 0, IvBytes);
@@ -148,7 +179,7 @@ namespace Framework.Save
 
             using (var aes = Aes.Create())
             {
-                aes.Key     = _cachedEncKey;
+                aes.Key     = keys.Enc;
                 aes.IV      = iv;
                 aes.Mode    = CipherMode.CBC;
                 aes.Padding = PaddingMode.PKCS7;
@@ -165,10 +196,13 @@ namespace Framework.Save
         /// 对字节数组计算 HMAC-SHA256 并返回小写十六进制字符串（防篡改完整性码）。
         /// 与裸 SHA-256 不同：攻击者无 MAC Key 便无法在篡改后重算出合法完整性码。
         /// </summary>
-        public static string HmacSha256Hex(byte[] data)
+        /// <param name="purpose">用途域标签，取自 <see cref="Purpose"/>。</param>
+        /// <param name="data">待计算完整性码的字节。</param>
+        /// <returns>小写十六进制的 HMAC-SHA256。</returns>
+        public static string HmacSha256Hex(string purpose, byte[] data)
         {
-            EnsureKeys();
-            using (var hmac = new HMACSHA256(_cachedMacKey))
+            DerivedKeys keys = GetKeys(purpose);
+            using (var hmac = new HMACSHA256(keys.Mac))
             {
                 return ToHex(hmac.ComputeHash(data));
             }
@@ -178,8 +212,12 @@ namespace Framework.Save
         /// 常数时间校验 <paramref name="data"/> 的 HMAC 是否等于 <paramref name="expectedHex"/>，
         /// 避免按字符提前返回带来的时序侧信道。
         /// </summary>
-        public static bool VerifyHmac(byte[] data, string expectedHex)
-            => FixedTimeEquals(HmacSha256Hex(data), expectedHex);
+        /// <param name="purpose">用途域标签，取自 <see cref="Purpose"/>。</param>
+        /// <param name="data">待校验字节。</param>
+        /// <param name="expectedHex">文件中记录的完整性码。</param>
+        /// <returns>匹配返回 true。</returns>
+        public static bool VerifyHmac(string purpose, byte[] data, string expectedHex)
+            => FixedTimeEquals(HmacSha256Hex(purpose, data), expectedHex);
 
         /// <summary>
         /// 对字节数组计算裸 SHA-256 并返回小写十六进制字符串。

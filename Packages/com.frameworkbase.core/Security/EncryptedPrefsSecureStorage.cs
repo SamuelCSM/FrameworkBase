@@ -50,8 +50,8 @@ namespace Framework.Security
             try
             {
                 string full = FullKey(key);
-                byte[] enc = AesHelper.Encrypt(value ?? string.Empty);
-                string mac = AesHelper.HmacSha256Hex(enc);
+                byte[] enc = AesHelper.Encrypt(AesHelper.Purpose.SecureStorage, value ?? string.Empty);
+                string mac = AesHelper.HmacSha256Hex(AesHelper.Purpose.SecureStorage, enc);
                 PlayerPrefs.SetString(full, Convert.ToBase64String(enc) + "." + mac);
                 AddToIndex(full);
                 PlayerPrefs.Save();
@@ -83,13 +83,13 @@ namespace Framework.Security
                 byte[] enc = Convert.FromBase64String(stored.Substring(0, dot));
                 string mac = stored.Substring(dot + 1);
 
-                if (!AesHelper.VerifyHmac(enc, mac))
+                if (!AesHelper.VerifyHmac(AesHelper.Purpose.SecureStorage, enc, mac))
                 {
                     GameLog.Warning($"[SecureStorage] key={key} HMAC 校验失败（被篡改 / 密钥不匹配），按读不到处理");
                     return false;
                 }
 
-                value = AesHelper.Decrypt(enc);
+                value = AesHelper.Decrypt(AesHelper.Purpose.SecureStorage, enc);
                 return true;
             }
             catch (Exception ex)

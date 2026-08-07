@@ -148,6 +148,13 @@ namespace Framework.Core
         [Tooltip("当前客户端认可的隐私政策版本；版本升级后上层应重新触发授权流程。")]
         public int PrivacyPolicyVersion = 1;
 
+        [Header("本地存档安全")]
+        [Tooltip("存档密钥的项目级域分隔 Salt（建议用包名，如 com.yourcompany.yourgame）。" +
+                 "默认主密钥种子是设备 ID，同一台设备上两个 FrameworkBase 产品拿到的种子完全相同，" +
+                 "全靠此 Salt 把派生密钥分开。留空则沿用框架兜底值，prod 构建会失败。" +
+                 "上线后再改会使既有存档无法解密。")]
+        public string SaveSalt = string.Empty;
+
         [Header("远程配置")]
         [Tooltip("远程配置服务地址。运行时应使用本地 Last-Known-Good 快照应对网络或服务端异常。")]
         public string RemoteConfigUrl = string.Empty;

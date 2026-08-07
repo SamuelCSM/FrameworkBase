@@ -249,7 +249,7 @@ namespace Framework.Save
             long generation = Volatile.Read(ref _deleteGeneration);
 
             var json      = JsonSerializers.Shared.ToJson(data, false);
-            var encrypted = AesHelper.Encrypt(json);
+            var encrypted = AesHelper.Encrypt(AesHelper.Purpose.Save, json);
 
             // 完整性用 HMAC-SHA256（encrypt-then-MAC）：篡改后无 MAC Key 无法重算合法完整性码。
             // MAC 覆盖「认证头(方案 m + 版本 v + 账号 + 类型全名 + 槽位) + 密文」，把元数据与归属一并
@@ -262,6 +262,7 @@ namespace Framework.Save
                 m = MacSchemeContextBound,
             };
             envelope.h = AesHelper.HmacSha256Hex(
+                AesHelper.Purpose.Save,
                 BuildMacInput(envelope.m, envelope.v, userId, typeof(T).FullName, slot, encrypted));
             var envelopeJson = JsonSerializers.Shared.ToJson(envelope, false);
 
@@ -360,7 +361,7 @@ namespace Framework.Save
                     if (!VerifyIntegrity(encrypted, envelope, userId, typeof(T).FullName, slot))
                         throw new InvalidDataException("完整性校验失败 — 文件可能被篡改、损坏或来自其它账号/槽位");
 
-                    var json   = AesHelper.Decrypt(encrypted);
+                    var json   = AesHelper.Decrypt(AesHelper.Purpose.Save, encrypted);
                     var result = JsonSerializers.Shared.FromJson<T>(json);
 
                     // 代码当前版本取自全新实例的字段初始值（不会被上面的反序列化覆盖），
@@ -402,6 +403,7 @@ namespace Framework.Save
                 return false;
             }
             return AesHelper.VerifyHmac(
+                AesHelper.Purpose.Save,
                 BuildMacInput(envelope.m, envelope.v, userId, typeFullName, slot, encrypted),
                 envelope.h);
         }

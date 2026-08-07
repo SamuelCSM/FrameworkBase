@@ -605,6 +605,13 @@ namespace Framework.Core
             // 积压记录的上报在全部 Manager 就绪后异步尝试（端点未配置时仅本地缓存）。
             Telemetry.CrashReporter.Install();
 
+            // 存档密钥的项目级 Salt 由配置驱动，在此一次性应用——必须早于任何读写存档。
+            // 做成配置而非"项目自己记得调 SetSaveSalt"：后者漏掉不会报错，只会让同设备上的
+            // 兄弟产品悄悄派生出同一把存档密钥。留空时沿用框架兜底值，由构建门禁在 prod 拦下。
+            string saveSalt = AppConfig.Load()?.SaveSalt;
+            if (!string.IsNullOrWhiteSpace(saveSalt))
+                Save.SaveManager.Instance.SetSaveSalt(saveSalt.Trim());
+
             var initialized = new HashSet<Type>();
             foreach (ManagerRegistration registration in ManagerManifest)
             {
