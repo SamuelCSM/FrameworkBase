@@ -42,6 +42,25 @@ namespace Framework.Network
         public int MaxPendingMessages { get; set; } = 2048;
 
         /// <summary>
+        /// 积压消息的总字节上限；达到上限后同样拒绝入队。
+        /// <para>
+        /// 只按条数封顶挡不住内存：单帧允许 1 MiB、队列允许 2048 条，理论积压可达 2 GiB。
+        /// 消息大小差异极大（心跳几字节、全量同步上百 KB），字节预算才是与内存实际相关的那把尺。
+        /// 默认 32 MiB 远超正常对局需要，触发即意味着主线程已经长时间跟不上收包。
+        /// </para>
+        /// </summary>
+        public long MaxPendingBytes { get; set; } = 32L * 1024 * 1024;
+
+        /// <summary>当前积压消息的总字节数，只在 <see cref="_queueLock"/> 内读写。</summary>
+        private long _pendingBytes;
+
+        /// <summary>当前积压字节数（监控与测试用）。</summary>
+        public long PendingBytes
+        {
+            get { lock (_queueLock) return _pendingBytes; }
+        }
+
+        /// <summary>
         /// 单帧最多分发的消息数量，与耗时预算共同构成主线程保护上限。
         /// </summary>
         public int MaxMessagesPerFrame { get; set; } = 256;
@@ -234,11 +253,17 @@ namespace Framework.Network
             byte[] payload,
             ushort seqId = 0)
         {
+            int payloadBytes = payload?.Length ?? 0;
             lock (_queueLock)
             {
                 if (_messageQueue.Count >= Math.Max(1, MaxPendingMessages))
                     return false;
 
+                // 条数未满也可能已经吃掉大量内存：大包少量即可撑爆，故两道预算都要过。
+                if (MaxPendingBytes > 0 && _pendingBytes + payloadBytes > MaxPendingBytes)
+                    return false;
+
+                _pendingBytes += payloadBytes;
                 _messageQueue.Enqueue(new PendingMessage
                 {
                     ConnectionEpoch = connectionEpoch,
@@ -274,6 +299,9 @@ namespace Framework.Network
                 {
                     if (_messageQueue.Count == 0) break;
                     msg = _messageQueue.Dequeue();
+                    // 出队即释放预算，否则一轮突发之后队列虽空但额度已被占死。
+                    _pendingBytes -= msg.Payload?.Length ?? 0;
+                    if (_pendingBytes < 0) _pendingBytes = 0;
                 }
 
                 onBeforeProcess?.Invoke(msg.MainId, msg.SubId, msg.SeqId, msg.Payload);

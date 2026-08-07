@@ -25,6 +25,30 @@ namespace Framework.Tests
         }
 
         [Test]
+        public void 消息队列达到字节预算_条数未满也拒绝入队()
+        {
+            var dispatcher = new MessageDispatcher { MaxPendingMessages = 1000, MaxPendingBytes = 1024 };
+
+            Assert.IsTrue(dispatcher.TryEnqueueMessage(1, 1, 1, new byte[600], 0));
+            // 条数远未到上限，但字节预算已满：只数包数挡不住大包积压。
+            Assert.IsFalse(dispatcher.TryEnqueueMessage(1, 1, 2, new byte[600], 0));
+            Assert.AreEqual(600, dispatcher.PendingBytes);
+        }
+
+        [Test]
+        public void 消息出队后_释放字节预算()
+        {
+            var dispatcher = new MessageDispatcher { MaxPendingMessages = 1000, MaxPendingBytes = 1024 };
+            Assert.IsTrue(dispatcher.TryEnqueueMessage(1, 1, 1, new byte[600], 0));
+
+            dispatcher.ProcessMessageQueue();
+
+            // 不在出队时归还额度的话，一轮突发之后队列虽空、额度却被占死。
+            Assert.AreEqual(0, dispatcher.PendingBytes);
+            Assert.IsTrue(dispatcher.TryEnqueueMessage(1, 1, 2, new byte[600], 0));
+        }
+
+        [Test]
         public void 每帧数量预算_只处理预算内消息()
         {
             var dispatcher = new MessageDispatcher
