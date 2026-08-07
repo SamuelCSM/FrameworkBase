@@ -67,6 +67,12 @@ namespace Framework.HotUpdate
         private const string SlotManifestFileName = "slot.json";
 
         /// <summary>
+        /// 发布方签名凭据文件名。配置了热更信任根时，槽校验必须能对它重新验签并与 slot.json 交叉核对，
+        /// 否则该槽视为不可信（见 <see cref="SlotSignatureProof"/>）。
+        /// </summary>
+        private const string SlotProofFileName = "slot-proof.json";
+
+        /// <summary>
         /// 同一活动槽允许的最大连续未确认启动次数。超过后判定为崩溃循环，
         /// 下一次启动清空全部代码槽并回退整包出厂基线。
         /// </summary>
@@ -328,7 +334,11 @@ namespace Framework.HotUpdate
         /// <param name="stagingDirectory">已完成下载的 staging 目录。</param>
         /// <param name="error">失败时返回安装或校验原因。</param>
         /// <returns>槽目录和状态均提交成功时返回 true。</returns>
-        public static bool CommitStagingSlot(UpdateInfo updateInfo, string stagingDirectory, out string error)
+        public static bool CommitStagingSlot(
+            UpdateInfo updateInfo,
+            string stagingDirectory,
+            SlotSignatureProof proof,
+            out string error)
         {
             error = null;
             if (updateInfo == null || string.IsNullOrEmpty(stagingDirectory))
@@ -372,6 +382,19 @@ namespace Framework.HotUpdate
                     FileStorages.Shared.AtomicWriteText(
                         Path.Combine(stagingDirectory, SlotManifestFileName),
                         JsonSerializers.Shared.ToJson(manifest, true));
+
+                    // 凭据与槽同生共死：一起 Move 进正式槽目录，不允许事后补写。
+                    if (proof != null && proof.IsComplete)
+                    {
+                        FileStorages.Shared.AtomicWriteText(
+                            Path.Combine(stagingDirectory, SlotProofFileName),
+                            JsonSerializers.Shared.ToJson(proof, true));
+                    }
+                    else if (RequiresSignatureProof())
+                    {
+                        throw new InvalidDataException(
+                            "已配置热更信任根，但本次提交缺少发布方签名凭据，拒绝写入不可验证的代码槽。");
+                    }
 
                     string finalDirectory = Path.Combine(SlotsDirectory, slotId);
                     if (Directory.Exists(finalDirectory))
@@ -741,6 +764,7 @@ namespace Framework.HotUpdate
                     throw new InvalidDataException(patchSetError);
 
                 ValidateCommittedFileSet(directory, manifest.Files);
+                ValidateSignatureProof(directory, manifest);
                 foreach (PatchFile patch in manifest.Files)
                 {
                     string file = GetSafeStagingFilePath(directory, patch.FileName);
@@ -753,6 +777,107 @@ namespace Framework.HotUpdate
             {
                 reason = ex.Message;
                 return false;
+            }
+        }
+
+        /// <summary>
+        /// 本机是否配置了热更信任根。配了就要求每个代码槽都能出示发布方签名凭据；
+        /// 没配（模板、开发期、单测）则跳过，与其它安全项"配了才强制"的口径一致。
+        /// </summary>
+        /// <returns>需要签名凭据时返回 true。</returns>
+        private static bool RequiresSignatureProof()
+        {
+            AppConfigAsset config = AppConfig.Load();
+            if (config == null) return false;
+            return !string.IsNullOrWhiteSpace(config.UpdateManifestPublicKey) ||
+                   (config.UpdateManifestPublicKeys != null && config.UpdateManifestPublicKeys.Length > 0);
+        }
+
+        /// <summary>
+        /// 对槽内的发布方签名凭据重新验签，并与本地 <c>slot.json</c> 交叉核对。
+        /// <para>
+        /// 只验签名不核对内容是不够的：签名证明"这份 version.json 出自发布方"，
+        /// 而真正决定加载哪些 DLL、比对哪些摘要的是本地生成的 slot.json。两者必须对上，
+        /// 签名的信任才能传导到实际被加载的文件。
+        /// </para>
+        /// </summary>
+        /// <param name="directory">槽目录。</param>
+        /// <param name="manifest">已读出的槽清单。</param>
+        /// <exception cref="InvalidDataException">缺凭据、验签失败或与槽清单不一致时抛出。</exception>
+        private static void ValidateSignatureProof(string directory, SlotManifest manifest)
+        {
+            string proofPath = Path.Combine(directory, SlotProofFileName);
+            bool exists = File.Exists(proofPath);
+
+            if (!RequiresSignatureProof())
+            {
+                // 未配信任根：凭据可有可无，有也不做校验（没有可信公钥，校验本身没有意义）。
+                return;
+            }
+
+            if (!exists)
+                throw new InvalidDataException("已配置热更信任根，但代码槽缺少发布方签名凭据。");
+
+            SlotSignatureProof proof = JsonSerializers.Shared.FromJson<SlotSignatureProof>(
+                File.ReadAllText(proofPath));
+            if (proof == null || !proof.IsComplete)
+                throw new InvalidDataException("代码槽签名凭据不完整。");
+
+            AppConfigAsset config = AppConfig.Load();
+            string publicKey = UpdateSecurity.ResolvePublicKey(
+                proof.KeyId,
+                config?.UpdateManifestPublicKey,
+                config?.UpdateManifestPublicKeys);
+            if (string.IsNullOrWhiteSpace(publicKey))
+                throw new InvalidDataException($"未找到 KeyId={proof.KeyId} 对应的热更验签公钥。");
+
+            if (!UpdateSecurity.VerifyManifestSignature(
+                    Encoding.UTF8.GetBytes(proof.ManifestJson),
+                    proof.Signature,
+                    publicKey))
+            {
+                throw new InvalidDataException("代码槽签名凭据验签失败。");
+            }
+
+            UpdateInfo signed = JsonSerializers.Shared.FromJson<UpdateInfo>(proof.ManifestJson);
+            if (signed == null)
+                throw new InvalidDataException("代码槽签名凭据中的清单无法反序列化。");
+            if (!string.Equals(signed.AppVersion, manifest.AppVersion, StringComparison.Ordinal) ||
+                signed.CodeVersion != manifest.CodeVersion)
+            {
+                throw new InvalidDataException(
+                    $"签名清单版本（{signed.AppVersion}/{signed.CodeVersion}）与槽清单" +
+                    $"（{manifest.AppVersion}/{manifest.CodeVersion}）不一致。");
+            }
+
+            ValidateSignedFileSetMatches(signed, manifest);
+        }
+
+        /// <summary>
+        /// 核对签名清单与槽清单描述的是同一组文件与同一组摘要。
+        /// 任一文件名、长度或 SHA-256 对不上，都说明本地槽清单被改过。
+        /// </summary>
+        /// <param name="signed">签名覆盖的发布清单。</param>
+        /// <param name="manifest">本地槽清单。</param>
+        /// <exception cref="InvalidDataException">文件集不一致时抛出。</exception>
+        private static void ValidateSignedFileSetMatches(UpdateInfo signed, SlotManifest manifest)
+        {
+            var signedFiles = new Dictionary<string, PatchFile>(StringComparer.Ordinal);
+            foreach (PatchFile patch in signed.PatchFiles ?? new List<PatchFile>())
+                signedFiles[patch.FileName ?? string.Empty] = patch;
+
+            if (signedFiles.Count != manifest.Files.Count)
+                throw new InvalidDataException("签名清单与槽清单的文件数量不一致。");
+
+            foreach (PatchFile local in manifest.Files)
+            {
+                if (!signedFiles.TryGetValue(local.FileName ?? string.Empty, out PatchFile authorized))
+                    throw new InvalidDataException($"槽清单包含签名清单之外的文件：{local.FileName}");
+                if (authorized.Size != local.Size ||
+                    !string.Equals(authorized.SHA256, local.SHA256, StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new InvalidDataException($"文件 {local.FileName} 的长度或摘要与签名清单不一致。");
+                }
             }
         }
 
@@ -848,9 +973,13 @@ namespace Framework.HotUpdate
             {
                 SlotManifestFileName,
             };
+            // 签名凭据是可选文件（未配置信任根时不产生），故单列而不进"缺少必需文件"的判定。
+            var optional = new HashSet<string>(StringComparer.Ordinal) { SlotProofFileName };
             foreach (string file in Directory.GetFiles(directory, "*", SearchOption.TopDirectoryOnly))
             {
                 string fileName = Path.GetFileName(file);
+                if (optional.Contains(fileName))
+                    continue;
                 if (!expected.Remove(fileName))
                     throw new InvalidDataException($"正式代码槽包含清单外文件：{fileName}");
             }

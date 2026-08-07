@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Security.Cryptography;
 using System.Text.RegularExpressions;
+using Framework.Core;
 using Framework.HotUpdate;
 using Framework.Storage;
 using NUnit.Framework;
@@ -18,12 +19,19 @@ namespace Framework.Tests
     public class HotUpdateSlotManagerTests
     {
         private string _root;
+        private AppConfigAsset _config;
 
         [SetUp]
         public void SetUp()
         {
             _root = Path.Combine(Path.GetTempPath(), "FrameworkBase-SlotTests", Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(_root);
+
+            // 注入一份不含信任根的配置：本组用例测的是槽状态机，不该被壳工程 AppConfig 里的
+            // 公钥环牵动（配了信任根就必须出示发布方签名凭据，那是另一条用例专门验的）。
+            _config = ScriptableObject.CreateInstance<AppConfigAsset>();
+            SetAppConfigForTest(_config);
+
             HotUpdateSlotManager.TestRootDirectoryOverride = _root;
             HotUpdateSlotManager.ResetStateForTests();
             HotUpdateSlotManager.PrepareForLaunch();
@@ -34,6 +42,8 @@ namespace Framework.Tests
         {
             HotUpdateSlotManager.ResetStateForTests();
             HotUpdateSlotManager.TestRootDirectoryOverride = null;
+            SetAppConfigForTest(null);
+            if (_config != null) UnityEngine.Object.DestroyImmediate(_config);
             if (Directory.Exists(_root)) Directory.Delete(_root, true);
         }
 
@@ -114,7 +124,7 @@ namespace Framework.Tests
             File.WriteAllText(Path.Combine(staging, "unexpected.bin"), "unexpected");
 
             LogAssert.Expect(LogType.Error, new Regex(".*提交 staging 槽失败.*清单外文件.*"));
-            Assert.IsFalse(HotUpdateSlotManager.CommitStagingSlot(update, staging, out string error));
+            Assert.IsFalse(HotUpdateSlotManager.CommitStagingSlot(update, staging, proof: null, out string error));
             StringAssert.Contains("清单外文件", error);
         }
 
@@ -209,6 +219,34 @@ namespace Framework.Tests
         }
 
         [Test]
+        public void 配置信任根后_槽缺签名凭据即判无效()
+        {
+            Commit(CreateUpdate(2, 0x22));
+            HotUpdateSlotManager.ConfirmPendingSlot();
+            Assert.IsTrue(HotUpdateSlotManager.TryGetActiveCodeVersion(out _), "前置：未配信任根时提交的槽可用");
+
+            // 装上信任根后，同一个槽因为拿不出发布方签名凭据而不再可信：
+            // slot.json 是本地生成的，拿自己的摘要比对自己永远自洽，必须由签名把信任接回发布方。
+            _config.UpdateManifestPublicKey =
+                "<RSAKeyValue><Modulus>AA==</Modulus><Exponent>AQAB</Exponent></RSAKeyValue>";
+
+            HotUpdateSlotManager.ResetStateForTests();
+            LogAssert.Expect(LogType.Error, new Regex(".*活动槽校验失败.*"));
+            HotUpdateSlotManager.PrepareForLaunch();
+
+            Assert.IsFalse(HotUpdateSlotManager.TryGetActiveCodeVersion(out _),
+                "配置信任根后，无签名凭据的槽必须判为不可用");
+        }
+
+        /// <summary>注入 AppConfig 缓存实例，用于在用例内开关热更信任根。</summary>
+        private static void SetAppConfigForTest(AppConfigAsset config)
+        {
+            typeof(AppConfig)
+                .GetField("_cached", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic)
+                ?.SetValue(null, config);
+        }
+
+        [Test]
         public void 状态文件槽ID被改成穿越路径_启动时清空该引用()
         {
             Commit(CreateUpdate(2, 0x22));
@@ -238,7 +276,7 @@ namespace Framework.Tests
         private static void Commit(UpdateInfo update)
         {
             string staging = PrepareFiles(update);
-            Assert.IsTrue(HotUpdateSlotManager.CommitStagingSlot(update, staging, out string error), error);
+            Assert.IsTrue(HotUpdateSlotManager.CommitStagingSlot(update, staging, proof: null, out string error), error);
         }
 
         /// <summary>
