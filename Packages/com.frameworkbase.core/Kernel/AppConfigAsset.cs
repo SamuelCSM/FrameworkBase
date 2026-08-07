@@ -159,6 +159,11 @@ namespace Framework.Core
         [Tooltip("远程配置服务地址。运行时应使用本地 Last-Known-Good 快照应对网络或服务端异常。")]
         public string RemoteConfigUrl = string.Empty;
 
+        [Tooltip("远程配置 RSA 验签公钥环（与热更公钥环同结构，按 KeyId 选择）。" +
+                 "配置任一条目即启用签名校验：载荷须为签名信封，磁盘缓存下次启动也会重新验签。" +
+                 "留空则按明文载荷处理（模板与开发期默认）。")]
+        public UpdateManifestPublicKeyEntry[] RemoteConfigPublicKeys = Array.Empty<UpdateManifestPublicKeyEntry>();
+
         [Header("登录服务")]
         [Tooltip("HTTP 登录服务地址（框架参考 HttpAuthBackend 用）。留空则回退 Mock 登录后端；" +
                  "prod 应配置为 HTTPS。业务有自有登录协议时经 AuthManager.SetBackend 替换。")]

@@ -125,10 +125,17 @@ namespace Framework.RemoteConfig
                     Env = AppConfig.Load() != null ? AppConfig.Load().AppEnv : string.Empty
                 };
 
-                string json = await backend.FetchAsync(request);
-                if (string.IsNullOrEmpty(json))
+                string raw = await backend.FetchAsync(request);
+                if (string.IsNullOrEmpty(raw))
                 {
                     GameLog.Warning("[RemoteConfigManager] 拉取失败，保留现值");
+                    return false;
+                }
+
+                // 先验签再解析：签名覆盖的是原始载荷字节，解析之后再验就失去了签名边界。
+                if (!RemoteConfigSignature.TryUnwrap(raw, AppConfig.Load(), NowUnixSeconds(), out string json, out string reject))
+                {
+                    GameLog.Error($"[RemoteConfigManager] 配置签名校验失败（{reject}），保留现值");
                     return false;
                 }
 
@@ -141,7 +148,9 @@ namespace Framework.RemoteConfig
                 _active = values;
                 _warnedFlagKeys.Clear();
                 FetchedThisSession = true;
-                PersistCache(json);
+                // 落盘的是原始载荷（启用签名时即整个信封）：下次启动要能对同一份字节重新验签，
+                // 只存解开后的 JSON 等于把"可验证"降级成"信任本地文件"。
+                PersistCache(raw);
                 GameLog.Log($"[RemoteConfigManager] 远程配置已激活 {values.Count} 项");
                 return true;
             }
@@ -428,6 +437,9 @@ namespace Framework.RemoteConfig
             return _backend;
         }
 
+        /// <summary>当前 Unix 秒。抽成方法便于单测按需替换时间源判定过期。</summary>
+        private static long NowUnixSeconds() => DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+
         private string ChannelName()
         {
             // GameEntry 未接线（纯单测环境）时渠道维度留空
@@ -453,7 +465,16 @@ namespace Framework.RemoteConfig
                 if (!FileStorages.Shared.FileExists(_cachePath))
                     return;
 
-                string json = FileStorages.Shared.ReadText(_cachePath);
+                string raw = FileStorages.Shared.ReadText(_cachePath);
+
+                // 缓存与网络载荷同等对待：缓存文件是普通磁盘文件，能写该目录就能改它。
+                // 只在写入时验签、读取时原样信任，等于把签名保护限制在"第一次拉取"那一瞬间。
+                if (!RemoteConfigSignature.TryUnwrap(raw, AppConfig.Load(), NowUnixSeconds(), out string json, out string reject))
+                {
+                    GameLog.Error($"[RemoteConfigManager] 缓存签名校验失败（{reject}），忽略缓存");
+                    return;
+                }
+
                 if (JsonObjectParser.TryParseObject(json, out var values))
                 {
                     _active = values;
