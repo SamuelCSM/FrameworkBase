@@ -1,5 +1,5 @@
 using System;
-using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.IO;
 using System.Security.Cryptography;
 using System.Text.RegularExpressions;
@@ -48,17 +48,85 @@ namespace Framework.Save
         // Key = 完整存档路径（已含账号/类型/slot），保证同一档案的读/写互斥，
         // 避免并发 SaveAsync 的 .tmp→备份→Move 交错损坏，以及读撞上「删主档到 Move」的空窗。
         // 不同档案各自独立锁，互不阻塞。
-        private readonly ConcurrentDictionary<string, SemaphoreSlim> _fileLocks =
-            new ConcurrentDictionary<string, SemaphoreSlim>();
+        // 带引用计数：条目在最后一个使用者释放后移出字典。slot 由业务任意传值，
+        // 只增不删的字典会随游玩时长单向增长。
+        private readonly Dictionary<string, FileLockEntry> _fileLocks = new Dictionary<string, FileLockEntry>();
 
-        /// <summary>获取指定档案路径的串行化锁（按需创建，单一实例）。</summary>
-        private SemaphoreSlim GetFileLock(string path)
-            => _fileLocks.GetOrAdd(path, _ => new SemaphoreSlim(1, 1));
+        /// <summary>_fileLocks 自身的短临界区锁，只保护字典结构与引用计数，不覆盖任何文件 IO。</summary>
+        private readonly object _fileLocksGate = new object();
+
+        /// <summary>
+        /// 存档删除世代号。任何删除（单档 / 单账号 / 全设备）都递增它，
+        /// 使在途写入能发现"我要写的数据早于一次删除"，从而不把已删存档复活。
+        /// </summary>
+        private long _deleteGeneration;
+
+        /// <summary>带引用计数的档案锁条目。计数为 0 表示无人持有也无人等待，可以安全移出字典。</summary>
+        private sealed class FileLockEntry
+        {
+            /// <summary>该档案的串行化信号量。</summary>
+            public readonly SemaphoreSlim Semaphore = new SemaphoreSlim(1, 1);
+
+            /// <summary>当前持有或等待该锁的操作数，只在 <see cref="_fileLocksGate"/> 内读写。</summary>
+            public int RefCount;
+        }
+
+        /// <summary>
+        /// 取得档案锁条目并登记引用。必须在 <c>WaitAsync</c> <b>之前</b>调用：
+        /// 先登记引用，等待中的操作才不会被并发的释放路径把条目回收掉。
+        /// </summary>
+        /// <param name="path">完整存档路径。</param>
+        /// <returns>已登记引用的锁条目，用完须交给 <see cref="ReleaseFileLock"/>。</returns>
+        private FileLockEntry AcquireFileLock(string path)
+        {
+            lock (_fileLocksGate)
+            {
+                if (!_fileLocks.TryGetValue(path, out FileLockEntry entry))
+                {
+                    entry = new FileLockEntry();
+                    _fileLocks[path] = entry;
+                }
+                entry.RefCount++;
+                return entry;
+            }
+        }
+
+        /// <summary>
+        /// 释放档案锁并回收无人使用的条目。
+        /// </summary>
+        /// <param name="path">完整存档路径。</param>
+        /// <param name="entry">与 <paramref name="path"/> 对应的锁条目。</param>
+        private void ReleaseFileLock(string path, FileLockEntry entry)
+        {
+            entry.Semaphore.Release();
+            lock (_fileLocksGate)
+            {
+                entry.RefCount--;
+                // 只回收字典里仍然是同一实例的条目：并发路径可能已经换过新实例。
+                if (entry.RefCount == 0 &&
+                    _fileLocks.TryGetValue(path, out FileLockEntry current) &&
+                    ReferenceEquals(current, entry))
+                {
+                    _fileLocks.Remove(path);
+                    entry.Semaphore.Dispose();
+                }
+            }
+        }
 
         /// <summary>
         /// 当前账号 ID（只读）。未登录时为 "guest"。
         /// </summary>
         public string CurrentUserId => _currentUserId;
+
+#if UNITY_INCLUDE_TESTS
+        /// <summary>
+        /// 仅供本仓库测试断言档案锁条目已被回收（读写结束后应为 0）。正式 Player 不编译该入口。
+        /// </summary>
+        internal int TrackedFileLockCount
+        {
+            get { lock (_fileLocksGate) return _fileLocks.Count; }
+        }
+#endif
 
         /// <summary>
         /// 登录成功后调用，切换存档目录到该账号。
@@ -140,6 +208,9 @@ namespace Framework.Save
         /// </summary>
         public async UniTask SaveAsync<T>(T data, int slot = 0) where T : SaveData
         {
+            // 记下发起时的删除世代：本次要写的是这一刻的数据，之后若发生删除，这份数据就已经过期。
+            long generation = Volatile.Read(ref _deleteGeneration);
+
             var json      = JsonSerializers.Shared.ToJson(data, false);
             var encrypted = AesHelper.Encrypt(json);
 
@@ -160,19 +231,39 @@ namespace Framework.Save
 
             // 同一档案串行化：上方 JSON 序列化/加密已在调用线程（主线程）完成，
             // 此处仅串行化文件 IO，不影响主线程序列化语义。
-            var fileLock = GetFileLock(savePath);
-            await fileLock.WaitAsync();
+            FileLockEntry fileLock = AcquireFileLock(savePath);
+            await fileLock.Semaphore.WaitAsync();
             try
             {
+                // 等锁期间该档案被删除：写下去等于把玩家（或 RTBF 流程）刚删掉的存档复活。
+                if (Volatile.Read(ref _deleteGeneration) != generation)
+                {
+                    GameLog.Warning($"[SaveManager] 写档期间存档已被删除，放弃写入 type={typeof(T).Name} slot={slot}");
+                    return;
+                }
+
                 await UniTask.RunOnThreadPool(() =>
                 {
                     FileStorages.Shared.EnsureDirectory(userDir);
                     FileStorages.Shared.AtomicWriteText(savePath, envelopeJson, backupPath);
                 });
+
+                // 写盘途中发生删除：删除是同步的、不等在途写入，因此由写入方负责把刚落盘的文件补删掉。
+                // 这样"删除后不留残档"这一最终状态成立，代价是残档短暂存在过——对账号注销与 RTBF 足够。
+                if (Volatile.Read(ref _deleteGeneration) != generation)
+                {
+                    await UniTask.RunOnThreadPool(() =>
+                    {
+                        FileStorages.Shared.TryDeleteFile(savePath);
+                        FileStorages.Shared.TryDeleteFile(backupPath);
+                    });
+                    GameLog.Warning($"[SaveManager] 写档落盘后发现存档已被删除，已回收残档 type={typeof(T).Name} slot={slot}");
+                    return;
+                }
             }
             finally
             {
-                fileLock.Release();
+                ReleaseFileLock(savePath, fileLock);
             }
 
             GameLog.Log($"[SaveManager] 写档成功 user={_currentUserId} type={typeof(T).Name} slot={slot}");
@@ -198,15 +289,15 @@ namespace Framework.Save
             var userId     = _currentUserId;
 
             // 与同档案的写入互斥，避免读到写入过程中的中间态（删主档到 Move 之间的空窗）
-            var fileLock = GetFileLock(savePath);
-            await fileLock.WaitAsync();
+            FileLockEntry fileLock = AcquireFileLock(savePath);
+            await fileLock.Semaphore.WaitAsync();
             try
             {
                 return await UniTask.RunOnThreadPool(() => LoadInternal<T>(slot, savePath, backupPath, userId));
             }
             finally
             {
-                fileLock.Release();
+                ReleaseFileLock(savePath, fileLock);
             }
         }
 
@@ -285,24 +376,39 @@ namespace Framework.Save
         public bool HasSave<T>(int slot = 0) where T : SaveData
             => FileStorages.Shared.FileExists(SlotPath<T>(slot));
 
-        /// <summary>删除当前账号指定类型 + 槽位的存档（包括备份）</summary>
+        // 删除一律同步、且不获取档案锁：档案锁会被 SaveAsync 持有跨越 await，
+        // 主线程若在此阻塞等待它，写入的续体就永远回不到主线程，直接死锁。
+        // 因此改由删除递增世代号、在途写入自行发现并回收残档（见 SaveAsync），
+        // 换取删除接口保持同步语义，不改 ISaveService 契约。
+
+        /// <summary>
+        /// 删除当前账号指定类型 + 槽位的存档（包括备份）。
+        /// 递增删除世代号，使发起于本次删除之前的在途写入不会把该存档重新写出来。
+        /// </summary>
         public void DeleteSave<T>(int slot = 0) where T : SaveData
         {
+            Interlocked.Increment(ref _deleteGeneration);
             TryDeleteFile(SlotPath<T>(slot));
             TryDeleteFile(BackupPath<T>(slot));
             GameLog.Log($"[SaveManager] 已删除存档 user={_currentUserId} type={typeof(T).Name} slot={slot}");
         }
 
-        /// <summary>删除当前账号的全部存档（保留其他账号数据）</summary>
+        /// <summary>
+        /// 删除当前账号的全部存档（保留其他账号数据）。同样递增删除世代号拦住在途写入。
+        /// </summary>
         public void DeleteCurrentUserSaves()
         {
+            Interlocked.Increment(ref _deleteGeneration);
             FileStorages.Shared.DeleteDirectory(UserDir, recursive: true);
             GameLog.Log($"[SaveManager] 已删除账号 {_currentUserId} 的全部存档");
         }
 
-        /// <summary>删除本设备所有账号的全部存档（慎用）</summary>
+        /// <summary>
+        /// 删除本设备所有账号的全部存档（慎用）。同样递增删除世代号拦住在途写入。
+        /// </summary>
         public void DeleteAllSaves()
         {
+            Interlocked.Increment(ref _deleteGeneration);
             var root = Path.Combine(Application.persistentDataPath, "saves");
             FileStorages.Shared.DeleteDirectory(root, recursive: true);
             GameLog.Log("[SaveManager] 已删除全设备所有存档");

@@ -229,5 +229,43 @@ namespace Framework.Tests
             Assert.AreEqual("alpha", back.nickname, "切回原账号应读到原账号数据");
             Assert.AreEqual(111, back.coins);
         });
+
+        // ── 删除与在途写入 ───────────────────────────────────────────────────
+
+        [UnityTest]
+        public IEnumerator 写档途中删除_最终不留残档() => UniTask.ToCoroutine(async () =>
+        {
+            // 不 await：SaveAsync 会同步执行到线程池落盘那一步才让出，此刻删除正好落在写入途中。
+            UniTask writing = SaveManager.Instance.SaveAsync(new ProfileSave { nickname = "ghost", coins = 9 });
+            SaveManager.Instance.DeleteSave<ProfileSave>();
+            await writing;
+
+            // 在途写入若不理会删除，账号注销 / RTBF 之后存档会被它重新写出来。
+            Assert.IsFalse(SaveManager.Instance.HasSave<ProfileSave>(), "删除之后不得留下被在途写入复活的存档");
+            Assert.IsFalse(File.Exists(SavePath(_user, nameof(ProfileSave))), "备份与主档都不应残留");
+        });
+
+        [UnityTest]
+        public IEnumerator 账号整体删除后_在途写入不复活存档() => UniTask.ToCoroutine(async () =>
+        {
+            UniTask writing = SaveManager.Instance.SaveAsync(new ProfileSave { nickname = "ghost", coins = 9 });
+            SaveManager.Instance.DeleteCurrentUserSaves();
+            await writing;
+
+            Assert.IsFalse(SaveManager.Instance.HasSave<ProfileSave>());
+        });
+
+        [UnityTest]
+        public IEnumerator 读写完成后_档案锁字典不残留条目() => UniTask.ToCoroutine(async () =>
+        {
+            for (int slot = 0; slot < 5; slot++)
+            {
+                await SaveManager.Instance.SaveAsync(new ProfileSave { coins = slot }, slot);
+                await SaveManager.Instance.LoadAsync<ProfileSave>(slot);
+            }
+
+            // slot 由业务任意传值，锁条目只增不删会随游玩时长单向增长。
+            Assert.AreEqual(0, SaveManager.Instance.TrackedFileLockCount, "读写结束后档案锁条目应被回收");
+        });
     }
 }
