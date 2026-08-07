@@ -34,6 +34,11 @@ namespace Framework
         // 所有活跃的对象（用于检查重复回收）
         private readonly HashSet<GameObject> _activeObjects;
 
+        // 模板加载的 single-flight 句柄：并发首次取用只发起一次加载。
+        // ResourceManager 按地址计引用，各自发起会累加多次引用，而 Clear 只 Release 一次，剩下的永不归零。
+        private UniTask<GameObject> _templateLoad;
+        private bool _templateLoading;
+
         /// <summary>
         /// 当前对象池中的对象数量
         /// </summary>
@@ -78,6 +83,38 @@ namespace Framework
         }
 
         /// <summary>
+        /// 确保预制体模板已加载，并发调用共享同一次加载（single-flight）。
+        /// <para>
+        /// 各自发起加载会让 <see cref="ResourceManager"/> 对同一地址累加多次引用，而
+        /// <see cref="Clear"/> 只 Release 一次，剩余引用永不归零、资源无法卸载。
+        /// 加载失败时清掉在途标记，允许下次重试而不是把失败结果一直缓存下去。
+        /// </para>
+        /// </summary>
+        /// <returns>模板实例；加载失败返回 null。</returns>
+        private async UniTask<GameObject> EnsureTemplateAsync()
+        {
+            if (_template != null)
+                return _template;
+
+            if (!_templateLoading)
+            {
+                _templateLoading = true;
+                // Preserve：UniTask 默认只能被 await 一次，多个等待方共享同一句柄必须先保留。
+                _templateLoad = ResourceManager.Instance.LoadAssetAsync<GameObject>(_address).Preserve();
+            }
+
+            GameObject loaded = await _templateLoad;
+            if (loaded == null)
+            {
+                _templateLoading = false;
+                return null;
+            }
+
+            _template = loaded;
+            return _template;
+        }
+
+        /// <summary>
         /// 预热对象池
         /// </summary>
         /// <param name="count">预创建的对象数量</param>
@@ -89,14 +126,10 @@ namespace Framework
             }
 
             // 加载预制体模板
-            if (_template == null)
+            if (await EnsureTemplateAsync() == null)
             {
-                _template = await ResourceManager.Instance.LoadAssetAsync<GameObject>(_address);
-                if (_template == null)
-                {
-                    GameLog.Error($"GameObjectPool.PrewarmAsync: 加载预制体失败 - {_address}");
-                    return;
-                }
+                GameLog.Error($"GameObjectPool.PrewarmAsync: 加载预制体失败 - {_address}");
+                return;
             }
 
             // 预创建对象
@@ -143,14 +176,10 @@ namespace Framework
             if (obj == null)
             {
                 // 加载预制体模板
-                if (_template == null)
+                if (await EnsureTemplateAsync() == null)
                 {
-                    _template = await ResourceManager.Instance.LoadAssetAsync<GameObject>(_address);
-                    if (_template == null)
-                    {
-                        GameLog.Error($"GameObjectPool.GetAsync: 加载预制体失败 - {_address}");
-                        return null;
-                    }
+                    GameLog.Error($"GameObjectPool.GetAsync: 加载预制体失败 - {_address}");
+                    return null;
                 }
 
                 if (requiresLiveParent && parent == null)
@@ -286,6 +315,9 @@ namespace Framework
                 ResourceManager.Instance.ReleaseAsset(_address);
                 _template = null;
             }
+
+            // 让下一次取用重新发起加载，而不是复用一个指向已释放资源的在途句柄。
+            _templateLoading = false;
 
             GameLog.Log($"GameObjectPool.Clear: 清空对象池 - {_address}");
         }

@@ -22,6 +22,18 @@ namespace Framework
         /// <summary>当前加载出的子预制根对象。</summary>
         private GameObject prefabObject;
 
+        /// <summary>本次加载是否在途。并发调用共享 <see cref="loadInFlight"/>，不各自再实例化一份。</summary>
+        private bool loading;
+
+        /// <summary>在途加载句柄（已 Preserve，可被多个调用方 await）。</summary>
+        private UniTask<TPrefab> loadInFlight;
+
+        /// <summary>
+        /// 释放世代号，每次 <see cref="Dispose"/> 递增。加载在途期间宿主被释放时，
+        /// 迟到的实例据此判断"我已经不属于任何人了"，直接归还而不是装进字段。
+        /// </summary>
+        private int disposeGeneration;
+
         /// <summary>当前创建的子预制控制类。</summary>
         private TPrefab prefab;
 
@@ -51,28 +63,73 @@ namespace Framework
         /// 加载子预制但不显示。
         /// </summary>
         /// <returns>加载成功时返回子预制控制类，否则返回 null。</returns>
-        public async UniTask<TPrefab> LoadAsync()
+        public UniTask<TPrefab> LoadAsync()
         {
             if (string.IsNullOrEmpty(key))
             {
                 GameLog.Error($"[SceneSubPrefabHost] LoadAsync 失败，key 为空: {typeof(TPrefab).Name}");
-                return null;
+                return UniTask.FromResult<TPrefab>(null);
             }
 
             if (parent == null)
             {
                 GameLog.Error($"[SceneSubPrefabHost] LoadAsync 失败，父节点为空: {typeof(TPrefab).Name}");
-                return null;
+                return UniTask.FromResult<TPrefab>(null);
             }
 
             if (IsLoaded)
             {
-                return prefab;
+                return UniTask.FromResult(prefab);
             }
 
+            // 并发加载共享同一次请求：各自往下走会各实例化一个对象，后者覆盖 prefabObject / prefab 字段，
+            // 前者从此无人引用也无人释放（Show 两次、或 Show 与预加载撞上就会发生）。
+            // Preserve：UniTask 默认只能被 await 一次，多个等待方共享同一句柄必须先保留。
+            if (!loading)
+            {
+                loading = true;
+                loadInFlight = LoadCoreAsync().Preserve();
+            }
+
+            return loadInFlight;
+        }
+
+        /// <summary>
+        /// 实际执行一次加载。结束时清掉在途标记，使失败或释放后仍可重新加载。
+        /// </summary>
+        /// <returns>加载并初始化成功的子预制控制类，否则 null。</returns>
+        private async UniTask<TPrefab> LoadCoreAsync()
+        {
+            try
+            {
+                return await LoadInstanceAsync();
+            }
+            finally
+            {
+                loading = false;
+            }
+        }
+
+        /// <summary>
+        /// 加载主体：取实例、装配 View、初始化控制类。任一步失败都回到"未加载"状态。
+        /// </summary>
+        /// <returns>加载并初始化成功的子预制控制类，否则 null。</returns>
+        private async UniTask<TPrefab> LoadInstanceAsync()
+        {
             Dispose();
 
-            prefabObject = await provider.GetAsync(key, parent);
+            // 记下本次加载的世代：await 期间调用方可能 Dispose 宿主，此时迟到的实例不该再装进字段。
+            int generation = disposeGeneration;
+
+            GameObject loaded = await provider.GetAsync(key, parent);
+            if (loaded != null && generation != disposeGeneration)
+            {
+                provider.Release(loaded);
+                GameLog.Log($"[SceneSubPrefabHost] 加载在途期间宿主已释放，丢弃迟到实例: {typeof(TPrefab).Name}");
+                return null;
+            }
+
+            prefabObject = loaded;
             if (prefabObject == null)
             {
                 ResetRuntimeState();
@@ -131,6 +188,8 @@ namespace Framework
         /// </summary>
         public void Dispose()
         {
+            // 递增世代：在途加载回来时据此判断宿主已被释放，把迟到实例归还而不是装进字段。
+            disposeGeneration++;
             prefab?.Dispose();
             prefab = null;
             ReleasePrefabObject();
