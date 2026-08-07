@@ -432,8 +432,13 @@ namespace Framework.RemoteConfig
                 return null;
             }
 
-            _backend = new HttpRemoteConfigBackend(url);
-            GameLog.Log($"[RemoteConfigManager] 默认配置后端: {_backend.Name}");
+            bool postBody = AppConfig.Load() != null && AppConfig.Load().RemoteConfigIdentityInPostBody;
+            _backend = new HttpRemoteConfigBackend(
+                url,
+                identityTransport: postBody
+                    ? RemoteConfigIdentityTransport.PostBody
+                    : RemoteConfigIdentityTransport.QueryString);
+            GameLog.Log($"[RemoteConfigManager] 默认配置后端: {_backend.Name}（标识下发={(postBody ? "POST body" : "查询参数")}）");
             return _backend;
         }
 

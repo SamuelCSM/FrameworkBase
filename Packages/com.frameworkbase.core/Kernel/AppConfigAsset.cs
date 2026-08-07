@@ -159,6 +159,11 @@ namespace Framework.Core
         [Tooltip("远程配置服务地址。运行时应使用本地 Last-Known-Good 快照应对网络或服务端异常。")]
         public string RemoteConfigUrl = string.Empty;
 
+        [Tooltip("勾选后客户端属性（device_id / user_id 等）改用 POST JSON body 下发，不再进入 URL 查询参数——" +
+                 "查询参数会随整条 URL 落进 CDN、反向代理、WAF 与服务端访问日志。" +
+                 "需要配置服务支持 POST 并从 body 读取；端点是静态 CDN 文件时保持不勾选。")]
+        public bool RemoteConfigIdentityInPostBody;
+
         [Tooltip("远程配置 RSA 验签公钥环（与热更公钥环同结构，按 KeyId 选择）。" +
                  "配置任一条目即启用签名校验：载荷须为签名信封，磁盘缓存下次启动也会重新验签。" +
                  "留空则按明文载荷处理（模板与开发期默认）。")]
