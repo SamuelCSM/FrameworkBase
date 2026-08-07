@@ -909,3 +909,37 @@ UniTask + Unity.Addressables + Unity.ResourceManager + Unity.TextMeshPro + Unity
 
 **残留风险**：桌面端与无头进程失焦期间不再暂停重连退避与心跳超时，长时间挂机切出会照常消耗重连预算。
 这与"进程还活着就该维持连接"一致，不作处理。
+
+---
+
+## ADR-012：请求-响应返回结果对象，失败原因不再塌缩成 null（2026-08-07）
+
+**状态**：已实施。`Network/NetworkResult.cs` 定义 `NetworkResultStatus` 与 `NetworkResult<T>`，
+`INetworkService.RequestAsync` 与 `NetworkManager` 的两个重载改为返回 `UniTask<NetworkResult<TResp>>`。
+
+**背景**：`RequestAsync` 此前以 `null` 表示"没拿到响应"，而能走到这一步的失败原因有八种：未连接、
+离线排队被拒（非幂等或队列满）、取消令牌触发、发送背压、等待超时、被全局错误码拦截器消费、
+响应反序列化失败、离线队列 TTL 到期未发出。它们的正确处置完全不同——超时与背压值得重试，
+取消绝不能重试，非幂等被拒重试就是重复扣款，反序列化失败是本端 bug 而非网络问题。
+
+塌缩成 `null` 之后，调用方只能写"重试一次看看"或"当作失败"，两种都错。壳工程里
+`GameServerSession` 的日志把这点暴露得很清楚：`SESSION_BIND_FAIL ... 无响应（超时或连接已断）`
+——它自己也分不清是哪一种，只能把可能性都列出来。
+
+**决策**：返回值改为 `NetworkResult<TResp>`：带 `Status`、`Value`，以及 `IsSuccess`。
+判定重试与否由调用方按 `Status` 决定，框架不替它选——重试策略与业务幂等性绑定，框架无从知晓。
+
+`Value` 仅在 `Status == Success` 时非空；`IsSuccess` 同时要求 `Value` 非空，
+避免"状态成功但反序列化产出 null"这种半成功状态被当成功用。
+
+**为什么不用异常**：请求失败在网络层是常态而非异常，`await` 处处 try/catch 会让调用点更难读，
+也会把超时这种可预期路径变成昂贵的栈展开。
+
+**为什么不保留 `null` 重载做兼容**：留着它就等于留着默认的错误写法，新代码会继续用最短的那个。
+调用面很小（接口 2 个签名、`NetworkManager` 内部 3 处、壳工程 3 处、测试零引用），一次改完更干净。
+
+**放弃了什么**：调用方不能再写 `if (resp == null)` 一把梭，最短路径变成 `result.IsSuccess`
+再取 `result.Value`，多一层。这是刻意的：让"没区分失败原因"这件事在代码里显形。
+
+**残留风险**：`Status` 是枚举，未来新增失败类别时既有 `switch` 不会编译报错。
+故要求调用方按 `IsSuccess` 判成功、按具体 `Status` 判特例，不写穷举 `switch` 的 default 兜底逻辑。

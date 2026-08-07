@@ -36,8 +36,12 @@ namespace Framework
         /// <summary>发送不需要匹配响应的单向消息（seqId = 0）。返回值必须用于处理发送背压。</summary>
         bool Notify<T>(T message) where T : class, INetMessage;
 
-        /// <summary>发送请求并等待对应类型的响应（SeqId 配对）。超时 / 取消 / 未连接返回 null。</summary>
-        UniTask<TResp> RequestAsync<TReq, TResp>(
+        /// <summary>
+        /// 发送请求并等待对应类型的响应（SeqId 配对）。
+        /// 返回 <see cref="NetworkResult{T}"/> 而非可空响应：未连接、排队被拒、取消、发送背压、超时、
+        /// 被全局错误码拦截、反序列化失败的正确处置各不相同，塌缩成 null 会让调用方无从判断（ADR-012）。
+        /// </summary>
+        UniTask<NetworkResult<TResp>> RequestAsync<TReq, TResp>(
             TReq request,
             NetworkRequestConfig config = null,
             CancellationToken cancellationToken = default)
@@ -45,7 +49,7 @@ namespace Framework
             where TResp : class, INetMessage, new();
 
         /// <summary>发送请求并等待响应（单泛型版本，请求实现 <see cref="IRequest{TResp}"/> 时自动推断）。</summary>
-        UniTask<TResp> RequestAsync<TResp>(
+        UniTask<NetworkResult<TResp>> RequestAsync<TResp>(
             IRequest<TResp> request,
             NetworkRequestConfig config = null,
             CancellationToken cancellationToken = default)
