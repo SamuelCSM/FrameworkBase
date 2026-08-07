@@ -82,7 +82,12 @@ namespace Framework.Core.Privacy
             Run(report, "安全存储（凭证/令牌）", () => Security.SecureStorage.DeleteAll());
 
             // 5. 遥测残留：崩溃记录、启动指标快照
-            Run(report, "崩溃记录", () => DeleteFile("crash_reports.jsonl"));
+            // 崩溃记录有两份：活动文件与上报快照（上报失败或进程中途被杀会留下快照），两份都要删。
+            Run(report, "崩溃记录", () =>
+            {
+                DeleteFile("crash_reports.jsonl");
+                DeleteFile("crash_reports.jsonl.uploading");
+            });
             Run(report, "启动指标快照", () => DeleteFile("launch_metrics_last.json"));
 
             // 6. 文件日志（可能含 userId 等标识）：先停写再删目录

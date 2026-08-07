@@ -122,6 +122,20 @@ namespace Framework.Storage
         }
 
         /// <inheritdoc />
+        public void MoveFile(string sourcePath, string destinationPath)
+        {
+            if (string.IsNullOrEmpty(sourcePath) || string.IsNullOrEmpty(destinationPath))
+                throw new ArgumentException("移动文件的源路径与目标路径都不能为空。");
+
+            EnsureParentDirectory(destinationPath);
+            // File.Move 的覆盖重载在 .NET Standard 2.0 不可用，先删目标再移动。
+            // 两步之间进程被杀会同时丢掉源与目标，故调用方须把目标视为"可能不存在"。
+            if (File.Exists(destinationPath))
+                File.Delete(destinationPath);
+            File.Move(sourcePath, destinationPath);
+        }
+
+        /// <inheritdoc />
         public void DeleteFile(string path)
         {
             if (!string.IsNullOrEmpty(path) && File.Exists(path))
