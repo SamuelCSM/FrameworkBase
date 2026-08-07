@@ -42,7 +42,14 @@ namespace Framework.Save
     public class SaveManager : Singleton<SaveManager>, ISaveService
     {
         // ── 当前账号 ─────────────────────────────────────────────────────────
-        private string _currentUserId = "guest";
+
+        /// <summary>未登录时的账号目录名。框架保留值，不经规约，故不会与任何真实账号规约结果相同。</summary>
+        private const string GuestUserId = "guest";
+
+        /// <summary>规约后账号 ID 的可读前缀长度上限，用于封顶目录名与整条存档路径长度。</summary>
+        private const int MaxUserIdPrefixLength = 32;
+
+        private string _currentUserId = GuestUserId;
 
         // ── 按档案文件路径的串行化锁 ─────────────────────────────────────────
         // Key = 完整存档路径（已含账号/类型/slot），保证同一档案的读/写互斥，
@@ -130,18 +137,20 @@ namespace Framework.Save
 
         /// <summary>
         /// 登录成功后调用，切换存档目录到该账号。
-        /// userId 会被净化（只保留字母、数字、下划线），防止路径注入。
+        /// userId 会被规约为「可读前缀 + 原值短哈希」（见 <see cref="CanonicalUserId"/>），
+        /// 既防路径注入，也保证不同账号不会落到同一目录。
         /// 账号切换时再次调用即可，无需手动清理旧状态。
         /// </summary>
+        /// <param name="userId">外部账号 ID（服务端下发的原始值）。为 null 或空白时保持 guest。</param>
         public void SetCurrentUser(string userId)
         {
-            var sanitized = SanitizeUserId(userId);
-            if (string.IsNullOrEmpty(sanitized))
+            string canonical = CanonicalUserId(userId);
+            if (canonical == null)
             {
                 GameLog.Warning("[SaveManager] SetCurrentUser: userId 无效，保持 guest");
                 return;
             }
-            _currentUserId = sanitized;
+            _currentUserId = canonical;
             GameLog.Log($"[SaveManager] 当前账号已切换 → {_currentUserId}");
         }
 
@@ -150,7 +159,7 @@ namespace Framework.Save
         /// </summary>
         public void ClearCurrentUser()
         {
-            _currentUserId = "guest";
+            _currentUserId = GuestUserId;
             GameLog.Log("[SaveManager] 已退出账号，切回 guest 目录");
         }
 
@@ -199,8 +208,34 @@ namespace Framework.Save
         // 目录结构：{persistentDataPath}/saves/{userId}/{TypeName}_{slot}.sav
         private string UserDir => Path.Combine(Application.persistentDataPath, "saves", $"u_{_currentUserId}");
 
-        private string SlotPath<T>(int slot)   => Path.Combine(UserDir, $"{typeof(T).Name}_{slot}.sav");
-        private string BackupPath<T>(int slot) => Path.Combine(UserDir, $"{typeof(T).Name}_{slot}.sav.bak");
+        /// <summary>
+        /// 存档文件名：<c>短类型名_类型全名短哈希_槽位.sav</c>。
+        /// 只用短类型名会让不同命名空间下的同名 SaveData 共用一个文件、互相覆盖；
+        /// 直接用全名则路径又长又带点号，故保留短名可读性、由哈希提供唯一性。
+        /// 哈希取 FullName 而非 AssemblyQualifiedName：后者随程序集改名而变，会让既有存档失联。
+        /// </summary>
+        /// <typeparam name="T">存档数据类型。</typeparam>
+        /// <param name="slot">槽位。</param>
+        /// <returns>该类型该槽位的文件名（不含目录）。</returns>
+        private static string SlotFileName<T>(int slot) where T : SaveData
+            => $"{typeof(T).Name}_{ShortHash(typeof(T).FullName)}_{slot}.sav";
+
+        private string SlotPath<T>(int slot) where T : SaveData
+            => Path.Combine(UserDir, SlotFileName<T>(slot));
+
+        private string BackupPath<T>(int slot) where T : SaveData
+            => Path.Combine(UserDir, SlotFileName<T>(slot) + ".bak");
+
+#if UNITY_INCLUDE_TESTS
+        /// <summary>
+        /// 仅供本仓库测试定位真实落盘路径。测试自行拼命名规则会与实现漂移，
+        /// 改名规则时那种测试要么假通过、要么在无关处报错。正式 Player 不编译该入口。
+        /// </summary>
+        /// <typeparam name="T">存档数据类型。</typeparam>
+        /// <param name="slot">槽位。</param>
+        /// <returns>当前账号下该存档的主档绝对路径。</returns>
+        internal string TestSlotPath<T>(int slot = 0) where T : SaveData => SlotPath<T>(slot);
+#endif
 
         // ── 写档 ─────────────────────────────────────────────────────────────
 
@@ -439,9 +474,46 @@ namespace Framework.Save
             FileStorages.Shared.TryDeleteFile(path);
         }
 
-        // userId 净化：只保留字母、数字、下划线，防止路径注入（如 "../"）
-        private static string SanitizeUserId(string raw)
-            => string.IsNullOrEmpty(raw) ? "" : Regex.Replace(raw, @"[^\w]", "_");
+        /// <summary>
+        /// 把外部账号 ID 规约成既可读又不碰撞的目录段：<c>净化前缀_原值短哈希</c>。
+        /// <para>
+        /// 只做字符净化是有损的——"a-b" 与 "a_b" 会落到同一目录互相覆盖存档；只做截断则让长 ID 批量碰撞。
+        /// 因此哈希取自<b>原始</b>字符串：前缀负责可读与路径安全，哈希负责唯一性，两者都短，路径长度有界。
+        /// </para>
+        /// <para>
+        /// 净化只保留 ASCII 字母数字与下划线（非 ASCII 账号名会整体落进哈希部分），
+        /// 避免不同平台对文件名编码与大小写折叠的差异影响目录归属。
+        /// </para>
+        /// </summary>
+        /// <param name="raw">原始账号 ID。</param>
+        /// <returns>规约后的目录段；<paramref name="raw"/> 为 null 或空白时返回 null。</returns>
+        private static string CanonicalUserId(string raw)
+        {
+            if (string.IsNullOrWhiteSpace(raw)) return null;
+
+            string sanitized = Regex.Replace(raw, "[^A-Za-z0-9_]", "_");
+            if (sanitized.Length > MaxUserIdPrefixLength)
+                sanitized = sanitized.Substring(0, MaxUserIdPrefixLength);
+
+            return $"{sanitized}_{ShortHash(raw)}";
+        }
+
+        /// <summary>
+        /// 取字符串 SHA-256 的前 4 字节十六进制（8 字符）。用于给可读名字补上唯一性，
+        /// 不承担任何安全职责——防篡改由存档信封的 HMAC 负责。
+        /// </summary>
+        /// <param name="value">待摘要的原始字符串。</param>
+        /// <returns>8 位小写十六进制。</returns>
+        private static string ShortHash(string value)
+        {
+            using (var sha = SHA256.Create())
+            {
+                byte[] hash = sha.ComputeHash(System.Text.Encoding.UTF8.GetBytes(value));
+                var sb = new System.Text.StringBuilder(8);
+                for (int i = 0; i < 4; i++) sb.Append(hash[i].ToString("x2"));
+                return sb.ToString();
+            }
+        }
 
         // ── PlayerPrefs 封装（全局，不区分账号）─────────────────────────────
         // Key 字符串请统一定义在 PlayerSettings 中，避免魔法字符串散落各处
