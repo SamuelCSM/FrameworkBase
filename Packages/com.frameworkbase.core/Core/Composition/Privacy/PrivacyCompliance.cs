@@ -29,22 +29,36 @@ namespace Framework.Core.Privacy
         }
 
         /// <summary>
-        /// 抹除全部本地用户数据。调用前建议先 <c>GameEntry.Analytics.CollectionEnabled = false</c>
-        /// 并断开网络会话；调用后应引导重启（各管理器内存态不保证全部回滚）。
+        /// 抹除全部本地用户数据。调用方仍须自行断开网络会话，并在返回后引导重启
+        /// （各管理器内存态不保证全部回滚）。
+        /// <para>
+        /// 关闭埋点采集由本编排负责，不再依赖调用方记得先关：抹除的同时若采集仍开着，
+        /// 定时冲刷会立刻把抹除动作之后产生的新事件继续送出去，等于没抹。
+        /// </para>
+        /// <para>
+        /// 边界：抹除时刻<b>已经交给后端在途上传</b>的那一批事件无法召回，可能仍送达采集端；
+        /// 服务端侧的删除走业务后台流程（见类注释），本编排管不到也不假装管到。
+        /// </para>
         /// </summary>
         /// <returns>逐项执行报告（供 UI 展示或日志留痕）。</returns>
         public static List<EraseEntry> EraseAllLocalUserData()
         {
             var report = new List<EraseEntry>();
 
-            // 1. 埋点：内存队列 + analytics_pending.jsonl 落盘快照
+            // 1. 埋点：先关采集闸门断掉新事件来源，再清内存队列 + analytics_pending.jsonl 落盘快照。
+            //    顺序不能反：先清后关的话，两步之间产生的事件会留在队列里被后续冲刷送出。
             Run(report, "埋点队列与落盘快照", () =>
             {
                 var analytics = GameEntry.Analytics;
                 if (analytics != null)
+                {
+                    analytics.CollectionEnabled = false;
                     analytics.ClearQueue();
+                }
                 else
+                {
                     DeleteFile("analytics_pending.jsonl"); // 未接线时直接删文件兜底
+                }
             });
 
             // 2. 远程配置缓存（含按设备定向的历史内容）
