@@ -480,6 +480,18 @@ namespace Framework
         public void ClearIgnoredProtocolLogs() => _protocolLogPolicy.ClearIgnored();
 
         /// <summary>
+        /// 追加一个协议正文脱敏标记：成员名（属性或字段）大小写无关地包含该标记时，
+        /// 协议日志只输出掩码而不输出真实值。
+        /// <para>
+        /// 框架默认已覆盖 token / password / secret / deviceid 等通用凭证与设备标识；
+        /// 业务协议里的实名、手机号、订单号等字段须由业务在首次收发前登记。
+        /// 标记表与成员缓存是进程级的，对所有实例生效，重复登记同一标记无副作用。
+        /// </para>
+        /// </summary>
+        /// <param name="marker">成员名子串，如 <c>idcard</c>；null 或空白忽略。</param>
+        public void AddSensitiveProtocolField(string marker) => NetworkProtocolLogger.AddSensitiveMarker(marker);
+
+        /// <summary>
         /// 注入重连后的应用层重新鉴权钩子。由组合根（GameEntry）在鉴权管理器就绪后调用，
         /// 使框架网络层无需依赖具体鉴权实现，即可在传输层重连成功后重放登录握手恢复会话身份。
         /// </summary>
