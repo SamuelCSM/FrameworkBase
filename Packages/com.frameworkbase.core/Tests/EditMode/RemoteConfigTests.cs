@@ -190,6 +190,64 @@ namespace Framework.Tests
             Assert.IsTrue(_config.IsFeatureEnabled("old_enough"));
         }
 
+        [Test]
+        public void 功能开关_enabled接受布尔文本()
+        {
+            _backend.Payload = "{\"f\":{\"enabled\":\"true\",\"rollout\":100}}";
+            Wait(_config.FetchAndActivateAsync());
+
+            Assert.IsTrue(_config.IsFeatureEnabled("f"), "enabled 的取值口径应与标量布尔一致");
+        }
+
+        [Test]
+        public void 功能开关_enabled类型非法_远端值作废退回本地基线()
+        {
+            _backend.Payload = "{\"f\":{\"enabled\":\"yes\",\"rollout\":100}}";
+            Wait(_config.FetchAndActivateAsync());
+
+            // 关键：非法的 enabled 不得被"跳过"，否则 rollout:100 会让这个开关全量放出去。
+            Assert.IsFalse(_config.IsFeatureEnabled("f"), "enabled 非法时远端值必须整份作废");
+
+            _config.SetDefaults(new Dictionary<string, object> { { "f", true } });
+            Assert.IsTrue(_config.IsFeatureEnabled("f"), "作废后应退回代码默认值，而非恒为关");
+        }
+
+        [Test]
+        public void 功能开关_rollout非法或越界_远端值作废()
+        {
+            _backend.Payload = "{\"bad_text\":{\"rollout\":\"abc\"}," +
+                               "\"too_big\":{\"rollout\":150}," +
+                               "\"negative\":{\"rollout\":-1}}";
+            Wait(_config.FetchAndActivateAsync());
+
+            // rollout 无法收敛时若回退成 100，配置写错就等于全量放量。
+            Assert.IsFalse(_config.IsFeatureEnabled("bad_text"), "非数字 rollout 必须作废，不得当作全量");
+            Assert.IsFalse(_config.IsFeatureEnabled("too_big"), "rollout>100 越界必须作废");
+            Assert.IsFalse(_config.IsFeatureEnabled("negative"), "rollout<0 越界必须作废");
+        }
+
+        [Test]
+        public void 功能开关_min_version格式非法_不得当作版本相等放行()
+        {
+            _backend.Payload = "{\"bad_format\":{\"rollout\":100,\"min_version\":\"1.2.x\"}," +
+                               "\"bad_type\":{\"rollout\":100,\"min_version\":42}}";
+            Wait(_config.FetchAndActivateAsync());
+
+            // 版本号无法解析时按"两版本相等"放行，是典型的 fail-open：门控形同虚设。
+            Assert.IsFalse(_config.IsFeatureEnabled("bad_format"), "无法比较的版本号必须作废而非放行");
+            Assert.IsFalse(_config.IsFeatureEnabled("bad_type"), "min_version 非字符串必须作废");
+        }
+
+        [Test]
+        public void 功能开关_单个键非法不影响同份配置里的其他键()
+        {
+            _backend.Payload = "{\"broken\":{\"rollout\":\"abc\"},\"healthy\":{\"rollout\":100}}";
+            Wait(_config.FetchAndActivateAsync());
+
+            Assert.IsFalse(_config.IsFeatureEnabled("broken"));
+            Assert.IsTrue(_config.IsFeatureEnabled("healthy"), "作废范围应限于出错的那个键");
+        }
+
         // ── version.json 灰度放量 ────────────────────────────────────────────
 
         [Test]
