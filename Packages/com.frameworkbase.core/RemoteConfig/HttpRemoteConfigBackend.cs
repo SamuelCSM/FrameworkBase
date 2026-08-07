@@ -19,6 +19,12 @@ namespace Framework.RemoteConfig
 
         /// <param name="endpointUrl">配置端点（AppConfig.RemoteConfigUrl）。</param>
         /// <param name="timeoutSeconds">单次请求超时。</param>
+        /// <summary>
+        /// 配置载荷字节上限。远端配置是不可全信的输入，缓冲式下载会把整个响应读进托管堆；
+        /// 1 MiB 远超正常配置体量（通常几 KB），超过即判为异常并沿用磁盘缓存与代码默认值。
+        /// </summary>
+        private const int MaxPayloadBytes = 1024 * 1024;
+
         public HttpRemoteConfigBackend(string endpointUrl, int timeoutSeconds = 10)
         {
             if (string.IsNullOrEmpty(endpointUrl))
@@ -31,7 +37,9 @@ namespace Framework.RemoteConfig
         {
             string url = BuildUrl(request);
             HttpResponse response = await HttpClients.Shared.SendAsync(
-                HttpRequest.Get(url).WithTimeout(_timeoutSeconds));
+                HttpRequest.Get(url)
+                    .WithTimeout(_timeoutSeconds)
+                    .WithMaxResponseBytes(MaxPayloadBytes));
 
             if (!response.Succeeded)
             {

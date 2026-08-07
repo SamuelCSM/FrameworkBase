@@ -41,6 +41,9 @@ namespace Framework.Core.Telemetry
         /// <summary>上报请求超时（秒）。</summary>
         private const int UploadTimeoutSeconds = 15;
 
+        /// <summary>上报响应体字节上限。只需要状态码，正常响应是几十字节量级。</summary>
+        private const int MaxUploadResponseBytes = 64 * 1024;
+
         /// <summary>写文件 + 归因上下文锁（回调可能来自任意线程）。</summary>
         private readonly object _writeLock = new object();
 
@@ -182,9 +185,11 @@ namespace Framework.Core.Telemetry
                 try
                 {
                     // 与埋点同一签名契约：已登录附签名头，否则按未签名请求发送（服务端从严限流通道）。
+                    // 上报只关心状态码，响应体封顶：采集端异常时不该把一个巨大响应读进内存。
                     HttpRequest request = HttpRequest
                         .Post(uploadUrl, Encoding.UTF8.GetBytes(payload), "application/x-ndjson")
-                        .WithTimeout(UploadTimeoutSeconds);
+                        .WithTimeout(UploadTimeoutSeconds)
+                        .WithMaxResponseBytes(MaxUploadResponseBytes);
                     TelemetryRequestSigner.TrySign(request);
                     HttpResponse response = await HttpClients.Shared.SendAsync(request);
 
