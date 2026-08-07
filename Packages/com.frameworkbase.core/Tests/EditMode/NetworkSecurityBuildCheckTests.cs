@@ -98,6 +98,72 @@ namespace Framework.Tests
             Assert.DoesNotThrow(() => NetworkSecurityBuildCheck.ValidateConfig(_config));
         }
 
+        // ── 出网端点统一门禁（遥测 / 远程配置）─────────────────────────────
+
+        [Test]
+        public void 遥测端点留空_视为未启用不拦截()
+        {
+            ConfigureProduction();
+            _config.CrashReportUrl = string.Empty;
+            _config.AnalyticsUrl = string.Empty;
+            _config.RemoteConfigUrl = string.Empty;
+
+            Assert.DoesNotThrow(() => NetworkSecurityBuildCheck.ValidateConfig(_config));
+        }
+
+        [Test]
+        public void 生产环境合法Https遥测端点_通过门禁()
+        {
+            ConfigureProduction();
+            _config.CrashReportUrl = "https://crash.game.test/report";
+            _config.AnalyticsUrl = "https://analytics.game.test/collect";
+            _config.RemoteConfigUrl = "https://config.game.test/v1?channel=default";
+
+            // 远程配置端点带 Query 是正常用法（服务端按渠道定向），不应被拦。
+            Assert.DoesNotThrow(() => NetworkSecurityBuildCheck.ValidateConfig(_config));
+        }
+
+        [Test]
+        public void 生产环境遥测端点为明文Http_拒绝构建()
+        {
+            ConfigureProduction();
+            _config.AnalyticsUrl = "http://analytics.game.test/collect";
+
+            Assert.Throws<BuildFailedException>(() => NetworkSecurityBuildCheck.ValidateConfig(_config));
+        }
+
+        [Test]
+        public void 生产环境端点指向本机或占位域名_拒绝构建()
+        {
+            ConfigureProduction();
+            _config.CrashReportUrl = "https://127.0.0.1/report";
+            Assert.Throws<BuildFailedException>(() => NetworkSecurityBuildCheck.ValidateConfig(_config));
+
+            _config.CrashReportUrl = "https://crash.example.com/report";
+            Assert.Throws<BuildFailedException>(() => NetworkSecurityBuildCheck.ValidateConfig(_config));
+        }
+
+        [Test]
+        public void 端点URL含凭据_开发环境也拒绝构建()
+        {
+            // userinfo 与环境无关：把密钥写进 URL 在任何环境都会顺着日志和代理泄露。
+            _config.RemoteConfigUrl = "https://user:secret@config.game.test/v1";
+
+            Assert.Throws<BuildFailedException>(() => NetworkSecurityBuildCheck.ValidateConfig(_config));
+        }
+
+        [Test]
+        public void 关闭网络登录时_遥测端点仍受门禁()
+        {
+            ConfigureProduction();
+            _config.AppEnv = "dev";        // 关闭网络登录在 prod 会先撞 Mock 门禁，此处只验端点这一条
+            _config.UseNetworkLogin = false;
+            _config.AnalyticsUrl = "not-a-url";
+
+            // 端点校验若排在 UseNetworkLogin 提前返回之后，关掉登录就等于绕过这几条规则。
+            Assert.Throws<BuildFailedException>(() => NetworkSecurityBuildCheck.ValidateConfig(_config));
+        }
+
         private void ConfigureProduction()
         {
             _config.AppEnv = "prod";

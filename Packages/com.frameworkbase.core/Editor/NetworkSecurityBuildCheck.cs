@@ -11,9 +11,10 @@ namespace Framework.Editor
     /// <summary>
     /// Player 构建前的强联网传输安全门禁。
     /// <para>
-    /// 同时覆盖登录 HTTP 链路与游戏长连接：生产环境禁止 Mock 登录、禁止明文登录 URL，
-    /// 并强制游戏连接启用 TLS、有效 SNI 主机名和合理连接参数；生产环境还禁止通过证书 Pin
-    /// 绕过系统证书链。开发环境可以使用本机 HTTP 和自签名证书，但配置错误仍失败关闭。
+    /// 覆盖全部会把数据发出设备的端点——登录、崩溃上报、埋点、远程配置共用
+    /// <see cref="ValidateOutboundEndpoint"/> 一套规则——以及游戏长连接：生产环境禁止 Mock 登录、
+    /// 禁止明文 URL，并强制游戏连接启用 TLS、有效 SNI 主机名和合理连接参数；生产环境还禁止通过
+    /// 证书 Pin 绕过系统证书链。开发环境可以使用本机 HTTP 和自签名证书，但配置错误仍失败关闭。
     /// </para>
     /// </summary>
     public sealed class NetworkSecurityBuildCheck : IPreprocessBuildWithReport
@@ -69,10 +70,19 @@ namespace Framework.Editor
                     "[NetworkSecurity] 生产环境禁止关闭 UseNetworkLogin 后静默使用 MockAuthBackend。");
             }
 
+            // 出网端点与登录开关无关：即便关闭网络登录，遥测与远程配置端点仍会把数据发出设备，
+            // 因此必须在下面的 UseNetworkLogin 提前返回之前校验，否则关掉登录就等于绕过这几条门禁。
+            // 三者留空表示该能力未启用，属正常配置，不拦。
+            ValidateOutboundEndpoint(config.CrashReportUrl, nameof(config.CrashReportUrl), production);
+            ValidateOutboundEndpoint(config.AnalyticsUrl, nameof(config.AnalyticsUrl), production);
+            ValidateOutboundEndpoint(config.RemoteConfigUrl, nameof(config.RemoteConfigUrl), production);
+
             if (!config.UseNetworkLogin)
                 return;
 
-            ValidateAuthServerUrl(config.AuthServerUrl, production);
+            if (string.IsNullOrWhiteSpace(config.AuthServerUrl))
+                throw new BuildFailedException("[NetworkSecurity] UseNetworkLogin=true 时必须配置 AuthServerUrl，禁止回退 Mock 登录。");
+            ValidateOutboundEndpoint(config.AuthServerUrl, nameof(config.AuthServerUrl), production);
 
             if (string.IsNullOrWhiteSpace(config.GameServerHost))
                 throw new BuildFailedException("[NetworkSecurity] GameServerHost 不能为空。");
@@ -104,35 +114,61 @@ namespace Framework.Editor
         }
 
         /// <summary>
-        /// 校验登录服务 URL。登录请求包含账号密码和会话令牌，因此生产环境必须使用 HTTPS，
-        /// 且禁止 localhost、回环地址、example.com 占位域名和 URL userinfo，防止凭据误发或明文泄露。
+        /// 出网端点的统一安全策略：登录、崩溃上报、埋点、远程配置共用一套规则，
+        /// 避免只有登录被盯着，其余端点可以随手填 HTTP、回环或占位域名就发出真包。
+        /// <para>
+        /// 规则：必须是 HTTP(S) 绝对地址；禁止 userinfo（账号或密钥不得写进 URL）；禁止 fragment
+        /// （API 端点带 fragment 只可能是从浏览器地址栏复制来的）；生产环境强制 HTTPS，
+        /// 且不得指向本机、回环或占位域名。
+        /// </para>
+        /// <para>
+        /// 与 <c>TrustedCdn</c> 的渠道根校验是有意分开的两套：那边要在根上拼接路径，故连 Query
+        /// 都禁；这里是 API 端点，Query 属正常用法（例如按渠道定向下发的配置服务）。
+        /// </para>
         /// </summary>
-        private static void ValidateAuthServerUrl(string value, bool production)
+        /// <param name="value">端点 URL；留空表示该能力未启用，直接放行。必填性由调用方先行判断。</param>
+        /// <param name="fieldName">AppConfig 字段名，用于把失败定位到具体配置项。</param>
+        /// <param name="production">是否面向生产环境构建。</param>
+        private static void ValidateOutboundEndpoint(string value, string fieldName, bool production)
         {
             if (string.IsNullOrWhiteSpace(value))
-                throw new BuildFailedException("[NetworkSecurity] UseNetworkLogin=true 时必须配置 AuthServerUrl，禁止回退 Mock 登录。");
+                return;
 
             if (!Uri.TryCreate(value.Trim(), UriKind.Absolute, out Uri uri) ||
                 !(string.Equals(uri.Scheme, Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase) ||
                   string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)))
             {
-                throw new BuildFailedException("[NetworkSecurity] AuthServerUrl 必须是有效的 HTTP(S) 绝对地址。");
+                throw new BuildFailedException($"[NetworkSecurity] {fieldName} 必须是有效的 HTTP(S) 绝对地址。");
             }
 
             if (!string.IsNullOrEmpty(uri.UserInfo))
-                throw new BuildFailedException("[NetworkSecurity] AuthServerUrl 禁止包含 userinfo，账号或密钥不得写入 URL。");
+                throw new BuildFailedException($"[NetworkSecurity] {fieldName} 禁止包含 userinfo，账号或密钥不得写入 URL。");
+
+            if (!string.IsNullOrEmpty(uri.Fragment))
+                throw new BuildFailedException($"[NetworkSecurity] {fieldName} 禁止包含 fragment。");
 
             if (production && !string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase))
-                throw new BuildFailedException("[NetworkSecurity] 生产环境 AuthServerUrl 必须使用 HTTPS，登录凭据禁止明文传输。");
+                throw new BuildFailedException($"[NetworkSecurity] 生产环境 {fieldName} 必须使用 HTTPS，禁止明文传输。");
 
-            if (production &&
-                (uri.IsLoopback ||
-                 string.Equals(uri.Host, "localhost", StringComparison.OrdinalIgnoreCase) ||
-                 uri.Host.EndsWith(".example.com", StringComparison.OrdinalIgnoreCase) ||
-                 string.Equals(uri.Host, "example.com", StringComparison.OrdinalIgnoreCase)))
-            {
-                throw new BuildFailedException("[NetworkSecurity] 生产环境 AuthServerUrl 仍指向本机、回环或 example.com 占位地址。");
-            }
+            if (production && IsNonProductionHost(uri))
+                throw new BuildFailedException($"[NetworkSecurity] 生产环境 {fieldName} 仍指向本机、回环或占位域名：{uri.Host}");
+        }
+
+        /// <summary>
+        /// 主机名是否明显不该出现在生产包里。只认定不会误伤的几类：回环、localhost，
+        /// 以及 RFC 保留的 example.com 与 .invalid 占位域名。
+        /// 内网地址段不在此列——部分团队的生产环境确实经由内网入口，交由人工评审判断。
+        /// </summary>
+        /// <param name="uri">已解析的端点地址。</param>
+        /// <returns>命中占位或本机地址时返回 true。</returns>
+        private static bool IsNonProductionHost(Uri uri)
+        {
+            if (uri.IsLoopback || string.Equals(uri.Host, "localhost", StringComparison.OrdinalIgnoreCase))
+                return true;
+
+            return string.Equals(uri.Host, "example.com", StringComparison.OrdinalIgnoreCase) ||
+                   uri.Host.EndsWith(".example.com", StringComparison.OrdinalIgnoreCase) ||
+                   uri.Host.EndsWith(".invalid", StringComparison.OrdinalIgnoreCase);
         }
 
         /// <summary>
