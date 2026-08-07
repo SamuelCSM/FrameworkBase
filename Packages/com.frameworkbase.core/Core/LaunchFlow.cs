@@ -103,7 +103,16 @@ namespace Framework.Core
             // 远程配置与启动序列并行拉取：不阻塞启动、失败静默沿用磁盘缓存/代码默认值
             // （FetchAndActivateAsync 自带重入保护，重试循环再次进入本方法不会重复拉取）。
             // 需要硬门控的业务（开关决定登录后流程）自行 await GameEntry.RemoteConfig.FetchAndActivateAsync()。
-            GameEntry.RemoteConfig?.FetchAndActivateAsync().Forget();
+            // 同意闸门要求同意而尚未同意时跳过：拉取会把 device_id / user_id 发给配置服务，
+            // 属同意后才能进行的出网行为；此时沿用磁盘缓存与代码默认值，同意后由业务再次触发。
+            if (Privacy.PrivacyConsent.IsOutboundDataAllowed())
+            {
+                GameEntry.RemoteConfig?.FetchAndActivateAsync().Forget();
+            }
+            else
+            {
+                GameLog.Log("[LaunchFlow] 隐私同意未完成，本次启动不拉取远程配置（沿用缓存与代码默认值）");
+            }
 
             using (InputBlockScope.Begin("LaunchLoading"))
             {

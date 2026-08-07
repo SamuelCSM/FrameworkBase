@@ -76,6 +76,7 @@ namespace Framework.Editor
             ValidateOutboundEndpoint(config.CrashReportUrl, nameof(config.CrashReportUrl), production);
             ValidateOutboundEndpoint(config.AnalyticsUrl, nameof(config.AnalyticsUrl), production);
             ValidateOutboundEndpoint(config.RemoteConfigUrl, nameof(config.RemoteConfigUrl), production);
+            ValidatePrivacyConsentGate(config, production);
 
             if (!config.UseNetworkLogin)
                 return;
@@ -110,6 +111,43 @@ namespace Framework.Editor
             {
                 for (int i = 0; i < config.TlsCertSha256Pins.Length; i++)
                     ValidatePin(config.TlsCertSha256Pins[i], $"TlsCertSha256Pins[{i}]", pins);
+            }
+        }
+
+        /// <summary>
+        /// 生产构建的隐私同意闸门校验：只要配置了任一会把设备/用户标识发出去的遥测或配置端点，
+        /// 就必须打开 <c>RequirePrivacyConsentForAnalytics</c> 并给出有效的协议版本号。
+        /// <para>
+        /// 闸门关闭时采集在同意之前就已开始，违反 consent-before-collection；这属于上架审核会问、
+        /// 出问题要下架整改的事，因此在构建期失败关闭，而不是留一条运行时告警等人去看。
+        /// 三个端点都留空表示没有出网采集能力，此时不作要求。
+        /// </para>
+        /// </summary>
+        /// <param name="config">待校验配置。</param>
+        /// <param name="production">是否面向生产环境构建。</param>
+        private static void ValidatePrivacyConsentGate(AppConfigAsset config, bool production)
+        {
+            if (!production)
+                return;
+
+            bool collectsOutbound = !string.IsNullOrWhiteSpace(config.CrashReportUrl) ||
+                                    !string.IsNullOrWhiteSpace(config.AnalyticsUrl) ||
+                                    !string.IsNullOrWhiteSpace(config.RemoteConfigUrl);
+            if (!collectsOutbound)
+                return;
+
+            if (!config.RequirePrivacyConsentForAnalytics)
+            {
+                throw new BuildFailedException(
+                    "[NetworkSecurity] 生产构建配置了遥测 / 远程配置端点，必须同时开启 RequirePrivacyConsentForAnalytics，" +
+                    "否则采集会先于用户同意发生。");
+            }
+
+            if (config.PrivacyPolicyVersion < 1)
+            {
+                throw new BuildFailedException(
+                    "[NetworkSecurity] 开启同意闸门时 PrivacyPolicyVersion 必须 ≥ 1，" +
+                    "否则 IsAccepted 永远为 false，采集会被永久关死。");
             }
         }
 

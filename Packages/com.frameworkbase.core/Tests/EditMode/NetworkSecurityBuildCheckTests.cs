@@ -118,9 +118,52 @@ namespace Framework.Tests
             _config.CrashReportUrl = "https://crash.game.test/report";
             _config.AnalyticsUrl = "https://analytics.game.test/collect";
             _config.RemoteConfigUrl = "https://config.game.test/v1?channel=default";
+            EnableConsentGate();
 
             // 远程配置端点带 Query 是正常用法（服务端按渠道定向），不应被拦。
             Assert.DoesNotThrow(() => NetworkSecurityBuildCheck.ValidateConfig(_config));
+        }
+
+        // ── 隐私同意闸门（生产构建）───────────────────────────────────────
+
+        [Test]
+        public void 生产构建配了遥测端点却未开同意闸门_拒绝构建()
+        {
+            ConfigureProduction();
+            _config.AnalyticsUrl = "https://analytics.game.test/collect";
+            _config.RequirePrivacyConsentForAnalytics = false;
+
+            // 闸门关着意味着采集先于用户同意发生，属上架审核会问的合规问题。
+            Assert.Throws<BuildFailedException>(() => NetworkSecurityBuildCheck.ValidateConfig(_config));
+        }
+
+        [Test]
+        public void 开了同意闸门但协议版本非法_拒绝构建()
+        {
+            ConfigureProduction();
+            _config.AnalyticsUrl = "https://analytics.game.test/collect";
+            _config.RequirePrivacyConsentForAnalytics = true;
+            _config.PrivacyPolicyVersion = 0;
+
+            // 版本号为 0 时 IsAccepted 恒 false，采集会被永久关死——配置错误而非合规选择。
+            Assert.Throws<BuildFailedException>(() => NetworkSecurityBuildCheck.ValidateConfig(_config));
+        }
+
+        [Test]
+        public void 生产构建未配置任何遥测端点_不要求同意闸门()
+        {
+            ConfigureProduction();
+            _config.RequirePrivacyConsentForAnalytics = false;
+
+            // 没有出网采集能力就没有 consent-before-collection 问题，不该强加要求。
+            Assert.DoesNotThrow(() => NetworkSecurityBuildCheck.ValidateConfig(_config));
+        }
+
+        /// <summary>打开同意闸门并给出有效协议版本，供"端点合法即应通过"的用例排除闸门这一变量。</summary>
+        private void EnableConsentGate()
+        {
+            _config.RequirePrivacyConsentForAnalytics = true;
+            _config.PrivacyPolicyVersion = 1;
         }
 
         [Test]

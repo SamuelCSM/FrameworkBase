@@ -642,7 +642,12 @@ namespace Framework.Core
 
             // 上一次运行留下的崩溃记录：后台尝试上报（不阻塞启动，失败静默保留下次再试）。
             // 上报端点由后端自读（默认后端读 AppConfig.CrashReportUrl，原生后端走自身管道）。
-            Telemetry.CrashReporter.TryUploadPendingAsync().Forget();
+            // 同意闸门要求同意而尚未同意时不出网：崩溃记录带 userId 与设备维度，属"同意后才能上报"的数据。
+            // 记录仍会继续落盘，同意达成后由业务再次调用 TryUploadPendingAsync 补报。
+            if (Privacy.PrivacyConsent.IsOutboundDataAllowed())
+                Telemetry.CrashReporter.TryUploadPendingAsync().Forget();
+            else
+                GameLog.Log("[GameEntry] 隐私同意未完成，暂不上报积压崩溃记录（同意后由业务触发补报）");
 
             // 内置调试命令（help/version/loglevel/perfhud 等安全项）；业务命令由业务侧自行注册。
             // GM 命令使用审计：每次执行尝试转发埋点 + 崩溃面包屑（命令常是复现路径的关键线索）。
