@@ -13,7 +13,8 @@ namespace Framework.Telemetry.Bugly
     /// 因原生崩溃走 Bugly 管道，<see cref="TryFlushPendingAsync"/> 对框架而言无事可做（返回 false）。</para>
     ///
     /// <para>装配：由 <see cref="BuglyBootstrap"/> 经 <c>RuntimeInitializeOnLoad(BeforeSceneLoad)</c>
-    /// 在 <c>GameEntry.Awake</c> 之前 <c>CrashReporter.Register</c>。真实 SDK 落地步骤见包 README。</para>
+    /// 在 <c>GameEntry.Awake</c> 之前 <c>CrashReporter.Register</c>；且只在 AppId 已配置、原生 SDK 已链接时
+    /// 才注册（见 <see cref="BuglyBootstrap.ShouldTakeOver"/>）。真实 SDK 落地步骤见包 README。</para>
     /// </summary>
     public sealed class BuglyCrashBackend : ICrashBackend
     {
@@ -32,7 +33,9 @@ namespace Framework.Telemetry.Bugly
         {
             if (!_options.IsConfigured)
             {
-                // 未配置 AppId：不启动原生捕获（骨架默认态）。
+                // 兜底守卫：自动装配路径不会带着空 AppId 走到这里（BuglyBootstrap 那种情况下根本不注册），
+                // 这里防的是业务手工 new + Register 时漏填。不启动原生捕获，且此时框架的本地落盘后端
+                // 已被这次手工注册顶掉，等于没有任何崩溃记录，故必须出声。
                 // 级别分环境：Editor / Development Build 属开发常态，用普通日志（不污染"零噪声"启动壳验收）；
                 // 正式包维持醒目 Error，避免带着"没有崩溃上报"的包上线而无人察觉。
 #if UNITY_EDITOR || DEVELOPMENT_BUILD

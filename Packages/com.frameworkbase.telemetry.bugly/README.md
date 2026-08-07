@@ -14,7 +14,7 @@
 | 文件 | 职责 |
 |---|---|
 | `Runtime/BuglyCrashBackend.cs` | `ICrashBackend` 实现：装载 / 归因透传 / 托管异常转发 |
-| `Runtime/BuglyBootstrap.cs` | `[RuntimeInitializeOnLoadMethod(BeforeSceneLoad)]` 自注册，早于 `GameEntry.Awake` |
+| `Runtime/BuglyBootstrap.cs` | `[RuntimeInitializeOnLoadMethod(BeforeSceneLoad)]` 自注册，早于 `GameEntry.Awake`；按条件决定是否接管 |
 | `Runtime/BuglyNative.cs` | 原生 SDK 互操作缝（Android `AndroidJavaClass` / iOS `DllImport("__Internal")`），锁在宏后 |
 | `Runtime/BuglyOptions.cs` | AppId / 渠道 / 区域参数 |
 
@@ -22,13 +22,23 @@
 
 ```
 [RuntimeInitializeOnLoadMethod(BeforeSceneLoad)]  ← BuglyBootstrap.AutoRegister
-        └─ CrashReporter.Register(new BuglyCrashBackend(...))
+        └─ AppId 已配置 且 原生 SDK 已链接 ？
+             ├─ 是：CrashReporter.Register(new BuglyCrashBackend(...))
+             └─ 否：不注册，让位给主干 LocalFileCrashBackend（日志说明原因）
 GameEntry.Awake
-        └─ CrashReporter.Install()  ← 此时后端已就位，调 Bugly 启动，原生捕获上线
+        └─ CrashReporter.Install()  ← 后端已就位；接管时调 Bugly 启动，原生捕获上线
 ```
 
 `Register` 必须先于 `Install`；`RuntimeInitializeOnLoad(BeforeSceneLoad)` 保证它早于任何
-场景 MonoBehaviour 的 `Awake`，故早于 `GameEntry.Awake`。业务零接线：装了本包即自动接管。
+场景 MonoBehaviour 的 `Awake`，故早于 `GameEntry.Awake`。
+
+**接管是有条件的**：`CrashReporter` 只保留一个后端，注册本包等于顶掉主干的
+`LocalFileCrashBackend`。所以骨架状态（AppId 留空）或原生层是空壳（没加
+`FRAMEWORKBASE_BUGLY_SDK` 宏、跑在 Editor / 非 Android|iOS 平台）时本包主动让位——
+否则原生崩溃抓不到、托管异常又被转发进无操作的原生缝、本地兜底还被顶掉，
+崩溃回捞整条链会静默失效。正式包里让位会打 Error 日志，Editor 与开发包只打普通日志。
+
+装了本包但两个条件没同时满足时，行为与没装本包一致（托管异常仍由主干本地后端落盘并可上报）。
 
 ## 落地真实 Bugly SDK
 
