@@ -98,7 +98,7 @@ namespace Framework.Tests
             string raw = File.ReadAllText(SavePath(_user, nameof(ProfileSave)));
             StringAssert.DoesNotContain("PlainSecretName", raw, "昵称明文不得出现在存档文件中");
             StringAssert.DoesNotContain("12345", raw, "金币明文不得出现在存档文件中");
-            StringAssert.Contains("\"m\":\"hmac256h\"", raw, "封包应标记 header-bound HMAC 完整性方案");
+            StringAssert.Contains("\"m\":\"hmac256c\"", raw, "封包应标记上下文绑定的 HMAC 完整性方案");
         });
 
         [UnityTest]
@@ -106,8 +106,8 @@ namespace Framework.Tests
         {
             await SaveManager.Instance.SaveAsync(new ProfileSave { nickname = "orig", coins = 50 });
 
-            // 模拟降级攻击：篡改密文，把方案抹成空（旧版据此走裸 SHA-256），再用无密钥的 SHA-256
-            // 重算一个"合法"完整性码。旧代码会接受并加载被篡改的档；现只认 hmac256h，必须拒绝。
+            // 模拟降级攻击：篡改密文，把方案抹成空（据此走无密钥的裸 SHA-256），再自行重算一个
+            // "合法"完整性码。只认 hmac256c 这一种方案，任何其它标识都必须被拒绝。
             string path = SavePath(_user, nameof(ProfileSave));
             var envelope = JsonSerializers.Shared.FromJson<RawEnvelope>(File.ReadAllText(path));
             byte[] encrypted = Convert.FromBase64String(envelope.d);
@@ -228,6 +228,48 @@ namespace Framework.Tests
             var back = await SaveManager.Instance.LoadAsync<ProfileSave>();
             Assert.AreEqual("alpha", back.nickname, "切回原账号应读到原账号数据");
             Assert.AreEqual(111, back.coins);
+        });
+
+        // ── 归属绑定（认证头覆盖账号 / 类型 / 槽位）──────────────────────────
+
+        [UnityTest]
+        public IEnumerator 跨账号复制存档_拒绝加载() => UniTask.ToCoroutine(async () =>
+        {
+            await SaveManager.Instance.SaveAsync(new ProfileSave { nickname = "alpha", coins = 111 });
+            string source = SavePath(_user, nameof(ProfileSave));
+
+            string other = "test_other_" + Guid.NewGuid().ToString("N").Substring(0, 6);
+            SaveManager.Instance.SetCurrentUser(other);
+            try
+            {
+                string target = SavePath(other, nameof(ProfileSave));
+                Directory.CreateDirectory(Path.GetDirectoryName(target));
+                File.Copy(source, target, true);
+
+                // 同设备密钥相同，密文本身解得开；拦住它的是认证头里的账号。
+                var loaded = await SaveManager.Instance.LoadAsync<ProfileSave>();
+                Assert.AreEqual("", loaded.nickname, "跨账号搬运的存档必须失效，回退默认");
+                Assert.AreEqual(0, loaded.coins);
+            }
+            finally
+            {
+                SaveManager.Instance.DeleteCurrentUserSaves();
+                SaveManager.Instance.SetCurrentUser(_user);
+            }
+        });
+
+        [UnityTest]
+        public IEnumerator 跨槽位复制存档_拒绝加载() => UniTask.ToCoroutine(async () =>
+        {
+            await SaveManager.Instance.SaveAsync(new ProfileSave { nickname = "slot0", coins = 7 }, 0);
+            File.Copy(
+                SavePath(_user, nameof(ProfileSave), 0),
+                SavePath(_user, nameof(ProfileSave), 1),
+                overwrite: true);
+
+            // 槽位已纳入认证头，否则可用低价值档覆盖高价值档，或回滚到旧槽内容。
+            var loaded = await SaveManager.Instance.LoadAsync<ProfileSave>(1);
+            Assert.AreEqual("", loaded.nickname, "跨槽位复制的存档必须失效，回退默认");
         });
 
         // ── 删除与在途写入 ───────────────────────────────────────────────────
