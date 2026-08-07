@@ -590,6 +590,16 @@ namespace Framework.HotUpdate
                     return false;
 
                 string candidate = Path.Combine(SlotsDirectory, state.ActiveSlot, fileName);
+
+                // 最后一道：程序集真正被加载的就是这个路径，无论槽 ID 从哪来，规范化后必须仍在槽根之内。
+                string slotsRoot = Path.GetFullPath(SlotsDirectory)
+                    .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+                if (!Path.GetFullPath(candidate).StartsWith(slotsRoot, PathComparison))
+                {
+                    GameLog.Error($"[HotUpdateSlots] 拒绝加载逃逸槽根的程序集路径：{candidate}");
+                    return false;
+                }
+
                 if (!File.Exists(candidate))
                     return false;
 
@@ -636,7 +646,9 @@ namespace Framework.HotUpdate
             try
             {
                 InstallState state = JsonSerializers.Shared.FromJson<InstallState>(File.ReadAllText(StatePath));
-                return state ?? NewState();
+                if (state == null) return NewState();
+                SanitizeSlotReferences(state);
+                return state;
             }
             catch (Exception ex)
             {
@@ -657,12 +669,48 @@ namespace Framework.HotUpdate
             FileStorages.Shared.AtomicWriteText(StatePath, JsonSerializers.Shared.ToJson(state, true), StatePath + ".bak");
         }
 
+        /// <summary>
+        /// 清洗状态文件里的槽引用：任何不是安全目录段的槽 ID 一律清空。
+        /// <para>
+        /// install-state.json 是持久化目录里的普通 JSON，能写该目录的人就能把槽 ID 改成 <c>..\..\x</c>
+        /// 之类的穿越值。在读盘这一个入口统一挡掉，下游所有 <c>Path.Combine(SlotsDirectory, slotId)</c>
+        /// 就都是安全的，不必逐处设防。
+        /// </para>
+        /// </summary>
+        /// <param name="state">刚从磁盘反序列化出来的安装状态。</param>
+        private static void SanitizeSlotReferences(InstallState state)
+        {
+            state.ActiveSlot = KeepSafeSlot(state.ActiveSlot, nameof(state.ActiveSlot));
+            state.LastKnownGoodSlot = KeepSafeSlot(state.LastKnownGoodSlot, nameof(state.LastKnownGoodSlot));
+            state.PendingConfirmationSlot = KeepSafeSlot(state.PendingConfirmationSlot, nameof(state.PendingConfirmationSlot));
+        }
+
+        /// <summary>保留安全槽 ID，否则清空并留下错误日志（槽引用异常属于必须被看见的完整性事件）。</summary>
+        /// <param name="slotId">状态文件中的槽 ID。</param>
+        /// <param name="fieldName">字段名，用于定位是哪一个引用被清掉。</param>
+        /// <returns>安全时原样返回，否则返回空串。</returns>
+        private static string KeepSafeSlot(string slotId, string fieldName)
+        {
+            if (string.IsNullOrEmpty(slotId) || UpdateSecurity.IsSafePathSegment(slotId))
+                return slotId ?? string.Empty;
+
+            GameLog.Error($"[HotUpdateSlots] 安装状态中的 {fieldName} 不是安全目录段，已清空：{slotId}");
+            return string.Empty;
+        }
+
         private static bool ValidateSlot(string slotId, out string reason)
         {
             reason = null;
             if (string.IsNullOrEmpty(slotId))
             {
                 reason = "槽 ID 为空。";
+                return false;
+            }
+            // 与 LoadState 的清洗重复一次：槽 ID 也可能来自内存态或未来新增的入口，
+            // 而这里是所有"按 ID 定位槽目录"的必经之路。
+            if (!UpdateSecurity.IsSafePathSegment(slotId))
+            {
+                reason = $"槽 ID 不是安全目录段：{slotId}";
                 return false;
             }
             return ValidateSlotDirectory(Path.Combine(SlotsDirectory, slotId), out _, out reason);

@@ -208,6 +208,30 @@ namespace Framework.Tests
             Assert.AreEqual(0, report.DeletedEntries);
         }
 
+        [Test]
+        public void 状态文件槽ID被改成穿越路径_启动时清空该引用()
+        {
+            Commit(CreateUpdate(2, 0x22));
+            HotUpdateSlotManager.ConfirmPendingSlot();
+            Assert.IsTrue(HotUpdateSlotManager.TryGetActiveCodeVersion(out _), "前置：应已有可用活动槽");
+
+            // 模拟能写 persistentDataPath 的攻击者把活动槽指到槽根之外。
+            string statePath = Path.Combine(_root, "install-state.json");
+            File.WriteAllText(statePath,
+                "{\"SchemaVersion\":1,\"AppVersion\":\"" + Application.version + "\"," +
+                "\"ActiveSlot\":\"..\\\\..\\\\evil\",\"LastKnownGoodSlot\":\"\"," +
+                "\"PendingConfirmationSlot\":\"\",\"UnconfirmedLaunchCount\":0,\"UpdatedAtUnixSeconds\":0}");
+
+            HotUpdateSlotManager.ResetStateForTests();
+            LogAssert.Expect(LogType.Error, new Regex(".*不是安全目录段.*"));
+            HotUpdateSlotManager.PrepareForLaunch();
+
+            Assert.IsFalse(HotUpdateSlotManager.TryGetActiveCodeVersion(out _), "穿越槽引用必须被清空，不得当作可用活动槽");
+            Assert.IsFalse(
+                HotUpdateSlotManager.TryResolveActiveFile("Anything.dll.bytes", out _),
+                "清空后不得再解析出任何程序集路径");
+        }
+
         /// <summary>
         /// 创建 staging、写入所有清单文件并提交为待确认槽。
         /// </summary>
