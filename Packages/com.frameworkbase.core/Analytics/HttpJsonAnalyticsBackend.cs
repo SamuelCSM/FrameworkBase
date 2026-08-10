@@ -14,6 +14,9 @@ namespace Framework.Analytics
     /// </summary>
     public class HttpJsonAnalyticsBackend : IAnalyticsBackend
     {
+        /// <summary>上报响应体字节上限。只需要状态码，正常响应是几十字节量级。</summary>
+        private const int MaxUploadResponseBytes = 64 * 1024;
+
         private readonly string _endpointUrl;
         private readonly int _timeoutSeconds;
 
@@ -44,9 +47,11 @@ namespace Framework.Analytics
             }
             body.Append(']');
 
+            // 上报只关心状态码，响应体封顶：采集端异常时不该把一个巨大响应读进内存。
             HttpRequest request = HttpRequest
                 .Post(_endpointUrl, Encoding.UTF8.GetBytes(body.ToString()), "application/json")
-                .WithTimeout(_timeoutSeconds);
+                .WithTimeout(_timeoutSeconds)
+                .WithMaxResponseBytes(MaxUploadResponseBytes);
             TelemetryRequestSigner.TrySign(request);
             HttpResponse response = await HttpClients.Shared.SendAsync(request);
 

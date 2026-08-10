@@ -50,6 +50,12 @@ namespace Framework.Storage
         /// </summary>
         void AtomicWriteText(string path, string content, string backupPath = null);
 
+        /// <summary>
+        /// 把文件移动到新路径（同卷即改名，用于日志/记录轮转），必要时创建目标父目录。
+        /// 目标已存在时覆盖。源不存在或底层操作失败时抛出异常。
+        /// </summary>
+        void MoveFile(string sourcePath, string destinationPath);
+
         /// <summary>删除文件；底层文件系统操作失败时抛出异常。</summary>
         void DeleteFile(string path);
 

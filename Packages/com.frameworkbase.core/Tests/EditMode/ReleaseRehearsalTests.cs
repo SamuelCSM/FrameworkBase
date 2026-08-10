@@ -257,7 +257,7 @@ namespace Framework.Tests
         public void 发布补丁_逐文件完整性校验并完成事务槽安装确认()
         {
             string staging = StageAllPatchesFromUploadRoot();
-            Assert.IsTrue(HotUpdateSlotManager.CommitStagingSlot(_server, staging, out string error), error);
+            Assert.IsTrue(HotUpdateSlotManager.CommitStagingSlot(_server, staging, proof: null, out string error), error);
             HotUpdateSlotManager.ConfirmPendingSlot();
 
             Assert.IsTrue(HotUpdateSlotManager.TryGetActiveCodeVersion(out int activeCodeVersion));
@@ -285,7 +285,7 @@ namespace Framework.Tests
             StringAssert.Contains("不一致", verifyError);
 
             LogAssert.Expect(LogType.Error, new Regex(".*提交 staging 槽失败.*"));
-            Assert.IsFalse(HotUpdateSlotManager.CommitStagingSlot(_server, staging, out string commitError),
+            Assert.IsFalse(HotUpdateSlotManager.CommitStagingSlot(_server, staging, proof: null, out string commitError),
                 "被篡改的补丁集竟然提交成功。");
         }
 
@@ -309,7 +309,7 @@ namespace Framework.Tests
         public void 故障注入_连续三次未确认启动_回退出厂基线()
         {
             string staging = StageAllPatchesFromUploadRoot();
-            Assert.IsTrue(HotUpdateSlotManager.CommitStagingSlot(_server, staging, out string error), error);
+            Assert.IsTrue(HotUpdateSlotManager.CommitStagingSlot(_server, staging, proof: null, out string error), error);
             HotUpdateSlotManager.ConfirmPendingSlot();
 
             for (int attempt = 0; attempt < 3; attempt++)

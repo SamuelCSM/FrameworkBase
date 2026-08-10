@@ -148,9 +148,26 @@ namespace Framework.Core
         [Tooltip("当前客户端认可的隐私政策版本；版本升级后上层应重新触发授权流程。")]
         public int PrivacyPolicyVersion = 1;
 
+        [Header("本地存档安全")]
+        [Tooltip("存档密钥的项目级域分隔 Salt（建议用包名，如 com.yourcompany.yourgame）。" +
+                 "默认主密钥种子是设备 ID，同一台设备上两个 FrameworkBase 产品拿到的种子完全相同，" +
+                 "全靠此 Salt 把派生密钥分开。留空则沿用框架兜底值，prod 构建会失败。" +
+                 "上线后再改会使既有存档无法解密。")]
+        public string SaveSalt = string.Empty;
+
         [Header("远程配置")]
         [Tooltip("远程配置服务地址。运行时应使用本地 Last-Known-Good 快照应对网络或服务端异常。")]
         public string RemoteConfigUrl = string.Empty;
+
+        [Tooltip("勾选后客户端属性（device_id / user_id 等）改用 POST JSON body 下发，不再进入 URL 查询参数——" +
+                 "查询参数会随整条 URL 落进 CDN、反向代理、WAF 与服务端访问日志。" +
+                 "需要配置服务支持 POST 并从 body 读取；端点是静态 CDN 文件时保持不勾选。")]
+        public bool RemoteConfigIdentityInPostBody;
+
+        [Tooltip("远程配置 RSA 验签公钥环（与热更公钥环同结构，按 KeyId 选择）。" +
+                 "配置任一条目即启用签名校验：载荷须为签名信封，磁盘缓存下次启动也会重新验签。" +
+                 "留空则按明文载荷处理（模板与开发期默认）。")]
+        public UpdateManifestPublicKeyEntry[] RemoteConfigPublicKeys = Array.Empty<UpdateManifestPublicKeyEntry>();
 
         [Header("登录服务")]
         [Tooltip("HTTP 登录服务地址（框架参考 HttpAuthBackend 用）。留空则回退 Mock 登录后端；" +

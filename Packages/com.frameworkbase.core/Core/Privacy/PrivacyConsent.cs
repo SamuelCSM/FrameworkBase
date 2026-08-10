@@ -34,6 +34,27 @@ namespace Framework.Core.Privacy
             return AcceptedPolicyVersion >= currentPolicyVersion && currentPolicyVersion > 0;
         }
 
+        /// <summary>
+        /// 按 <c>AppConfig</c> 的同意闸门判断：当前是否允许把数据发出设备（遥测上报、远程配置拉取等）。
+        /// <para>
+        /// 只读本地已记录的同意版本，<b>不发起任何网络请求</b>——启动第一阶段判断"能不能出网"时
+        /// 自己就不能先出网。<c>RequirePrivacyConsentForAnalytics</c> 关闭时恒为 true，保持既有行为。
+        /// </para>
+        /// <para>
+        /// 用于启动早期的出网决策；同意达成后由业务重新触发被跳过的动作
+        /// （埋点侧已自行订阅 <see cref="GameMessage.PrivacyConsentChanged"/>，无须业务介入）。
+        /// </para>
+        /// </summary>
+        /// <returns>允许出网返回 true。</returns>
+        public static bool IsOutboundDataAllowed()
+        {
+            AppConfigAsset config = AppConfig.Load();
+            if (config == null || !config.RequirePrivacyConsentForAnalytics)
+                return true;
+
+            return IsAccepted(Mathf.Max(1, config.PrivacyPolicyVersion));
+        }
+
         /// <summary>记录同意（传当前协议版本号），并广播 <see cref="GameMessage.PrivacyConsentChanged"/>。</summary>
         public static void Accept(int policyVersion)
         {

@@ -18,6 +18,9 @@ namespace Framework.Http
                 return HttpResponse.Failed("Request is null.");
             if (string.IsNullOrWhiteSpace(request.Url))
                 return HttpResponse.Failed("Request url is empty.");
+            // 已取消就不必开工：小响应可能在一帧内读完，靠轮询判断会漏掉这种情况。
+            if (request.CancellationToken.IsCancellationRequested)
+                return HttpResponse.Failed("Request was canceled.");
 
             try
             {
@@ -39,9 +42,33 @@ namespace Framework.Http
                             webRequest.SetRequestHeader(header.Key, header.Value ?? string.Empty);
                     }
 
-                    // UnityWebRequest reports network/protocol failures through result/error;
-                    // keep that detail here and return the framework response model to callers.
-                    await webRequest.SendWebRequest();
+                    // 逐帧轮询而不是直接 await：取消与响应体上限都要在传输过程中生效，
+                    // 等整个响应读完再判断，内存已经被占掉了，防的就是这一段。
+                    UnityWebRequestAsyncOperation operation = webRequest.SendWebRequest();
+                    while (!operation.isDone)
+                    {
+                        if (request.CancellationToken.IsCancellationRequested)
+                        {
+                            webRequest.Abort();
+                            return HttpResponse.Failed("Request was canceled.");
+                        }
+
+                        if (ExceedsLimit(request.MaxResponseBytes, webRequest.downloadedBytes))
+                        {
+                            webRequest.Abort();
+                            return HttpResponse.Failed(
+                                $"Response exceeded the {request.MaxResponseBytes}-byte limit.");
+                        }
+
+                        await UniTask.Yield();
+                    }
+
+                    // 完成后再判一次：小响应可能在一帧内读完，循环里根本来不及看到超限。
+                    if (ExceedsLimit(request.MaxResponseBytes, webRequest.downloadedBytes))
+                    {
+                        return HttpResponse.Failed(
+                            $"Response exceeded the {request.MaxResponseBytes}-byte limit.");
+                    }
 
                     string error = webRequest.result == UnityWebRequest.Result.Success
                         ? null
@@ -60,6 +87,13 @@ namespace Framework.Http
                 return HttpResponse.Failed(ex.Message);
             }
         }
+
+        /// <summary>已下载字节是否超出上限。上限为 0 表示不限，恒返回 false。</summary>
+        /// <param name="maxResponseBytes">配置的上限字节数。</param>
+        /// <param name="downloadedBytes">当前已下载字节数。</param>
+        /// <returns>超限返回 true。</returns>
+        private static bool ExceedsLimit(int maxResponseBytes, ulong downloadedBytes)
+            => maxResponseBytes > 0 && downloadedBytes > (ulong)maxResponseBytes;
 
         private static string ToUnityMethod(HttpMethod method)
         {

@@ -448,10 +448,35 @@ namespace Framework.HotUpdate
         public static bool IsSafeLeafFileName(string fileName)
         {
             if (string.IsNullOrWhiteSpace(fileName)) return false;
-            if (!string.Equals(fileName, Path.GetFileName(fileName), StringComparison.Ordinal)) return false;
             if (fileName.Contains("..") || fileName.IndexOfAny(new[] { '/', '\\', ':' }) >= 0) return false;
+            // 非法字符先判：Path.GetFileName 遇到 '\0' 等字符会抛 ArgumentException，
+            // 而清单文件名来自远端，校验必须以返回值拒绝而不是抛异常。
             if (fileName.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0) return false;
+            if (!string.Equals(fileName, Path.GetFileName(fileName), StringComparison.Ordinal)) return false;
             return fileName.EndsWith(".dll.bytes", StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>
+        /// 判断字符串是否为可安全拼接到受控根目录下的<b>单层目录段</b>（代码槽 ID 等）。
+        /// <para>
+        /// 槽 ID 来自 install-state.json 与 slot.json，都是持久化目录里的普通文件——能写该目录的人就能改它。
+        /// 未经校验直接 <c>Path.Combine</c> 会让 <c>..</c> 把加载目标指到受控根之外。
+        /// 拒绝空白、超长、目录分隔符、盘符、<c>.</c> 与 <c>..</c>、以及平台非法文件名字符。
+        /// </para>
+        /// </summary>
+        /// <param name="segment">待校验的目录段。</param>
+        /// <returns>可安全拼接时返回 true。</returns>
+        public static bool IsSafePathSegment(string segment)
+        {
+            if (string.IsNullOrWhiteSpace(segment)) return false;
+            if (segment.Length > 128) return false;
+            if (segment == "." || segment.Contains("..")) return false;
+            if (segment.IndexOfAny(new[] { '/', '\\', ':' }) >= 0) return false;
+            // 非法字符必须先于 Path.GetFileName 判断：后者遇到 '\0' 等字符会抛 ArgumentException，
+            // 而本方法的契约是"非法输入返回 false"，不能把判断本身变成异常源。
+            // Linux 上 GetInvalidFileNameChars 只含 '\0' 与 '/'，故上面的分隔符判断不能省。
+            if (segment.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0) return false;
+            return string.Equals(segment, Path.GetFileName(segment), StringComparison.Ordinal);
         }
 
         /// <summary>
@@ -462,9 +487,10 @@ namespace Framework.HotUpdate
         public static bool IsSafeCatalogLeafFileName(string fileName)
         {
             if (string.IsNullOrWhiteSpace(fileName)) return false;
-            if (!string.Equals(fileName, Path.GetFileName(fileName), StringComparison.Ordinal)) return false;
             if (fileName.Contains("..") || fileName.IndexOfAny(new[] { '/', '\\', ':' }) >= 0) return false;
+            // 非法字符先判，理由同 IsSafeLeafFileName：校验不得把非法输入变成异常源。
             if (fileName.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0) return false;
+            if (!string.Equals(fileName, Path.GetFileName(fileName), StringComparison.Ordinal)) return false;
             return fileName.EndsWith(".json", StringComparison.OrdinalIgnoreCase);
         }
 

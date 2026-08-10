@@ -146,9 +146,15 @@ namespace HotUpdate.Net
             if (network == null || !network.IsConnected || !IsBound)
                 return null;
 
-            return await network
+            var result = await network
                 .RequestAsync<GC2GS_020_001_GetClickerProfileRequest, GS2GC_020_001_GetClickerProfileResponse>(
                     new GC2GS_020_001_GetClickerProfileRequest());
+            if (!result.IsSuccess)
+            {
+                GameLog.Warning($"[GameServerSession] 查询服务端档案失败 status={result.Status}");
+                return null;
+            }
+            return result.Value;
         }
 
         /// <summary>
@@ -187,15 +193,18 @@ namespace HotUpdate.Net
                 ProtocolVersion = ProtocolVersion,
             };
 
-            GS2GC_001_002_SessionBindResponse response = await network
+            var bindResult = await network
                 .RequestAsync<GC2GS_001_002_SessionBindRequest, GS2GC_001_002_SessionBindResponse>(request);
 
-            if (response == null)
+            if (!bindResult.IsSuccess)
             {
                 SetBound(false, string.Empty);
-                GameLog.Warning($"[GameServerSession] SESSION_BIND_FAIL reason={reason} 无响应（超时或连接已断）");
+                // 终态直接进日志：超时可重试、取消不该重试、反序列化失败是协议版本对不上，处置完全不同。
+                GameLog.Warning($"[GameServerSession] SESSION_BIND_FAIL reason={reason} status={bindResult.Status}");
                 return false;
             }
+
+            GS2GC_001_002_SessionBindResponse response = bindResult.Value;
 
             if (response.ResultCode != 0)
             {
@@ -227,15 +236,16 @@ namespace HotUpdate.Net
             const string probeText = "framework-base-transport-probe";
             try
             {
-                GS2GC_002_001_EchoResponse response = await GameEntry.Network
+                var echoResult = await GameEntry.Network
                     .RequestAsync<GC2GS_002_001_EchoRequest, GS2GC_002_001_EchoResponse>(
                         new GC2GS_002_001_EchoRequest { Text = probeText });
 
-                bool ok = response != null && response.ResultCode == 0 &&
+                GS2GC_002_001_EchoResponse response = echoResult.Value;
+                bool ok = echoResult.IsSuccess && response.ResultCode == 0 &&
                           string.Equals(response.Text, probeText, StringComparison.Ordinal);
                 GameLog.Log(ok
                     ? "[GameServerSession] ECHO_ROUNDTRIP_OK 业务通道在绑定后放行"
-                    : $"[GameServerSession] ECHO_ROUNDTRIP_FAIL code={response?.ResultCode} text={response?.Text}");
+                    : $"[GameServerSession] ECHO_ROUNDTRIP_FAIL status={echoResult.Status} code={response?.ResultCode} text={response?.Text}");
             }
             catch (Exception ex)
             {

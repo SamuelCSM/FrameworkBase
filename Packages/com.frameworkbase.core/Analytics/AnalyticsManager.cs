@@ -46,6 +46,13 @@ namespace Framework.Analytics
 
         // ── 状态 ─────────────────────────────────────────────────────────────
         private readonly List<string> _queue = new List<string>();
+
+        /// <summary>
+        /// 队列世代号，仅由整体抹除递增。在途批次据此判断"我出发后队列是否已被抹掉"，
+        /// 从而决定失败时是放回重试还是直接丢弃——抹除后放回等于把用户要求删掉的事件复活。
+        /// </summary>
+        private long _queueGeneration;
+
         private IAnalyticsBackend _backend;
         private bool _isFlushing;
         private float _flushTimer;
@@ -165,7 +172,13 @@ namespace Framework.Analytics
         /// 冲刷队列：排水式连发多批（每批 ≤<see cref="BatchSize"/>），直到队列空、遇到失败、
         /// 或达到单次上限 <see cref="MaxBatchesPerFlush"/>。空闲期积压不必再等下个定时周期慢慢发。
         /// 返回本次是否全部成功（空队列视为成功；中途失败即返回 false 并退避）。
+        /// <para>
+        /// 每批在发送<b>前</b>就从队列里取走，失败时整批放回队首。<c>await</c> 期间主线程会继续跑，
+        /// 队列可能被 <see cref="Track"/> 追加、被溢出淘汰、被 <see cref="ClearQueue"/> 抹除，
+        /// 因此不能在 await 之后按发送前的下标去删——那会删到并非本批的事件。
+        /// </para>
         /// </summary>
+        /// <returns>本次冲刷是否把该发的都发成功了。</returns>
         public async UniTask<bool> FlushAsync()
         {
             if (!CollectionEnabled)
@@ -181,13 +194,25 @@ namespace Framework.Analytics
                 while (_queue.Count > 0 && batchesThisRound < MaxBatchesPerFlush)
                 {
                     int count = Math.Min(BatchSize, _queue.Count);
-                    var batch = new List<string>(count);
-                    for (int i = 0; i < count; i++)
-                        batch.Add(_queue[i]);
+                    var batch = _queue.GetRange(0, count);
+                    _queue.RemoveRange(0, count);
 
+                    long generation = _queueGeneration;
                     bool ok = await Backend().SendAsync(batch);
+
+                    if (generation != _queueGeneration)
+                    {
+                        // 在途期间队列被整体抹除（RTBF / 撤回同意）。这批既不放回也不重试：
+                        // 抹除必须彻底，把已抹掉的事件从在途批次里"复活"回队列等于没删干净。
+                        GameLog.Log($"[AnalyticsManager] 上报在途期间队列已被抹除，丢弃该批 {batch.Count} 条");
+                        return false;
+                    }
+
                     if (!ok)
                     {
+                        // 失败整批放回队首，保持事件顺序，等退避后重试。
+                        _queue.InsertRange(0, batch);
+                        TrimQueueToLimit();
                         _consecutiveFailures++;
                         _backoffRemaining = Math.Min(
                             FlushIntervalSeconds * _consecutiveFailures, MaxBackoffSeconds);
@@ -195,7 +220,6 @@ namespace Framework.Analytics
                         return false;
                     }
 
-                    _queue.RemoveRange(0, count);
                     _consecutiveFailures = 0;
                     _backoffRemaining = 0f;
                     batchesThisRound++;
@@ -214,10 +238,17 @@ namespace Framework.Analytics
             }
         }
 
-        /// <summary>清空队列（测试隔离 / 合规抹除用）。</summary>
+        /// <summary>
+        /// 清空队列（测试隔离 / 合规抹除用）。递增世代号，使正在上报的在途批次失败后不再放回队列。
+        /// <para>
+        /// 边界：已经交给后端的那一批无法召回，可能仍会送达采集端。要真正做到"抹除后不再有数据出网"，
+        /// 调用方须先关闭 <see cref="CollectionEnabled"/> 再抹除（<see cref="Framework.Core.Privacy.PrivacyCompliance"/> 即如此）。
+        /// </para>
+        /// </summary>
         public void ClearQueue()
         {
             _queue.Clear();
+            _queueGeneration++;
             _droppedSinceLastReport = 0;
             TryDeletePendingFile();
         }
@@ -260,7 +291,9 @@ namespace Framework.Analytics
             else
                 ClearQueue();
 
+            // 关停也是一次整体清空：递增世代号，让可能仍在途的批次失败后不要放回一个已停用的队列。
             _queue.Clear();
+            _queueGeneration++;
         }
 
         // ── 内部 ─────────────────────────────────────────────────────────────
@@ -273,6 +306,20 @@ namespace Framework.Analytics
                 _droppedSinceLastReport++;
             }
             _queue.Add(eventJson);
+        }
+
+        /// <summary>
+        /// 把队列裁到容量上限，超出部分从最旧一端丢弃并计入丢弃补报。
+        /// 失败批次放回队首后队列可能超限——在途期间新事件仍在入队——此处与入队溢出走同一套淘汰口径。
+        /// </summary>
+        private void TrimQueueToLimit()
+        {
+            int overflow = _queue.Count - MaxQueuedEvents;
+            if (overflow <= 0)
+                return;
+
+            _queue.RemoveRange(0, overflow);
+            _droppedSinceLastReport += overflow;
         }
 
         private void ApplyPrivacyGateFromConfig()

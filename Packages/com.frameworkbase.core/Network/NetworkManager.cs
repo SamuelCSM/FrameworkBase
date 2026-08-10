@@ -276,7 +276,7 @@ namespace Framework
         /// 断线待发队列，重连 + 重鉴权成功后按 FIFO 补发，超过 QueueTtlMs 未发出按失败收尾。
         /// </para>
         /// </summary>
-        public UniTask<TResp> RequestAsync<TReq, TResp>(
+        public UniTask<NetworkResult<TResp>> RequestAsync<TReq, TResp>(
             TReq request,
             NetworkRequestConfig config = null,
             CancellationToken cancellationToken = default)
@@ -285,7 +285,7 @@ namespace Framework
         {
             if (config == null) config = NetworkRequestConfig.Default;
             if (cancellationToken.IsCancellationRequested)
-                return UniTask.FromResult<TResp>(null);
+                return UniTask.FromResult(NetworkResult<TResp>.Fail(NetworkResultStatus.Canceled));
 
             if (!IsConnected)
             {
@@ -295,54 +295,56 @@ namespace Framework
                     {
                         GameLog.Error(
                             "[NetworkManager] 拒绝离线排队：请求未声明 ReadOnly 或 ServerDeduplicated 重放安全级别。");
-                        return UniTask.FromResult<TResp>(null);
+                        return UniTask.FromResult(NetworkResult<TResp>.Fail(NetworkResultStatus.QueueRejected));
                     }
                     return EnqueueOfflineRequest<TReq, TResp>(request, config, cancellationToken);
                 }
-                return UniTask.FromResult<TResp>(null);
+                return UniTask.FromResult(NetworkResult<TResp>.Fail(NetworkResultStatus.NotConnected));
             }
 
             return RequestConnectedAsync<TReq, TResp>(request, config, cancellationToken);
         }
 
         /// <summary>已连接状态下的请求-响应核心流程（注册 pending → 发送 → 等待配对）。</summary>
-        private UniTask<TResp> RequestConnectedAsync<TReq, TResp>(
+        private UniTask<NetworkResult<TResp>> RequestConnectedAsync<TReq, TResp>(
             TReq request,
             NetworkRequestConfig config,
             CancellationToken cancellationToken)
             where TReq : class, INetMessage
             where TResp : class, INetMessage, new()
         {
-            var tcs = new UniTaskCompletionSource<TResp>();
+            var tcs = new UniTaskCompletionSource<NetworkResult<TResp>>();
             _messageTypeRegistry?.Register<TResp>();
+
+            // 每条回调对应一种终态：这里正是原先把八种原因塌缩成 null 的地方（ADR-012）。
             int epoch = _client?.ConnectionEpoch ?? 0;
 
             ushort seqId = _requestTracker.Register(
                 epoch,
                 payload =>
                 {
-                    try { tcs.TrySetResult(ProtobufUtil.Deserialize<TResp>(payload)); }
+                    try { tcs.TrySetResult(NetworkResult<TResp>.Ok(ProtobufUtil.Deserialize<TResp>(payload))); }
                     catch (Exception ex)
                     {
                         GameLog.Error($"[NetworkManager] Response deserialize failed: {typeof(TResp).Name}, {ex.Message}");
-                        tcs.TrySetResult(null);
+                        tcs.TrySetResult(NetworkResult<TResp>.Fail(NetworkResultStatus.DeserializeFailed));
                     }
                 },
                 onTimeout: () =>
                 {
                     if (config.ShowTimeoutTip)
                         _requestTracker.OnShowTimeoutTip?.Invoke(config.TimeoutMessage ?? "网络请求超时。");
-                    tcs.TrySetResult(null);
+                    tcs.TrySetResult(NetworkResult<TResp>.Fail(NetworkResultStatus.Timeout));
                 },
-                onCancelled: () => tcs.TrySetResult(null),
+                onCancelled: () => tcs.TrySetResult(NetworkResult<TResp>.Fail(NetworkResultStatus.Canceled)),
                 config: config,
                 cancellationToken: cancellationToken,
-                onIntercepted: () => tcs.TrySetResult(null));
+                onIntercepted: () => tcs.TrySetResult(NetworkResult<TResp>.Fail(NetworkResultStatus.Intercepted)));
 
             if (!SendMessageInternal(request, seqId))
             {
                 _requestTracker.Cancel(seqId);
-                tcs.TrySetResult(null);
+                tcs.TrySetResult(NetworkResult<TResp>.Fail(NetworkResultStatus.SendFailed));
             }
             return tcs.Task;
         }
@@ -351,7 +353,7 @@ namespace Framework
         /// 把断线期间的 opt-in 请求挂入待发队列，返回其完成器任务。
         /// 补发只给一次机会：重连补发瞬间又断线时直接按失败收尾，不二次入队（避免无限徘徊）。
         /// </summary>
-        private UniTask<TResp> EnqueueOfflineRequest<TReq, TResp>(
+        private UniTask<NetworkResult<TResp>> EnqueueOfflineRequest<TReq, TResp>(
             TReq request,
             NetworkRequestConfig config,
             CancellationToken cancellationToken)
@@ -359,17 +361,18 @@ namespace Framework
             where TResp : class, INetMessage, new()
         {
             if (cancellationToken.IsCancellationRequested)
-                return UniTask.FromResult<TResp>(null);
+                return UniTask.FromResult(NetworkResult<TResp>.Fail(NetworkResultStatus.Canceled));
 
-            var tcs = new UniTaskCompletionSource<TResp>();
+            var tcs = new UniTaskCompletionSource<NetworkResult<TResp>>();
             bool queued = _offlineQueue.TryEnqueue(
                 send: () => ForwardQueuedRequestAsync(request, config, cancellationToken, tcs).Forget(),
-                fail: () => tcs.TrySetResult(null),
+                // TTL 到期未发出：请求从未离开本机，与"发出去没回音"是两回事。
+                fail: () => tcs.TrySetResult(NetworkResult<TResp>.Fail(NetworkResultStatus.QueueRejected)),
                 ttlSeconds: config.QueueTtlMs / 1000.0,
                 now: _offlineQueueClock,
                 isReplaySafe: config.IsOfflineReplayAllowed);
             if (!queued)
-                return UniTask.FromResult<TResp>(null);
+                return UniTask.FromResult(NetworkResult<TResp>.Fail(NetworkResultStatus.QueueRejected));
             return tcs.Task;
         }
 
@@ -378,16 +381,21 @@ namespace Framework
             TReq request,
             NetworkRequestConfig config,
             CancellationToken cancellationToken,
-            UniTaskCompletionSource<TResp> tcs)
+            UniTaskCompletionSource<NetworkResult<TResp>> tcs)
             where TReq : class, INetMessage
             where TResp : class, INetMessage, new()
         {
-            if (!IsConnected || cancellationToken.IsCancellationRequested)
+            if (cancellationToken.IsCancellationRequested)
             {
-                tcs.TrySetResult(null);
+                tcs.TrySetResult(NetworkResult<TResp>.Fail(NetworkResultStatus.Canceled));
                 return;
             }
-            TResp response = await RequestConnectedAsync<TReq, TResp>(request, config, cancellationToken);
+            if (!IsConnected)
+            {
+                tcs.TrySetResult(NetworkResult<TResp>.Fail(NetworkResultStatus.NotConnected));
+                return;
+            }
+            NetworkResult<TResp> response = await RequestConnectedAsync<TReq, TResp>(request, config, cancellationToken);
             tcs.TrySetResult(response);
         }
 
@@ -398,8 +406,8 @@ namespace Framework
         /// <typeparam name="TResp">响应消息类型（自动推断）。</typeparam>
         /// <param name="request">实现了 IRequest&lt;TResp&gt; 的请求消息。</param>
         /// <param name="config">请求配置。为 null 时使用默认配置。</param>
-        /// <returns>响应消息实例；超时或取消时返回 null。</returns>
-        public UniTask<TResp> RequestAsync<TResp>(
+        /// <returns>请求结果；失败原因见 <see cref="NetworkResult{T}.Status"/>（ADR-012）。</returns>
+        public UniTask<NetworkResult<TResp>> RequestAsync<TResp>(
             IRequest<TResp> request,
             NetworkRequestConfig config = null,
             CancellationToken cancellationToken = default)
@@ -478,6 +486,18 @@ namespace Framework
         /// 清空协议日志屏蔽表，不影响心跳协议日志的独立开关。
         /// </summary>
         public void ClearIgnoredProtocolLogs() => _protocolLogPolicy.ClearIgnored();
+
+        /// <summary>
+        /// 追加一个协议正文脱敏标记：成员名（属性或字段）大小写无关地包含该标记时，
+        /// 协议日志只输出掩码而不输出真实值。
+        /// <para>
+        /// 框架默认已覆盖 token / password / secret / deviceid 等通用凭证与设备标识；
+        /// 业务协议里的实名、手机号、订单号等字段须由业务在首次收发前登记。
+        /// 标记表与成员缓存是进程级的，对所有实例生效，重复登记同一标记无副作用。
+        /// </para>
+        /// </summary>
+        /// <param name="marker">成员名子串，如 <c>idcard</c>；null 或空白忽略。</param>
+        public void AddSensitiveProtocolField(string marker) => NetworkProtocolLogger.AddSensitiveMarker(marker);
 
         /// <summary>
         /// 注入重连后的应用层重新鉴权钩子。由组合根（GameEntry）在鉴权管理器就绪后调用，

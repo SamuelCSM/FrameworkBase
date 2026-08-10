@@ -231,6 +231,56 @@ namespace Framework.Tests
             Assert.IsTrue(foundDropReport, "溢出丢弃必须以 analytics_dropped 事件补报");
         }
 
+        // ── 在途抹除（RTBF 与冲刷的交错）─────────────────────────────────────
+
+        [Test]
+        public void 冲刷在途队列被抹除_不误删抹除后产生的新事件()
+        {
+            _analytics.Track("e1");
+            _backend.DuringSend = () =>
+            {
+                _analytics.ClearQueue(); // RTBF：上报在途时用户点了"删除我的数据"
+                _analytics.Track("e2");  // 抹除之后才产生的新事件
+            };
+
+            Wait(_analytics.FlushAsync());
+
+            // 按发送前的下标去删，删掉的会是抹除后新入队的那条，而非本批已送达的事件。
+            Assert.AreEqual(1, _analytics.QueuedCount, "抹除后产生的新事件不得被在途批次误删");
+
+            _backend.DuringSend = null;
+            _backend.Batches.Clear();
+            Wait(_analytics.FlushAsync());
+
+            Assert.AreEqual(1, _backend.Batches.Count);
+            StringAssert.Contains("\"event\":\"e2\"", _backend.Batches[0][0], "留下的应当是抹除后那条新事件");
+        }
+
+        [Test]
+        public void 冲刷在途队列被清空_不抛越界异常()
+        {
+            _analytics.Track("e1");
+            _analytics.Track("e2");
+            _backend.DuringSend = () => _analytics.ClearQueue();
+
+            // 队列被清空后仍按旧下标删除会抛 ArgumentException，把整条冲刷链路带崩。
+            Assert.DoesNotThrow(() => Wait(_analytics.FlushAsync()));
+            Assert.AreEqual(0, _analytics.QueuedCount);
+        }
+
+        [Test]
+        public void 上报失败但队列已被抹除_批次不得放回复活()
+        {
+            _analytics.Track("e1");
+            _backend.AlwaysFail = true;
+            _backend.DuringSend = () => _analytics.ClearQueue();
+
+            Wait(_analytics.FlushAsync());
+
+            Assert.AreEqual(0, _analytics.QueuedCount,
+                "抹除后把失败批次放回队列，等于把用户要求删除的事件复活");
+        }
+
         // ── 假后端 ───────────────────────────────────────────────────────────
 
         private sealed class FakeBackend : IAnalyticsBackend
@@ -240,11 +290,19 @@ namespace Framework.Tests
             /// <summary>为 true 时所有批次发送失败（事件保留在管道内）。</summary>
             public bool AlwaysFail;
 
+            /// <summary>
+            /// 在"发送期间"执行的回调，用来确定性地模拟 <c>await</c> 让位时主线程做的事
+            /// （抹除队列、继续 Track 等）。它的执行时点正好落在冲刷取批之后、判定结果之前，
+            /// 与真实 await 让位的窗口一致。
+            /// </summary>
+            public System.Action DuringSend;
+
             public string Name => "fake";
 
             public UniTask<bool> SendAsync(IReadOnlyList<string> eventJsonBatch)
             {
                 Batches.Add(new List<string>(eventJsonBatch));
+                DuringSend?.Invoke();
                 return UniTask.FromResult(!AlwaysFail);
             }
         }

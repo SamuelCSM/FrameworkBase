@@ -36,6 +36,21 @@ namespace Framework.Http
         public Dictionary<string, string> Headers { get; } =
             new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
+        /// <summary>
+        /// 响应体字节上限；0 表示不限。超限时传输会被中止并按失败返回，响应体不交给调用方。
+        /// <para>
+        /// 面向不可全信的远端（配置服务、遥测端点）应显式设置：默认缓冲式下载会把整个响应读进托管堆，
+        /// 恶意或异常的服务端可借此耗尽内存。下载大文件请改用流式落盘的下载器，而不是调高这个上限。
+        /// </para>
+        /// </summary>
+        public int MaxResponseBytes { get; set; }
+
+        /// <summary>
+        /// 取消令牌。触发后中止在途传输并按失败返回，用于随场景/流程退出干净收尾，
+        /// 而不是把请求弃置在后台空转。
+        /// </summary>
+        public System.Threading.CancellationToken CancellationToken { get; set; }
+
         /// <summary>Create a GET request.</summary>
         public static HttpRequest Get(string url)
         {
@@ -64,6 +79,24 @@ namespace Framework.Http
         {
             if (!string.IsNullOrEmpty(name))
                 Headers[name] = value ?? string.Empty;
+            return this;
+        }
+
+        /// <summary>设置响应体字节上限并返回自身，便于链式构造。负值按不限处理。</summary>
+        /// <param name="maxBytes">上限字节数；0 或负值表示不限。</param>
+        /// <returns>同一请求实例。</returns>
+        public HttpRequest WithMaxResponseBytes(int maxBytes)
+        {
+            MaxResponseBytes = Math.Max(0, maxBytes);
+            return this;
+        }
+
+        /// <summary>设置取消令牌并返回自身，便于链式构造。</summary>
+        /// <param name="token">取消令牌。</param>
+        /// <returns>同一请求实例。</returns>
+        public HttpRequest WithCancellation(System.Threading.CancellationToken token)
+        {
+            CancellationToken = token;
             return this;
         }
     }

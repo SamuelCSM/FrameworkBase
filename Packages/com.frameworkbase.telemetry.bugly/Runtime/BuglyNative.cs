@@ -30,6 +30,25 @@ namespace Framework.Telemetry.Bugly
         [DllImport("__Internal")] private static extern void fb_bugly_report_exception(string name, string reason, string stack);
 #endif
 
+        /// <summary>
+        /// 原生层是否真的链接进本次构建：条件与下方各方法执行真实调用的条件完全一致。
+        /// <para>
+        /// 为 false 时本类整体是无操作，装配方据此判断"接管崩溃后端"是否有意义——
+        /// 顶掉框架默认的本地落盘后端却换来一个空壳，会让托管异常既进不了 Bugly 也不再落盘。
+        /// </para>
+        /// </summary>
+        internal static bool IsLinked
+        {
+            get
+            {
+#if FRAMEWORKBASE_BUGLY_SDK && (UNITY_ANDROID || UNITY_IOS) && !UNITY_EDITOR
+                return true;
+#else
+                return false;
+#endif
+            }
+        }
+
         /// <summary>装载并启动 Bugly（对应 Android <c>CrashReport.initCrashReport</c> / iOS <c>[Bugly startWithAppId:]</c>）。</summary>
         internal static void Start(string appId, bool debug, BuglyRegion region)
         {

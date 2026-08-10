@@ -130,6 +130,41 @@ namespace Framework.Tests
         }
 
         [Test]
+        public void EncryptedPrefs_含换行的键_索引不被拆散且仍能整体抹除()
+        {
+            var s = new EncryptedPrefsSecureStorage();
+            string weird = UniqueKey() + "\nlooks-like-another-key";
+            string normal = UniqueKey();
+            s.Set(weird, "v1");
+            s.Set(normal, "v2");
+
+            // 用分隔符拼索引时，这个键会被拆成两条：索引指向不存在的键，真键反而漏删。
+            s.DeleteAll();
+
+            Assert.IsFalse(s.Contains(weird), "含分隔符字符的键必须被完整抹除");
+            Assert.IsFalse(s.Contains(normal));
+        }
+
+        [Test]
+        public void EncryptedPrefs_索引被篡改_报错而非静默当作无键()
+        {
+            var s = new EncryptedPrefsSecureStorage();
+            string key = UniqueKey();
+            s.Set(key, "v");
+
+            // 直接改写索引条目：不认证的索引可被单独篡改，让 DeleteAll 漏删机密。
+            PlayerPrefs.SetString(EncryptedPrefsSecureStorage.KeyPrefix + "__index__", "tampered");
+            PlayerPrefs.Save();
+
+            LogAssert.Expect(LogType.Error, new Regex("键索引不可用"));
+            s.DeleteAll();
+
+            // 索引已不可信，漏删是必然结果；关键是它必须出声，而不是静默当作"没有键"。
+            PlayerPrefs.DeleteKey(EncryptedPrefsSecureStorage.KeyPrefix + key);
+            PlayerPrefs.Save();
+        }
+
+        [Test]
         public void EncryptedPrefs_ReservedIndexKey_IsRejected_AndKeepsIndexIntact()
         {
             var s = new EncryptedPrefsSecureStorage();

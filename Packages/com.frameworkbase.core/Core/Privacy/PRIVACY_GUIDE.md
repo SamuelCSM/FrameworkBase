@@ -40,7 +40,6 @@ iOS ATT / 个性化广告授权走渠道能力：`GameEntry.Sdk.Privacy.RequestT
 用户行使"删除我的数据"时：
 
 ```csharp
-GameEntry.Analytics.CollectionEnabled = false;
 GameEntry.Network.Disconnect();
 
 var report = PrivacyCompliance.EraseAllLocalUserData();  // 逐项报告可展示给用户
@@ -50,6 +49,13 @@ var report = PrivacyCompliance.EraseAllLocalUserData();  // 逐项报告可展�
 覆盖：埋点队列与落盘快照、远程配置缓存、全部账号加密存档、PlayerPrefs
 （语言与同意状态一并清空——抹除后按未同意处理，语义正确）、崩溃记录、
 启动指标快照、文件日志目录。逐项异常隔离，失败项如实进报告。
+
+**关采集由编排负责**：`EraseAllLocalUserData` 第一步就把
+`Analytics.CollectionEnabled` 置 false，再清队列——顺序反过来的话，两步之间
+产生的新事件会留在队列里被后续冲刷送出，等于没抹。调用方不需要（也不应该依赖自己记得）先关。
+
+**在途批次无法召回**：抹除时刻已经交给后端上传的那一批可能仍会送达采集端。
+框架能保证的是它不会因上传失败又被放回队列"复活"（队列世代号守卫）。
 
 **边界（审核陈述必须如实）**：本编排只清**设备本地**数据。服务端侧删除
 （账号注销、采集端按 device_id / user_id 清库）走业务后台流程，两段合起来

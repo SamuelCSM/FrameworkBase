@@ -128,6 +128,9 @@ namespace Framework
 
         private IGameObjectProvider _provider;
         private bool _ownsProvider;
+
+        /// <summary>已销毁标记，OnDestroy 最先置位，供在途 PlayAsync 判断迟到实例无处安放。</summary>
+        private bool _destroyed;
         private VfxScheduler _scheduler;
         // 档位派生的预算（玩家改档可变）；显式设 Budget 后转为固定，不再跟档位。
         private bool _autoBudgetFromTier = true;
@@ -215,6 +218,14 @@ namespace Framework
             if (go == null)
                 return 0;
 
+            // await 期间管理器可能已被销毁：此时 _instances 已清空、自有 provider 已 Dispose，
+            // 迟到实例若照常登记就再也没人释放它。销毁前置的 _destroyed 让这条路径可判定。
+            if (_destroyed)
+            {
+                ReleaseOrphan(go);
+                return 0;
+            }
+
             go.transform.SetPositionAndRotation(position, rotation);
 
             float duration = options.Duration;
@@ -293,8 +304,24 @@ namespace Framework
             return max > 0f ? max : 2f;
         }
 
+        /// <summary>
+        /// 把一个"已经没有归属"的特效实例还掉：provider 由外部持有时正常归还，
+        /// 由本管理器持有时它已随销毁 Dispose，只能直接销毁实例，不能再往一个已释放的池里塞。
+        /// </summary>
+        /// <param name="go">迟到的特效实例。</param>
+        private void ReleaseOrphan(GameObject go)
+        {
+            if (_ownsProvider)
+                Destroy(go);
+            else
+                _provider?.Release(go);
+        }
+
         private void OnDestroy()
         {
+            // 置于释放之前：在途的 PlayAsync 回来时据此判断自己已经无处安放。
+            _destroyed = true;
+
             foreach (KeyValuePair<int, ActiveVfx> kv in _instances)
             {
                 if (kv.Value.Go != null)

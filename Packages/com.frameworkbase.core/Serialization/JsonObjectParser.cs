@@ -13,8 +13,17 @@ namespace Framework.Serialization
     public static class JsonObjectParser
     {
         /// <summary>
+        /// 允许的最大嵌套层数。递归下降解析在深层嵌套输入上会耗尽调用栈，而 StackOverflowException
+        /// 在 .NET 上<b>无法捕获</b>、直接终止进程——远端配置或磁盘缓存里的一段深嵌套 JSON 就足以让
+        /// 客户端起不来，所以这里必须有硬上限，而不能靠调用方的 try/catch 兜底。
+        /// 32 层远超配置类载荷的实际需要（业务配置极少超过 5 层）。
+        /// </summary>
+        private const int MaxDepth = 32;
+
+        /// <summary>
         /// Parse a top-level JSON object. Invalid input returns false instead of throwing.
         /// Number mapping: integer tokens become <see cref="long"/>, decimal/exponent tokens become <see cref="double"/>.
+        /// Nesting deeper than <see cref="MaxDepth"/> levels is rejected as invalid input.
         /// </summary>
         public static bool TryParseObject(string json, out Dictionary<string, object> result)
         {
@@ -29,7 +38,7 @@ namespace Framework.Serialization
                 if (pos >= json.Length || json[pos] != '{')
                     return false;
 
-                Dictionary<string, object> parsed = ParseObject(json, ref pos);
+                Dictionary<string, object> parsed = ParseObject(json, ref pos, 1);
                 SkipWhitespace(json, ref pos);
                 if (pos != json.Length)
                     return false;
@@ -44,7 +53,8 @@ namespace Framework.Serialization
         }
 
         // Recursive descent parser kept private so the public API stays small and stable.
-        private static object ParseValue(string json, ref int pos)
+        // depth is the nesting level of the container currently being parsed; containers check it on entry.
+        private static object ParseValue(string json, ref int pos, int depth)
         {
             SkipWhitespace(json, ref pos);
             if (pos >= json.Length)
@@ -53,8 +63,8 @@ namespace Framework.Serialization
             char c = json[pos];
             switch (c)
             {
-                case '{': return ParseObject(json, ref pos);
-                case '[': return ParseArray(json, ref pos);
+                case '{': return ParseObject(json, ref pos, depth + 1);
+                case '[': return ParseArray(json, ref pos, depth + 1);
                 case '"': return ParseString(json, ref pos);
                 case 't': ExpectLiteral(json, ref pos, "true"); return true;
                 case 'f': ExpectLiteral(json, ref pos, "false"); return false;
@@ -66,8 +76,11 @@ namespace Framework.Serialization
             }
         }
 
-        private static Dictionary<string, object> ParseObject(string json, ref int pos)
+        private static Dictionary<string, object> ParseObject(string json, ref int pos, int depth)
         {
+            if (depth > MaxDepth)
+                throw Malformed(pos, $"Nesting is deeper than the {MaxDepth}-level limit.");
+
             pos++;
             var obj = new Dictionary<string, object>();
 
@@ -90,7 +103,7 @@ namespace Framework.Serialization
                     throw Malformed(pos, "Missing ':' after object key.");
                 pos++;
 
-                obj[key] = ParseValue(json, ref pos);
+                obj[key] = ParseValue(json, ref pos, depth);
 
                 SkipWhitespace(json, ref pos);
                 if (pos >= json.Length)
@@ -109,8 +122,11 @@ namespace Framework.Serialization
             }
         }
 
-        private static List<object> ParseArray(string json, ref int pos)
+        private static List<object> ParseArray(string json, ref int pos, int depth)
         {
+            if (depth > MaxDepth)
+                throw Malformed(pos, $"Nesting is deeper than the {MaxDepth}-level limit.");
+
             pos++;
             var list = new List<object>();
 
@@ -123,7 +139,7 @@ namespace Framework.Serialization
 
             while (true)
             {
-                list.Add(ParseValue(json, ref pos));
+                list.Add(ParseValue(json, ref pos, depth));
 
                 SkipWhitespace(json, ref pos);
                 if (pos >= json.Length)

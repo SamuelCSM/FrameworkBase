@@ -20,6 +20,37 @@ namespace Framework.Tests
         // ── 更新服务 URL 准入 ────────────────────────────────────────────────
 
         [Test]
+        public void 安全目录段_接受生成器产出的槽ID()
+        {
+            // BuildSlotId 的产物形如 app_1.0.0_code_3_ab12cd34ef567890，必须被放行。
+            Assert.IsTrue(UpdateSecurity.IsSafePathSegment("app_1.0.0_code_3_ab12cd34ef567890"));
+            Assert.IsTrue(UpdateSecurity.IsSafePathSegment("app_1-0-0_code_12_0123456789abcdef"));
+        }
+
+        [Test]
+        public void 安全目录段_拒绝穿越与分隔符()
+        {
+            // 槽 ID 来自持久化目录里的普通 JSON，能写该目录就能改它；直接 Path.Combine 会被穿越出去。
+            string[] unsafeSegments =
+            {
+                null, "", "   ", ".", "..", "../evil", "..\\evil", "a/b", "a\\b", "C:evil",
+                "slot\0name", new string('x', 129),
+            };
+
+            foreach (string segment in unsafeSegments)
+                Assert.IsFalse(UpdateSecurity.IsSafePathSegment(segment), $"应拒绝：{segment ?? "(null)"}");
+        }
+
+        [Test]
+        public void 安全叶子名_非法字符以返回值拒绝而非抛异常()
+        {
+            // 文件名来自远端清单：Path.GetFileName 遇到 '\0' 会抛 ArgumentException，
+            // 校验方法若让它逃出去，非法输入就从"被拒绝"变成"崩在校验里"。
+            Assert.IsFalse(UpdateSecurity.IsSafeLeafFileName("Hotfix\0.dll.bytes"));
+            Assert.IsFalse(UpdateSecurity.IsSafeCatalogLeafFileName("catalog\0.json"));
+        }
+
+        [Test]
         public void 生产环境_明文HTTP_拒绝()
         {
             Assert.IsFalse(UpdateSecurity.ValidateUpdateServerUrl(

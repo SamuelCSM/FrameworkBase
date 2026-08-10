@@ -52,6 +52,15 @@ namespace Framework.Network
         public int MaxMessageSize = 1 << 20;
         /// <summary>发送队列最大包数量。达到上限时 Send 立即失败，由上层决定限流、断线或重试。</summary>
         public int MaxSendQueuePackets = 256;
+
+        /// <summary>
+        /// 发送队列的总字节上限。只按包数封顶挡不住内存：256 个接近 MaxMessageSize 的包即达数百 MB。
+        /// 默认 8 MiB，触发即说明写出速度已长期跟不上产包速度。
+        /// </summary>
+        public long MaxSendQueueBytes = 8L * 1024 * 1024;
+
+        /// <summary>当前发送队列占用的字节数，跨 Send 调用方与发送线程读写，一律走 Interlocked。</summary>
+        private long _sendQueueBytes;
         /// <summary>TLS 客户端选项；为 null 或 Enabled=false 时使用明文 TCP，仅应在受控开发环境启用。</summary>
         public TlsClientOptions Tls;
 
@@ -205,10 +214,33 @@ namespace Framework.Network
             BlockingCollection<byte[]> queue = _sendQueue;
             if (!_isConnected || queue == null || queue.IsAddingCompleted) return false;
 
+            // 单包尺寸与收包侧同一把尺：本端产出超过帧上限的包，对端必然按坏帧断开，
+            // 与其发出去再被断，不如在这里就判失败并让调用方看到原因。
+            if (data.Length > MaxMessageSize)
+            {
+                string oversize = $"待发包 {data.Length} 字节超过单帧上限 {MaxMessageSize}，已拒绝发送";
+                OnErrorWithEpoch?.Invoke(ConnectionEpoch, oversize);
+                OnError?.Invoke(oversize);
+                return false;
+            }
+
+            // 字节预算与包数预算并行：大包少量即可吃掉大量内存，只数包数拦不住。
+            if (MaxSendQueueBytes > 0 &&
+                Interlocked.Read(ref _sendQueueBytes) + data.Length > MaxSendQueueBytes)
+            {
+                string overflow = $"发送队列字节数超限，触发背压：limit={MaxSendQueueBytes}";
+                OnErrorWithEpoch?.Invoke(ConnectionEpoch, overflow);
+                OnError?.Invoke(overflow);
+                return false;
+            }
+
             try
             {
                 if (queue.TryAdd(data, millisecondsTimeout: 0))
+                {
+                    Interlocked.Add(ref _sendQueueBytes, data.Length);
                     return true;
+                }
 
                 string error = $"发送队列已满，触发背压：capacity={Math.Max(1, MaxSendQueuePackets)}";
                 OnErrorWithEpoch?.Invoke(ConnectionEpoch, error);
@@ -330,6 +362,9 @@ namespace Framework.Network
                 new ConcurrentQueue<byte[]>(),
                 Math.Max(1, MaxSendQueuePackets));
 
+            // 新连接换新队列：上一个连接残留的字节计数必须清零，否则新连接一上来就被判超限。
+            Interlocked.Exchange(ref _sendQueueBytes, 0);
+
             lock (_stateLock)
             {
                 _socket = socket;
@@ -362,6 +397,8 @@ namespace Framework.Network
             {
                 foreach (byte[] data in queue.GetConsumingEnumerable())
                 {
+                    // 出队即释放字节预算，无论这一包最终是否写成功——它已经不在队列里占内存了。
+                    Interlocked.Add(ref _sendQueueBytes, -data.Length);
                     if (!_isConnected || epoch != ConnectionEpoch) break;
                     stream.Write(data, 0, data.Length);
                 }

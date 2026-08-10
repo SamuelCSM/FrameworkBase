@@ -55,7 +55,17 @@ namespace Framework.HotUpdate
         {
             public CdnDownloadResult Result;
             public byte[] Bytes;
+
+            /// <summary>验签通过的 Base64 签名与 KeyId，用于随代码槽落盘供每次启动重新验签。</summary>
+            public string Signature;
+            public string KeyId;
         }
+
+        /// <summary>
+        /// 本轮检查中已验签通过的清单凭据。代码槽提交时随槽落盘，使启动复验能重回签名信任链
+        /// （否则磁盘上只剩本地生成的 slot.json，它拿自己的摘要比对自己，永远自洽）。
+        /// </summary>
+        private SlotSignatureProof _verifiedManifestProof;
 
         private readonly struct ManifestSelection
         {
@@ -166,6 +176,14 @@ namespace Framework.HotUpdate
 
                 byte[] manifestBytes = manifestDownload.Bytes;
                 string json = Encoding.UTF8.GetString(manifestBytes);
+
+                // 保留原始文本而非重新序列化：签名覆盖的是这串字节，重排字段即失效。
+                _verifiedManifestProof = new SlotSignatureProof
+                {
+                    KeyId = manifestDownload.KeyId,
+                    Signature = manifestDownload.Signature,
+                    ManifestJson = json,
+                };
 
                 // 只有原始字节验签通过后，才允许反序列化完整清单并执行版本、平台、渠道及文件集准入。
                 UpdateInfo serverVersion = JsonSerializers.Shared.FromJson<UpdateInfo>(json);
@@ -293,6 +311,8 @@ namespace Framework.HotUpdate
             string payloadPath = Path.Combine(Application.temporaryCachePath, payloadTempName);
             string signaturePath = Path.Combine(Application.temporaryCachePath, signatureTempName);
             byte[] acceptedBytes = null;
+            string acceptedSignature = null;
+            string acceptedKeyId = null;
             var client = new TrustedCdnDownloadClient(routes, _patchDownloader);
             CdnDownloadResult result = await client.DownloadAsync(
                 relativePath,
@@ -375,12 +395,20 @@ namespace Framework.HotUpdate
                     }
 
                     acceptedBytes = payloadBytes;
+                    acceptedSignature = FileStorages.Shared.ReadText(signaturePath);
+                    acceptedKeyId = envelope.KeyId;
                     return CdnValidationResult.Valid();
                 },
                 quarantineTransportFailures: quarantineTransportFailures,
                 cancellationToken: cancellationToken);
 
-            return new SignedDocumentDownload { Result = result, Bytes = acceptedBytes };
+            return new SignedDocumentDownload
+            {
+                Result = result,
+                Bytes = acceptedBytes,
+                Signature = acceptedSignature,
+                KeyId = acceptedKeyId,
+            };
         }
 
         /// <summary>
@@ -553,7 +581,8 @@ namespace Framework.HotUpdate
                 }
 
                 _state = UpdateState.Installing;
-                if (!HotUpdateSlotManager.CommitStagingSlot(updateInfo, stagingDirectory, out string commitError))
+                if (!HotUpdateSlotManager.CommitStagingSlot(
+                        updateInfo, stagingDirectory, _verifiedManifestProof, out string commitError))
                     throw new IOException(commitError);
 
                 onProgress?.Invoke(1f);
